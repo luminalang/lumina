@@ -1,0 +1,6 @@
+use constant
+use std:io
+
+fn main
+    io:puts << str
+        constant:magic_number

@@ -1,0 +1,9 @@
+fn puts s (string -> string)
+    rust:call0 s
+
+fn read_to delim (byte -> string)
+    rust:call1 delim
+
+fn read_line (string)
+    read_to '\n'
+

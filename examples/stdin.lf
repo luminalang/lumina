@@ -1,0 +1,6 @@
+use std:io
+
+fn main
+    io:puts << 
+        "Here's your message: "
+        <> io:read_line

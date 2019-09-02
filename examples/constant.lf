@@ -1,0 +1,7 @@
+use std:io
+
+fn magic_number (int) 
+    25 + 2
+
+fn main 
+    io:puts << str << 5 + magic_number + 5

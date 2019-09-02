@@ -1,0 +1,7 @@
+fn not x (bool -> bool)
+    if x 
+      then false 
+      else true
+
+fn main 
+    rust:call0 << str << not false

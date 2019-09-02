@@ -1,0 +1,4 @@
+use std:io
+
+fn main
+    io:puts "hello world!"

@@ -116,9 +116,6 @@ Remember to compile Leaf using the `--release` flag! `cargo build --release` oth
 
 The project is not yet in an usable state but we're getting there! 
 
-**NOTE: ** This project is currently going through a major rewrite as I've learnt a lot about interpreter internals while creating this code-base. So if it looks a bit quiet for a while you know why!
-
- - [x] Design and implement the Tokenizer
  - [x] Index declarations for ease of access
  - [x] Design and implement the basic runner
  - [x] Implement int/string

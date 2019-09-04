@@ -50,7 +50,7 @@ impl<'a> FunctionBuilder<'a> {
     ) -> Self {
         Self {
             wheres: Vec::new(),
-            tokens: tokens.drain(0..).map(|t| Tracked::new(t)).collect(),
+            tokens: tokens.drain(0..).map(Tracked::new).collect(),
             file: Path::new(file),
             header: FunctionHeader {
                 parameter_names: (0..parameters.len())
@@ -177,7 +177,7 @@ impl<'a> FunctionBuilder<'a> {
                 Token::LambdaHeader(_) => {
                     // TODO: How does << work here?
                     let buf = self.build_buf(c, Some(&[Key::ParenOpen, Key::Pipe]))?;
-                    let position = buf[0].position;
+                    let _position = buf[0].position;
                     // Invalid tracking
                     token.inner = Token::Lambda(
                         self.build_buf(c, Some(&[Key::ParenOpen, Key::Pipe]))?
@@ -219,7 +219,7 @@ impl<'a> FunctionBuilder<'a> {
                     }
                 },
                 Token::Key(Key::If) => {
-                    let mut branches: Vec<(Vec<Tracked<Token>>, Vec<Tracked<Token>>)> = Vec::new();
+                    let mut branches = Vec::new();
                     let conditional = self.build_buf(c, Some(&[Key::Then]))?;
                     //panic!("{}", self.tokenizer.next_token(false));
                     let next = c.tokenizer.next_token(false);

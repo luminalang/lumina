@@ -1,9 +1,8 @@
 use super::index::Index;
 use super::tokenizer::token::Token;
 use super::FunctionBuilder;
-use crate::evaler::function::Function;
 use crate::evaler::module;
-use crate::evaler::r#type::{CustomType, Value};
+use crate::evaler::r#type::CustomType;
 use crate::evaler::runner::rustbridge;
 use crate::identifier::r#type::{BaseType, Type};
 use std::path::Path;

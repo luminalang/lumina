@@ -5,9 +5,10 @@ Leaf's a work-in-progress programming language focused on efficiency of writing,
 
 ## Full Design
 ```haskell
---|| This program attempts to display all the planned syntastic parts of the language
---|| Please note that since Leaf's still in pre-alpha this example will *NOT RUN*
---|| Check the examples folder for currently runnable examples of Leaf
+-- || This program attempts to display all the planned syntastic parts of the language
+-- || Please note that since Leaf's still in pre-alpha this example will *NOT RUN*
+-- || Syntax might also change in the future
+-- || Check the examples folder for currently runnable examples of Leaf
 
 use std:io
 
@@ -19,8 +20,9 @@ type person
 fn fmt p (person -> string)
     p.name <> " (" <> str p.age <> ")"
 
-fn transform f p ((person -> person) person -> person)
-    f p
+fn swap_data f p ((a -> a) P -> P)
+        where P: person
+    { p | data = f p.data }
 
 fn get_name (string)
     prompt "What's your name? "
@@ -35,8 +37,9 @@ fn prompt m (string)
 fn main
     io:puts
         << fmt 
-        << transform (p: { p | age = if p.age < 0 then 0 else p.age })
-        << { person | name = get_name, age = age, data = _ }
+        << swap_data #(\data: data + 1)
+        << \p: { p | age = if p.age < 0 then 0 else p.age }
+        << { person | name = get_name, age = age, data = 20 }
       where age = 
         match get_age 
           | Just a: a
@@ -91,8 +94,8 @@ fn main
 toInt is unsafe here since a string cannot always be converted to int. So if toInt fails the function will fully implicitly return the Err(E) variant of Result. But if nothing fails the resulting `int` returned by `sum` is implicitly converted to the `Ok(int)` variant of Result
 
 ### Rethinking Function Parameters
-While currying can shorten code greatly, the functional styling of leaf (and Haskel) already is short by nature. The problem with currying is that typo mistakes and human errors no longer counts as compile-time errors, instead your value accidentally turned into some curried function it isn't supposed to be.
-Current plan is to instead of implicitly making everything curried, give the user the option to explicitly turn a lambda or a function into a curried one upon usage. 
+While currying can shorten code greatly, the functional styling of leaf (and Haskel) already is short by nature. The problem with currying is that typo mistakes and human errors no longer counts as parsing errors, instead your value accidentally turns into some curried function it isn't supposed to be.
+Current plan is to instead of implicitly making everything curried, give the user the option to explicitly turn a lambda or a function into a "curried" one upon usage. 
 ```haskell
 fn func x y (a b -> c)
 
@@ -103,7 +106,7 @@ fn main
     || becomes (b -> c)
     #(func 0) 
     || becomes (b -> c)
-    #(y: _)
+    #(\y: _)
 ```
 
 ## Examples

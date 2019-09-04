@@ -1,5 +1,18 @@
 # Leaf - A High-Level Interpreted Functional Programming Language
 
+  - [Introduction](#introduction)
+  - [Full Design](#full-design)
+  - [Features](#features)
+    - [Syntax of Haskell](#syntax-of-haskell)
+    - [Simplicity](#simplicity)
+    - [Efficiency](#efficiency)
+    - [The << Pipe Operator](#the--pipe-operator)
+    - [Concurrency](#concurrency)
+    - [Error / Failure Handling](#error--failure-handling)
+    - [Rethinking Function Parameters](#rethinking-function-parameters)
+  - [Examples](#examples)
+  - [Status](#status)
+
 ## Introduction
 Leaf's a work-in-progress programming language focused on efficiency of writing, readability, simplicity and performance.
 

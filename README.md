@@ -87,7 +87,7 @@ Unlike Haskell, unsafe IO dependent functions are used the same way as any other
 \
 Any function who's unsafe code fails will return the Result<> enum to be handled by any of the unwrap functions. If a functions return argument is the built-in Result<> enum. The function body will implicitly return early if an Err variant is encountered anywhere in the body, to be handled at an upper level with unwrap methods such as:
 ```rust
-fn unwrap_or r fallback (result<T> T -> T)
+fn unwrap_or r fallback (result<a> a -> a)
     case r of
       Ok  v: v
       Err _: fallback

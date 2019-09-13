@@ -51,6 +51,8 @@ pub enum Key {
     Then,
     Else,
     ElseIf,
+    ListOpen,
+    ListClose,
     Or,
     And,
     Use,
@@ -121,6 +123,8 @@ impl Key {
             b'/' => Complete(Operator(Operators::Math(Math::Div))),
             b'*' => Complete(Operator(Operators::Math(Math::Mul))),
             b'|' => Single(Comment),
+            b'[' => Complete(ListOpen),
+            b']' => Complete(ListClose),
             _ => Unmatched,
         }
     }
@@ -172,6 +176,8 @@ impl fmt::Display for Key {
             HeaderConvert => "convert",
             HeaderType => "type",
             Pipe => "<<",
+            ListOpen => "[",
+            ListClose => "]",
             ParenOpen => "(",
             ParenClose => ")",
             HeaderArrow => "->",

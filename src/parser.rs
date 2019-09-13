@@ -2,6 +2,7 @@ pub mod error;
 pub mod function;
 pub mod index;
 pub mod list;
+pub mod module;
 pub mod prelude;
 pub mod tokenizer;
 pub mod util;
@@ -9,15 +10,16 @@ pub mod util;
 use crate::env;
 use crate::env::cli::debug;
 use crate::error::{Error, Leaf};
-use crate::evaler::module;
-use crate::evaler::module::Module;
+use crate::evaler::module::RUNTIME;
 use error::ParseError;
-use function::{Context, FunctionBuilder};
+use function::{checker::Checker, Context, FunctionBuilder};
 use index::Index;
+pub use module::ParseModule;
 use std::fs::File;
 use std::io::ErrorKind;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use termion::color::*;
 use tokenizer::{
     token::{Key, Token},
     Tokenizer,
@@ -26,59 +28,83 @@ use tokenizer::{
 #[derive(Default)]
 pub struct Parser {
     index: Index,
+    pub modules: Vec<Option<ParseModule>>, // Option<> because we reserve module ID's for recursive parsing
 }
 
 impl Parser {
     pub fn new() -> Self {
         Self {
             index: Index::new(),
+            modules: Vec::new(),
         }
     }
 
-    pub fn run<'a>(mut self, entrypoint: PathBuf) -> Result<(&'a Module, usize), Box<dyn Error>> {
-        prelude::include_all(&mut self.index);
+    fn reserve_module_space(&mut self) -> usize {
+        let id = self.modules.len();
+        self.modules.push(None);
+        id
+    }
+
+    pub fn run(mut self, entrypoint: PathBuf) -> Result<usize, Box<dyn Error>> {
+        let prelude_mod = prelude::include_all(&mut self.index);
+        if env::cli::debug::is_dev() {
+            eprintln!(
+                "\n{}PRELUDE MODULE{} \n{:?}",
+                Fg(Magenta),
+                Fg(Reset),
+                prelude_mod
+            );
+        }
+        self.modules.push(Some(prelude_mod));
+
         if let Err(e) = self.parse_file(entrypoint.clone()) {
             return Err(Box::new(e));
         };
+        let (fid, m) = self.index.try_get_file(&entrypoint).unwrap();
+        let main_id = m.borrow().get_func("main");
+        let modules = self.modules.drain(0..).map(|a| a.unwrap()).collect();
 
-        // return the entry-point program
-        // prelude will always be 0 so entrypoint becomes 1
-        match module::get(1) {
-            Some(m) => {
-                let file = self.index.get_file(&entrypoint);
-                let main = file
-                    .borrow_mut()
-                    .try_get_func("main")
-                    .expect("Main not found");
-                Ok((m, main))
-            }
-            None => panic!("No modules were created"),
+        if let Err(e) = Checker::new(&self.index, &modules)
+            .dive_func(fid, main_id)
+            .validate_func(&[])
+        {
+            let (error_source_fid, _) = self.index.try_get_file(&e.file).unwrap();
+            return Err(Box::new(
+                e.find_line(&modules[error_source_fid].tokenizer.source()),
+            ));
         }
+        // TODO: To be able to attach source code data I need to move the raw source code &[u8] in
+        // ParseModule instead of having it in local scope
+
+        // GLOBAL MUTATION
+        unsafe { RUNTIME = modules.into() }
+
+        Ok(main_id)
     }
 
     pub fn parse_file(&mut self, file: PathBuf) -> Result<(), ParseError> {
-        //self.tagger.add_file(file.clone());
         let (fid, _tagger) = self.index.get_file_or_create(&file);
-
-        // This is only the skeleton of the module we allocate.
-        // We will now start appending functions and types to it as we go
-        let mut module = Module::with_fileid(fid);
-        let reserved_module_id = unsafe { module::reserve_module_space() };
 
         // Initialize the tokenizer
         let mut tokenizer = Tokenizer::new(read_to_end(&file)?);
         let mut functions = Vec::new();
 
+        // This is only the skeleton of the module we allocate.
+        // We will now start appending functions and types to it as we go
+        let mut module = ParseModule::with_fid(fid, tokenizer);
+        let reserved_index = self.reserve_module_space();
+        assert_eq!(fid, reserved_index);
+
         loop {
-            let token = tokenizer.next_token(false);
+            let token = module.tokenizer.next_token(false);
             // Lets see which sub-parser to switch to
             match token {
                 Token::Key(Key::Use) => {
                     if let Token::Import(src) = {
-                        let t = tokenizer.next_token(false);
+                        let t = module.tokenizer.next_token(false);
                         import_from(t).map_err(|e| {
-                            e.with_linen(tokenizer.linecount)
-                                .find_line(&tokenizer.source())
+                            e.with_linen(module.tokenizer.linecount)
+                                .find_line(&module.tokenizer.source())
                         })?
                     } {
                         let mod_path = locate_module(src.clone());
@@ -90,12 +116,12 @@ impl Parser {
                     }
                 }
                 Token::Key(Key::HeaderFn) => {
-                    let mut context = Context::new(&file, &mut tokenizer, &mut self.index);
-                    let func = match FunctionBuilder::new(&file).with_header(&mut context) {
+                    let mut context = Context::new(&file, &mut module.tokenizer, &mut self.index);
+                    let func = match FunctionBuilder::new(file.clone()).with_header(&mut context) {
                         Err(e) => {
                             return Err(ParseError::new(file.clone(), e)
-                                .with_linen(tokenizer.linecount)
-                                .find_line(tokenizer.source()))
+                                .with_linen(module.tokenizer.linecount)
+                                .find_line(module.tokenizer.source()))
                         }
                         Ok(f) => f,
                     }
@@ -103,8 +129,8 @@ impl Parser {
                     let func = match func {
                         Err(e) => {
                             return Err(ParseError::new(file.clone(), e)
-                                .with_linen(tokenizer.linecount)
-                                .find_line(tokenizer.source()))
+                                .with_linen(module.tokenizer.linecount)
+                                .find_line(module.tokenizer.source()))
                         }
                         Ok(f) => f,
                     };
@@ -115,15 +141,22 @@ impl Parser {
                 Token::EOF => break,
                 _ => {
                     return Err(ParseError::new(file.clone(), Leaf::ExHeader(token))
-                        .with_linen(tokenizer.linecount)
-                        .find_line(tokenizer.source()));
+                        .with_linen(module.tokenizer.linecount)
+                        .find_line(module.tokenizer.source()));
                 }
             };
         }
         let is_devmode = debug::is_dev();
+        /*
         if is_devmode {
-            eprintln!("INDEX \n{:?}", &self.index.get_file(&file).borrow());
+            eprintln!(
+                "\n{}INDEX{} \n{:?}",
+                Fg(Magenta),
+                Fg(Reset),
+                &self.index.get_file(&file).borrow()
+            );
         }
+        */
 
         // Time for pass-2. I want to Optimize away identifiers
         // Function and type names are already indexed.
@@ -131,17 +164,21 @@ impl Parser {
             let optimized_func = self
                 .index
                 .optimize_func(func)
-                .map_err(|e| e.find_line(&tokenizer.source()))?;
+                .map_err(|e| e.find_line(&module.tokenizer.source()))?;
             module.functions.push(optimized_func);
         }
 
         if is_devmode {
-            eprintln!("MODULE {:?}\n{:?}", file, module);
+            eprintln!(
+                "{}MODULE{} {:?}\n{:?}",
+                Fg(Magenta),
+                Fg(Reset),
+                file,
+                module
+            );
         }
 
-        unsafe {
-            module::set(reserved_module_id, module);
-        }
+        self.modules[reserved_index] = Some(module);
         Ok(())
     }
 }

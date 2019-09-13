@@ -1,19 +1,24 @@
 use super::index::Index;
+use super::list;
+use super::tokenizer::token;
 use super::tokenizer::token::{Key, Token};
-use super::tokenizer::{Tokenizer, Tracked};
+use super::tokenizer::{linecount, Tokenizer, Tracked};
+use super::util;
+use super::util::GatherMode;
 use crate::error::Leaf;
 use crate::identifier::r#type::{BaseType, Type};
 use crate::identifier::Identifier;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub mod checker;
 
-pub struct FunctionBuilder<'a> {
+pub struct FunctionBuilder {
     pub wheres: Vec<Vec<Tracked<Token>>>,
     pub tokens: Vec<Tracked<Token>>,
     pub header: FunctionHeader,
-    pub file: &'a Path,
+    pub file: PathBuf,
+    pub line: linecount::Point,
 }
 
 #[derive(Clone)]
@@ -32,17 +37,18 @@ const STOPPERS: &[(Token, u8)] = &[
     (Token::EOF, 0),
 ];
 
-impl<'a> FunctionBuilder<'a> {
-    pub fn new(file: &'a Path) -> Self {
+impl FunctionBuilder {
+    pub fn new(file: PathBuf) -> Self {
         Self {
             wheres: Vec::new(),
             tokens: Vec::new(),
             header: FunctionHeader::new(),
             file,
+            line: linecount::Point::new(),
         }
     }
     pub fn from_raw_ir(
-        file: &'a str,
+        file: &str,
         name: &str,
         mut tokens: Vec<Token>,
         returns: Type,
@@ -51,7 +57,8 @@ impl<'a> FunctionBuilder<'a> {
         Self {
             wheres: Vec::new(),
             tokens: tokens.drain(0..).map(Tracked::new).collect(),
-            file: Path::new(file),
+            file: PathBuf::from(file),
+            line: linecount::Point::new(),
             header: FunctionHeader {
                 parameter_names: (0..parameters.len())
                     .map(|n| n.to_string())
@@ -71,6 +78,7 @@ impl<'a> FunctionBuilder<'a> {
             _ => return Err(Leaf::ExFnName(token)),
         };
         super::is_valid_identifier(&self.header.name)?;
+        self.line = c.tokenizer.linecount;
 
         self.get_params(c)
     }
@@ -109,6 +117,13 @@ impl<'a> FunctionBuilder<'a> {
                             .push(Identifier::from(&tname, c.file, c.index));
                     }
                 }
+                Token::RuntimeList(entries) => {
+                    if entries.len() != 1 {
+                        panic!("ERROR_TODO: Mixed types in list are not supported")
+                    }
+                    let t = self.list_to_type(c, &entries).unwrap(); // ? INSTEAD
+                    self.header.parameters.push(t);
+                }
                 Token::Key(Key::HeaderArrow) => {
                     let token = c.tokenizer.next_token(false);
                     match token {
@@ -138,6 +153,21 @@ impl<'a> FunctionBuilder<'a> {
             .set_func(self.header.clone());
         Ok(self)
     }
+
+    // The tokenizer turns [a] into RuntimeList(Vec(Word("a"))), this is a hacky way to undo that
+    // ERROR TODO
+    fn list_to_type(&self, c: &mut Context, runtime_list: &[Token]) -> Result<Type, ()> {
+        if runtime_list.len() != 1 {
+            return Err(());
+        }
+        match &runtime_list[0] {
+            Token::RuntimeList(nested) => Ok(Type::List(Box::new(self.list_to_type(c, &nested)?))),
+            Token::Word(tname) => Ok(Type::List(Box::new(Identifier::from(
+                tname, c.file, c.index,
+            )))),
+            _ => Err(()),
+        }
+    }
 }
 
 pub struct Context<'a> {
@@ -155,7 +185,7 @@ impl<'a> Context<'a> {
     }
 }
 
-impl<'a> FunctionBuilder<'a> {
+impl FunctionBuilder {
     fn build_buf(
         &mut self,
         c: &mut Context,
@@ -164,8 +194,8 @@ impl<'a> FunctionBuilder<'a> {
         let mut tbuf = Vec::new();
         loop {
             let mut token = Tracked {
-                inner: c.tokenizer.next_token(false),
                 position: c.tokenizer.linecount,
+                inner: c.tokenizer.next_token(false),
             };
             for (stopper, len) in STOPPERS.iter() {
                 if stopper == &token.inner {
@@ -185,6 +215,51 @@ impl<'a> FunctionBuilder<'a> {
                             .map(|tt| tt.untrack_t())
                             .collect(),
                     )
+                }
+                Token::Key(Key::ListOpen) => {
+                    let make_tracked = |t| Tracked {
+                        inner: t,
+                        position: token.position,
+                    };
+
+                    let (raw_list, was_on) = c
+                        .tokenizer
+                        .gather_to(GatherMode::NonBreaking, &[b']'])
+                        .unwrap();
+                    let mut list_buffer = Vec::new();
+                    list::build_list(raw_list, false, |entity| -> Result<(), ()> {
+                        let mut index = 0;
+                        let mut entity_buffer = Vec::new();
+                        loop {
+                            let (raw_token, was_on) =
+                                util::gather_to(GatherMode::Normal, &entity[index..], &[b' ']);
+                            index += raw_token.len();
+
+                            let mut construct = |raw| {
+                                match Tokenizer::build_token(raw) {
+                                    token::Result::Empty => index += 1,
+                                    token::Result::Complete(token) => {
+                                        entity_buffer.push(make_tracked(token))
+                                    }
+                                    _ => panic!("Unexpected entity from token parse"),
+                                };
+                            };
+
+                            if was_on == 0 {
+                                construct(raw_token);
+                                break;
+                            }
+                            construct(raw_token);
+                        }
+                        if entity_buffer.len() > 1 {
+                            list_buffer.push(make_tracked(Token::TrackedGroup(entity_buffer)))
+                        } else {
+                            list_buffer.push(entity_buffer.remove(0))
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
+                    token.inner = Token::TrackedRuntimeList(list_buffer);
                 }
                 Token::Key(Key::Pipe) => {
                     token.inner = Token::TrackedGroup(self.build_buf(c, Some(&[Key::Pipe]))?)

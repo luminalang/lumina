@@ -58,7 +58,7 @@ impl Operator for List {
                 // They need to both be List of same type or both be String
                 match &left {
                     Type::List(_) => (true, left == right),
-                    Type::Custom(fid, tid) => {
+                    Type::Custom(fid, tid, _typearg) => {
                         if *fid == prelude::LEAF_PRIM_FID && *tid == prelude::STRING_ID {
                             (true, left == right)
                         } else {

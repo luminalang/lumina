@@ -76,9 +76,13 @@ impl TryFrom<&[u8]> for Value {
                 }
                 return Ok(Value::Byte(slice[1]));
             }
+            /*
             Some(b'[') => {
                 if *slice.last().unwrap() != b']' {
-                    panic!("List missing ending");
+                    panic!(
+                        "List missing ending: {:?}",
+                        slice.last().map(|a| *a as char)
+                    );
                 }
 
                 let mut list_buf: Vec<Value> = Vec::new();
@@ -108,6 +112,7 @@ impl TryFrom<&[u8]> for Value {
                 let final_list = Ok(Value::List(list_buf));
                 return final_list;
             }
+            */
             Some(b'"') => {
                 if slice.last().copied() != Some(b'"') {
                     return Err(()); // TODO: Handle
@@ -141,7 +146,7 @@ impl TryFrom<&[u8]> for Value {
                 }
 
                 return Ok(Value::Struct(
-                    Type::Custom(prelude::LEAF_PRIM_FID, prelude::STRING_ID),
+                    Type::Custom(prelude::LEAF_PRIM_FID, prelude::STRING_ID, None),
                     vec![Value::List(leaf_str)],
                 ));
             }
@@ -185,9 +190,4 @@ impl<'t> Into<Type> for &Value {
             Value::Struct(of_t, _) => of_t.clone(),
         }
     }
-}
-
-#[derive(Debug)]
-pub struct CustomType {
-    pub fields: Vec<Type>,
 }

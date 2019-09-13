@@ -18,10 +18,17 @@ pub enum Type {
     Raw(String),
 
     Base(BaseType),
+    UnsafeValid,
     Generic(u8),
     List(Box<Type>),
     Closure(Box<(Vec<Type>, Type)>),
-    Custom(usize, usize),
+    Custom(usize, usize, Option<Box<Type>>),
+}
+
+#[derive(Debug)]
+pub struct CustomType {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
 }
 
 impl Type {
@@ -38,6 +45,7 @@ impl TryFrom<&str> for Type {
     type Error = ();
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
+        let s = s.trim();
         use BaseType::*;
         match s {
             "int" => Ok(Type::Base(Int)),
@@ -47,10 +55,13 @@ impl TryFrom<&str> for Type {
             "_" | "nothing" => Ok(Type::Base(Nothing)),
             _ => {
                 if s.len() == 1 {
+                    // Generics
+                    // Convert ascii byte to index (a.. -> 0..)
                     let ident = s.bytes().next().unwrap() - 97;
                     Ok(Type::Generic(ident))
-                } else if s.get(0..5) == Some("list<") {
-                    let sub_t = Type::try_from(&s[5..s.len() - 2])?;
+                } else if s.bytes().next() == Some(b'[') {
+                    // Lists
+                    let sub_t = Type::try_from(&s[1..s.len() - 2])?;
                     Ok(Type::List(Box::new(sub_t)))
                 } else {
                     Err(())
@@ -60,10 +71,10 @@ impl TryFrom<&str> for Type {
     }
 }
 
-impl Into<String> for &Type {
-    fn into(self) -> String {
+impl From<&Type> for String {
+    fn from(src: &Type) -> Self {
         use BaseType::*;
-        match self {
+        match src {
             Type::Base(bt) => match bt {
                 Int => "int".to_owned(),
                 Nothing => "nothing".to_owned(),
@@ -77,9 +88,22 @@ impl Into<String> for &Type {
                 let s: String = a.into();
                 format!("[{}]", s)
             }
-            Type::Custom(fid, id) => format!("Struct({}:{})", fid, id),
-            _ => panic!("Can not display {:?}", self),
+            Type::Custom(fid, id, typearg) => {
+                format!("Struct({}:{}<{:?}>)", fid, id, typearg.as_ref().clone())
+            }
+            _ => panic!("Can not display {:?}", src),
         }
+    }
+}
+
+fn get_typearg(from: &str) -> Option<&str> {
+    let from = from.trim_end();
+    if from.bytes().last() == Some(b'>') {
+        let mut iter = from.splitn(1, '<');
+        iter.next().unwrap();
+        iter.next().map(|t_str| &t_str[0..t_str.len() - 1])
+    } else {
+        None
     }
 }
 
@@ -90,15 +114,33 @@ impl Identifier for Type {
         };
         let mut spl = w.splitn(2, ':');
         let first = spl.next().unwrap();
-        let (module, typename) = match spl.next() {
-            Some(second) => (Path::new(first), second),
-            None => (call_fid, first),
+        let (module, typename, typearg) = match spl.next() {
+            Some(second) => match get_typearg(second) {
+                Some(typearg) => (
+                    call_fid,
+                    &second[0..second.len() - typearg.len() - 2],
+                    Some(typearg),
+                ),
+                None => (call_fid, second, None),
+            },
+            None => match get_typearg(first) {
+                Some(typearg) => (
+                    call_fid,
+                    &first[0..first.len() - typearg.len() - 2],
+                    Some(typearg),
+                ),
+                None => (call_fid, first, None),
+            },
         };
 
         let (fid, tagstore) = index.get_file_or_create(module);
         let tagstore = tagstore.borrow_mut();
         match tagstore.try_get_type(typename) {
-            Some(local) => Type::Custom(fid, local.0),
+            Some(local) => Type::Custom(
+                fid,
+                local.0,
+                typearg.map(|a| Box::new(Identifier::from(a, call_fid, index))),
+            ),
             None => Type::Custom(
                 prelude::LEAF_PRIM_FID,
                 index
@@ -106,6 +148,7 @@ impl Identifier for Type {
                     .borrow_mut()
                     .get_type(typename)
                     .0,
+                typearg.map(|a| Box::new(Identifier::from(a, call_fid, index))),
             ),
         }
     }
@@ -119,7 +162,7 @@ impl Identifier for Type {
 
     fn get_fid_id(&self) -> (usize, usize) {
         match self {
-            Type::Custom(fid, tid) => (*fid, *tid),
+            Type::Custom(fid, tid, typearg) => (*fid, *tid),
             _ => panic!("Attempted to use type as optimized before optimization"),
         }
     }

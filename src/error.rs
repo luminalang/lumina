@@ -1,3 +1,5 @@
+use crate::identifier::r#type::Type;
+use crate::parser::function::FunctionHeader;
 use crate::parser::tokenizer::token::Token;
 use std::fmt;
 use std::path::PathBuf;
@@ -10,11 +12,17 @@ pub enum Leaf {
     ExFnReturn(Token),
     ExParam(Token),
     ExParamType(Token),
+    ToManyParams(FunctionHeader, Type),
+    ToFewParams(FunctionHeader, Vec<Type>),
     RustCallNonum,
     RustCallInvUse(String, String),
     UnexInFnHeader(char),
     TypeNotFound(String),
     FuncNotFound(String),
+    FuncTypeMismatch(FunctionHeader, Type, Type), // where Vec is generics
+    FuncRetWrongType(FunctionHeader, Type),
+    IfStatementTypeMismatch(Vec<Type>),
+    ListTypeMismatch(Type, Type),
     ModuleNotFound(String),
     MalfFnHeader,
     IllegalCharacter(String),
@@ -41,6 +49,8 @@ impl fmt::Display for Leaf {
             Leaf::ExFnReturn(tok) => write!( f, "Expected function return type, got `{}`", tok),
             Leaf::ExParam(tok) => write!(f, "Expected function parameters, newline or return type signature. got: `{}`", tok),
             Leaf::ExParamType(tok) => write!(f, "Exepcted function parameter type or `->`. got: `{}`", tok),
+            Leaf::ToManyParams(header, got) => write!(f, "Parameter amount mismatch. Wanted {} got {:?}", header.parameters.len(), got), // TODO: Fancy header print
+            Leaf::ToFewParams(header, got) => write!(f, "Function {} got to few parameters, got {:?}", header.name, got), // TODO: Fancy stuff
             Leaf::RustCallNonum => write!(f, "rust:call<n> expects a number"),
             Leaf::RustCallInvUse(a, b) => write!(f, "rust builtin invalid usage: {}:{}", a, b), 
             Leaf::UnexInFnHeader(tok) => write!( f, "Unexpected `{}` in function header", tok),
@@ -48,6 +58,10 @@ impl fmt::Display for Leaf {
             Leaf::TypeNotFound(name) => write!( f, "Type not found: {}", name),
             Leaf::FuncNotFound(name) => write!(f, "Function not found: {}", name),
             Leaf::ModuleNotFound(name) => write!(f, "Module not found: {}", name),
+            Leaf::FuncTypeMismatch(_header, wanted, got) => write!(f, "Type mismatch. Wanted {}, got {}", String::from(wanted), String::from(got)), // TODO: Fancy header print
+            Leaf::FuncRetWrongType(header, got) => write!(f, "Function {} returns the wrong type. Expected `{}` but got `{}`", header.name, String::from(&header.returns), String::from(got)),
+            Leaf::IfStatementTypeMismatch(types) => write!(f, "ERROR_TODO: If statement type mismatch: {:?}", types),
+            Leaf::ListTypeMismatch(wanted, got) => write!(f, "The type of values in this list varies. The first element is `{}` but we also have `{}`", String::from(wanted), String::from(got)),
             Leaf::MalfFnHeader => write!( f, "Malformed function header"),
             Leaf::FileNotFound(file) => write!(f, "File {} not found", file.file_name().unwrap().to_str().unwrap()),
             Leaf::FilePermissionDenied(file) => write!(f, "Could not open {:#?}: Permission denied", file.file_name().unwrap()),

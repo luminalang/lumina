@@ -1,7 +1,8 @@
 use super::function::Function;
-use super::r#type::{CustomType, Value};
+use super::r#type::Value;
 use super::runner::Runner;
-use crate::error::Leaf;
+use crate::identifier::r#type::CustomType;
+use crate::parser::{ParseModule, Parser};
 
 pub static mut RUNTIME: Runtime = Runtime {
     modules: Vec::new(),
@@ -9,7 +10,7 @@ pub static mut RUNTIME: Runtime = Runtime {
 
 #[derive(Debug)]
 pub struct Runtime {
-    modules: Vec<Option<Module>>, // None are reserved spaces
+    modules: Vec<Module>,
 }
 
 impl Runtime {
@@ -21,43 +22,27 @@ impl Runtime {
     }
 }
 
-pub fn get<'a>(id: usize) -> Option<&'a Module> {
-    unsafe { RUNTIME.modules.get(id).unwrap().as_ref() }
-}
-/*
-pub fn last<'a>() -> Option<&'a Module> {
-    unsafe { RUNTIME.modules.last().unwrap().as_ref() }
-}
-*/
-
-pub unsafe fn get_mut<'a>(id: usize) -> Option<&'a mut Module> {
-    match RUNTIME.modules.get_mut(id) {
-        None => panic!("Module {} does not exist", id),
-        Some(m) => match m {
-            None => panic!("Module {} is not allocated", id),
-            Some(m) => Some(m),
-        },
+impl From<Vec<ParseModule>> for Runtime {
+    fn from(mut modules: Vec<ParseModule>) -> Runtime {
+        Runtime {
+            modules: modules.drain(0..).map(|m| m.into()).collect(),
+        }
     }
 }
 
-pub unsafe fn reserve_module_space() -> usize {
-    let reserved_id = RUNTIME.modules.len();
-    RUNTIME.modules.push(None);
-    reserved_id
-}
-pub unsafe fn set(id: usize, module: Module) {
-    RUNTIME.modules[id] = Some(module);
+pub fn get<'a>(id: usize) -> Option<&'a Module> {
+    unsafe { RUNTIME.modules.get(id) }
 }
 
-pub unsafe fn push_module(module: Module) {
-    RUNTIME.modules.push(Some(module))
+pub unsafe fn get_mut<'a>(id: usize) -> Option<&'a mut Module> {
+    RUNTIME.modules.get_mut(id)
 }
 
 pub struct Module {
     pub functions: Vec<Function>,
     pub types: Vec<CustomType>,
 
-    pub fileid: usize,
+    pub fid: usize,
 }
 
 pub fn dump_modules() {
@@ -65,18 +50,16 @@ pub fn dump_modules() {
         for (i, m) in RUNTIME.modules.iter().enumerate() {
             eprintln!(
                 "{} => \n  functions: {:?}\n  types: {:?}",
-                i,
-                m.as_ref().map(|m| &m.functions).unwrap_or(&Vec::new()),
-                m.as_ref().map(|m| &m.types).unwrap_or(&Vec::new()),
+                i, m.functions, m.types,
             );
         }
     }
 }
 
 impl Module {
-    pub fn with_fileid(fileid: usize) -> Self {
+    pub fn with_fid(fid: usize) -> Self {
         Self {
-            fileid,
+            fid,
             functions: Vec::new(),
             types: Vec::new(),
         }
@@ -95,6 +78,16 @@ impl Module {
     }
 }
 
+impl From<ParseModule> for Module {
+    fn from(mut pmodule: ParseModule) -> Module {
+        Module {
+            fid: pmodule.fid,
+            functions: pmodule.functions.drain(0..).map(|f| f.into()).collect(),
+            types: Vec::new(), // TODO: I don't think runtime even needs a record of the types since we're fully static
+        }
+    }
+}
+
 use std::fmt;
 impl fmt::Debug for Module {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -109,7 +102,7 @@ impl fmt::Debug for Module {
         write!(
             f,
             " - Module {}:\n  {}Functions:{}\n{}\n  {}Types:{}\n    {}",
-            self.fileid,
+            self.fid,
             termion::color::Fg(termion::color::Green),
             termion::color::Fg(termion::color::Reset),
             functions,

@@ -1,6 +1,4 @@
 use super::error::ParseError;
-use crate::error::Leaf;
-use crate::evaler::function::Function;
 use crate::identifier::r#type::Type;
 use crate::parser::function::{FunctionBuilder, FunctionHeader};
 use std::cell::RefCell;
@@ -12,7 +10,6 @@ use termion::color;
 use termion::color::Fg;
 
 mod translator;
-use super::function::checker::Checker;
 use translator::Translator;
 
 pub struct Tagger {
@@ -171,7 +168,10 @@ impl Index {
             .map(|fid| (*fid, self.files[*fid].clone()))
     }
 
-    pub fn optimize_func(&mut self, mut func: FunctionBuilder) -> Result<Function, ParseError> {
+    pub fn optimize_func(
+        &mut self,
+        mut func: FunctionBuilder,
+    ) -> Result<FunctionBuilder, ParseError> {
         let mut translator = Translator::new(self, &func.header.name);
         for (i, param) in func.header.parameters.iter().enumerate() {
             translator.tag_param(&func.header.parameter_names[i], param.clone())
@@ -180,12 +180,9 @@ impl Index {
             translator.tag_where(wheres.as_ref());
         }
         // TODO: Am i forgetting to translate the tokens in where statements?
-        translator.translate_buf(func.file, &mut func.tokens)?;
+        translator.translate_buf(&func.file, &mut func.tokens)?;
 
-        let checker = Checker::new(None, &func, self);
-        checker.validate_function();
-
-        Ok(func.into())
+        Ok(func)
     }
 }
 

@@ -12,7 +12,7 @@ pub struct Function {
     r_ip: usize,
 }
 
-impl From<FunctionBuilder<'_>> for Function {
+impl From<FunctionBuilder> for Function {
     fn from(mut func: FunctionBuilder) -> Self {
         Self {
             tokens: Arc::new(func.tokens.drain(0..).map(|tt| tt.untrack_t()).collect()),

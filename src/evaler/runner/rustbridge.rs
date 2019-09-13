@@ -14,7 +14,7 @@ pub const TO_STRING: u16 = 2;
 
 macro_rules! PRIMITIVE_STRING {
     () => {
-        Type::Custom(prelude::LEAF_PRIM_FID, prelude::STRING_ID)
+        Type::Custom(prelude::LEAF_PRIM_FID, prelude::STRING_ID, None)
     };
 }
 

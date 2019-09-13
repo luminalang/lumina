@@ -6,10 +6,10 @@ pub mod token;
 use token::{Key, Token};
 
 use super::util;
+use super::util::GatherMode;
 use crate::evaler::r#type::Value;
-use crate::parser::list;
 
-const STOPPERS: &[u8] = &[b' ', b'(', b')', b'\n'];
+const STOPPERS: &[u8] = &[b' ', b'(', b')', b'\n', b'[', b']'];
 
 #[derive(Debug)]
 pub struct Tokenizer {
@@ -69,12 +69,6 @@ impl<T: PartialEq + Clone> Tracked<T> {
             position: linecount::Point::new(),
         }
     }
-    /*
-    #[inline]
-    pub fn untrack(self) -> T {
-        self.inner
-    }
-    */
 }
 
 impl Tokenizer {
@@ -115,43 +109,6 @@ impl Tokenizer {
             token::Result::Empty => panic!("Empty token result from Key::matches"),
             token::Result::Unmatched => {}
         };
-        // Is it a list that contains non-inline values?
-        if chars.first() == Some(&b'[') {
-            // Here we store each whole entity that's been converted to a token.
-            // Some tokens are grouped together such as functions that take parameters.
-            let mut tbuf = Vec::new();
-
-            list::build_list(chars, |entity| -> Result<_, ()> {
-                // Some entities have multiple tokens, here we've got 3 tokens in one entity [a, b, add c c, d]
-                // therefore we're making this a buffer
-                let mut nested_internal_tbuf: Vec<Token> = Vec::new();
-
-                let mut index = 0;
-                loop {
-                    if index >= entity.len() {
-                        if nested_internal_tbuf.len() == 1 {
-                            tbuf.push(nested_internal_tbuf.remove(0))
-                        } else {
-                            tbuf.push(Token::Group(nested_internal_tbuf))
-                        };
-                        return Ok(());
-                    }
-                    let (raw_t, _was_on) = util::gather_to(&entity[index..], &[b' ', b'\n']);
-
-                    index += raw_t.len();
-                    match Tokenizer::build_token(raw_t) {
-                        token::Result::Complete(t) => nested_internal_tbuf.push(t),
-                        token::Result::Empty => {
-                            index += 1;
-                            continue;
-                        }
-                        _ => panic!("ERROR_TODO: Expected complete token form list"),
-                    }
-                }
-            })
-            .unwrap();
-            return token::Result::Complete(Token::RuntimeList(tbuf));
-        }
         // Is it a lambda?
         if chars.first() == Some(&b'\\') && chars.last() == Some(&b':') && chars.len() > 2 {
             let token =
@@ -167,6 +124,11 @@ impl Tokenizer {
         if let Some(c) = self.source.get(self.index) {
             // Skip newlines
             if *c == b'\n' {
+                // Weird hack to make sure the first newline is counted if first line is empty
+                if self.linecount.line == 0 {
+                    self.linecount.line += 1;
+                }
+
                 self.next();
                 return if is_header {
                     // Unless it's an explicitely required newline
@@ -181,7 +143,7 @@ impl Tokenizer {
             }
         }
 
-        let chars = match self.gather_to(STOPPERS) {
+        let (chars, _) = match self.gather_to(GatherMode::Normal, STOPPERS) {
             None => return Token::EOF,
             Some(gather) => gather,
         };
@@ -200,14 +162,14 @@ impl Tokenizer {
         }
     }
 
-    fn gather_to(&mut self, stop_at: &[u8]) -> Option<&[u8]> {
+    pub fn gather_to(&mut self, mode: GatherMode, stop_at: &[u8]) -> Option<(&[u8], u8)> {
         if self.index >= self.source.len() {
             return None;
         }
-        let (gathered, was_on) = util::gather_to(&self.source[self.index..], stop_at);
+        let (gathered, was_on) = util::gather_to(mode, &self.source[self.index..], stop_at);
 
         // We want these stoppers to be included in the next gather
-        if was_on == b'(' || was_on == b'\n' {
+        if was_on == b'(' || was_on == b'\n' || was_on == b'[' {
             self.index -= 1;
             if self.source.get(self.index) == Some(&b'\n') {
                 self.linecount.line -= 1;
@@ -220,7 +182,7 @@ impl Tokenizer {
                 self.linecount.line += 1;
             }
         }
-        Some(util::trim(gathered))
+        Some((util::trim(gathered), was_on))
     }
 
     fn skip_to(&mut self, delim: u8) -> usize {
@@ -231,13 +193,6 @@ impl Tokenizer {
                 return i;
             }
             i += 1;
-        }
-    }
-
-    fn tracked<T: PartialEq + Clone>(&self, v: T) -> Tracked<T> {
-        Tracked {
-            inner: v,
-            position: self.linecount,
         }
     }
 

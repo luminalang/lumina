@@ -2,10 +2,9 @@ use super::tokenizer::linecount;
 use crate::error::{Error, Leaf};
 use std::path::PathBuf;
 
-// TODO: A bit missleading name, CompileError might be more accurate
 pub struct ParseError {
     kind: Leaf,
-    file: PathBuf,
+    pub file: PathBuf,
     line_n: linecount::Point,
     line: Option<Vec<u8>>,
 }
@@ -63,7 +62,7 @@ impl ParseError {
             self
         }
     }
-    pub fn find_line(mut self, source: &[u8]) -> Self {
+    pub fn find_line(self, source: &[u8]) -> Self {
         let line = source
             .split(|c| *c == b'\n')
             .enumerate()

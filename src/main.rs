@@ -6,6 +6,7 @@ pub mod evaler;
 pub mod identifier;
 pub mod parser;
 
+use evaler::module;
 use evaler::runner::Runner;
 
 use crate::env::cli::debug;
@@ -20,8 +21,8 @@ fn main() {
     let parser = parser::Parser::new();
     match parser.run(PathBuf::from(env::entrypoint())) {
         Err(e) => eprintln!("{}", e),
-        Ok((program, main_id)) => {
-            let v = Runner::run(&mut program.get_function(main_id), &[]);
+        Ok(main_id) => {
+            let v = Runner::run(&mut module::get(1).unwrap().get_function(main_id), &[]);
             if debug::is_dev() {
                 println!("\nmain returns {:?}", v);
             }

@@ -1,5 +1,5 @@
 use crate::identifier::r#type::{BaseType, Type};
-use crate::parser::{list, prelude};
+use crate::parser::prelude;
 use std::convert::TryFrom;
 
 #[derive(Debug, PartialEq, Clone)]

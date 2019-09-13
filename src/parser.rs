@@ -62,7 +62,11 @@ impl Parser {
         };
         let (fid, m) = self.index.try_get_file(&entrypoint).unwrap();
         let main_id = m.borrow().get_func("main");
-        let modules = self.modules.drain(0..).map(|a| a.unwrap()).collect();
+        let modules = self
+            .modules
+            .drain(0..)
+            .map(|a| a.unwrap())
+            .collect::<Vec<ParseModule>>();
 
         if let Err(e) = Checker::new(&self.index, &modules)
             .dive_func(fid, main_id)
@@ -86,7 +90,7 @@ impl Parser {
         let (fid, _tagger) = self.index.get_file_or_create(&file);
 
         // Initialize the tokenizer
-        let mut tokenizer = Tokenizer::new(read_to_end(&file)?);
+        let tokenizer = Tokenizer::new(read_to_end(&file)?);
         let mut functions = Vec::new();
 
         // This is only the skeleton of the module we allocate.

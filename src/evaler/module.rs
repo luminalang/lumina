@@ -2,7 +2,7 @@ use super::function::Function;
 use super::r#type::Value;
 use super::runner::Runner;
 use crate::identifier::r#type::CustomType;
-use crate::parser::{ParseModule, Parser};
+use crate::parser::ParseModule;
 
 pub static mut RUNTIME: Runtime = Runtime {
     modules: Vec::new(),

@@ -222,7 +222,7 @@ impl FunctionBuilder {
                         position: token.position,
                     };
 
-                    let (raw_list, was_on) = c
+                    let (raw_list, _was_on) = c
                         .tokenizer
                         .gather_to(GatherMode::NonBreaking, &[b']'])
                         .unwrap();

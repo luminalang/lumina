@@ -1,8 +1,6 @@
-use super::{FunctionBuilder, FunctionHeader};
+use super::FunctionBuilder;
 use crate::error::Leaf;
-use crate::evaler::runner::operator::Operator;
 use crate::identifier::r#type::{BaseType, Type};
-use crate::identifier::Identifier;
 use crate::parser::error::ParseError;
 use crate::parser::index::Index;
 use crate::parser::tokenizer::token::{Key, Token};
@@ -11,14 +9,14 @@ use crate::parser::ParseModule;
 
 pub struct Checker<'a> {
     index: &'a Index,
-    modules: &'a Vec<ParseModule>,
+    modules: &'a [ParseModule],
     function: (usize, usize),
     generics: Vec<Type>,
     tbuf: Option<&'a [Tracked<Token>]>,
 }
 
 impl<'a> Checker<'a> {
-    pub fn new(index: &'a Index, modules: &'a Vec<ParseModule>) -> Self {
+    pub fn new(index: &'a Index, modules: &'a [ParseModule]) -> Self {
         Self {
             index,
             modules,
@@ -293,44 +291,6 @@ impl<'a> Checker<'a> {
                 Found(header.returns.clone())
             }
             _ => panic!("Cannot discover type of: {:?} || This must mean something invalid slipped through the translator", &t),
-        }
-    }
-
-    // Decode generics to their infered type
-    fn generic_decode(&self, t: Type) -> Type {
-        if let Type::Generic(n) = t {
-            match self.generics.get(n as usize) {
-                None => panic!(
-                    "Generic was never initialized: {}: {:?}",
-                    n,
-                    self.func().header
-                ),
-                Some(t) => t.clone(),
-            }
-        } else {
-            t
-        }
-    }
-
-    // Type check given with self.func.header
-    fn check_parameter(&mut self, index: u8, given: Type) -> Result<(), Leaf> {
-        match self.func().header.parameters.get(index as usize) {
-            None => Err(Leaf::ToManyParams(self.func().header.clone(), given)),
-            Some(expected) => {
-                let expected = expected.clone();
-                let given = self.generic_decode(given);
-
-                // Non-Generic comparison
-                if expected == given {
-                    Ok(())
-                } else {
-                    Err(Leaf::FuncTypeMismatch(
-                        self.func().header.clone(),
-                        expected.clone(),
-                        given,
-                    ))
-                }
-            }
         }
     }
 }

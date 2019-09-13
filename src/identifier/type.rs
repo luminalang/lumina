@@ -162,7 +162,7 @@ impl Identifier for Type {
 
     fn get_fid_id(&self) -> (usize, usize) {
         match self {
-            Type::Custom(fid, tid, typearg) => (*fid, *tid),
+            Type::Custom(fid, tid, _typearg) => (*fid, *tid),
             _ => panic!("Attempted to use type as optimized before optimization"),
         }
     }

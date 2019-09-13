@@ -185,7 +185,3 @@ impl Index {
         Ok(func)
     }
 }
-
-enum Identified {
-    Function(usize, usize, Rc<FunctionHeader>),
-}

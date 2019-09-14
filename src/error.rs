@@ -19,7 +19,7 @@ pub enum Leaf {
     UnexInFnHeader(Token),
     TypeNotFound(String),
     FuncNotFound(String),
-    FuncTypeMismatch(Box<FunctionHeader>, Type, Type), // where Vec is generics
+    FuncTypeMismatch(Box<FunctionHeader>, Type, Type),
     FuncRetWrongType(Box<FunctionHeader>, Type),
     IfStatementTypeMismatch(Vec<Type>),
     ListTypeMismatch(Type, Type),

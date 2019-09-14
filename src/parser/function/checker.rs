@@ -60,7 +60,7 @@ impl<'a> Checker<'a> {
                                 return Err(ParseError::new(
                                     func.file.clone(),
                                     Leaf::FuncTypeMismatch(
-                                        func.header.clone(),
+                                        Box::new(func.header.clone()),
                                         expected.clone(),
                                         t.clone(),
                                     ),
@@ -75,7 +75,7 @@ impl<'a> Checker<'a> {
                         return Err(ParseError::new(
                             func.file.clone(),
                             Leaf::FuncTypeMismatch(
-                                func.header.clone(),
+                                Box::new(func.header.clone()),
                                 expected.clone(),
                                 t.clone(),
                             ),
@@ -85,7 +85,7 @@ impl<'a> Checker<'a> {
                 None => {
                     return Err(ParseError::new(
                         self.func().file.clone(),
-                        Leaf::ToManyParams(self.func().header.clone(), t.clone()),
+                        Leaf::ToManyParams(Box::new(self.func().header.clone()), t.clone()),
                     )
                     .with_linen(self.func().line))
                 }
@@ -105,7 +105,7 @@ impl<'a> Checker<'a> {
         if given != self.func().header.returns {
             return Err(ParseError::new(
                 self.func().file.clone(),
-                Leaf::FuncRetWrongType(self.func().header.clone(), given.clone()),
+                Leaf::FuncRetWrongType(Box::new(self.func().header.clone()), given.clone()),
             ));
         }
         // Verify typing of the function body
@@ -250,7 +250,7 @@ impl<'a> Checker<'a> {
                 return Err(ParseError::new(
                     func.file.clone(),
                     Leaf::ToManyParams(
-                        func.header.clone(),
+                        Box::new(func.header.clone()),
                         self.discover_type(next.unwrap()).unwrap(),
                     ),
                 )

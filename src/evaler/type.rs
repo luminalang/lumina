@@ -1,5 +1,6 @@
 use crate::identifier::r#type::{BaseType, Type};
 use crate::parser::prelude;
+use crate::parser::tokenizer::token::Token;
 use std::convert::TryFrom;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -10,6 +11,7 @@ pub enum Value {
     Byte(u8),
     List(Vec<Value>),
     Struct(Type, Vec<Value>),
+    Closure(Type, Vec<Value>, Vec<Token>),
     Nothing,
 }
 
@@ -37,6 +39,7 @@ impl Value {
                 buf
             }
             Value::Struct(_, _) => String::from("<type>"), // TODO
+            Value::Closure(of_t, _, _) => String::from(of_t),
             Value::Nothing => "_".to_owned(),
         }
     }
@@ -188,6 +191,7 @@ impl<'t> Into<Type> for &Value {
                     .unwrap_or(Type::Base(BaseType::Nothing)),
             )),
             Value::Struct(of_t, _) => of_t.clone(),
+            Value::Closure(of_t, _, _) => of_t.clone(),
         }
     }
 }

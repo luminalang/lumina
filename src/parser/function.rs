@@ -107,7 +107,7 @@ impl FunctionBuilder {
             let token = c.tokenizer.next_token(true);
             match token {
                 Token::Word(tname) => {
-                    if c.tokenizer.last_char() == b')' {
+                    if c.tokenizer.last_char() == b')' || c.tokenizer.get_char() == b')' {
                         self.header.returns = Identifier::from(&tname, c.file, c.index);
                         return Ok(self);
                     } else {
@@ -124,19 +124,28 @@ impl FunctionBuilder {
                     let t = self.list_to_type(c, &entries).unwrap(); // ? INSTEAD
                     self.header.parameters.push(t);
                 }
+                Token::Key(Key::ParenOpen) => self
+                    .header
+                    .parameters
+                    .push(self.parse_function_parameter_type(c)?),
                 Token::Key(Key::HeaderArrow) => {
                     let token = c.tokenizer.next_token(false);
                     match token {
                         Token::Word(return_name) => {
                             super::is_valid_identifier(&return_name)?;
-                            self.header.returns =
-                                { Identifier::from(&return_name, c.file, c.index) };
+                            self.header.returns = Identifier::from(&return_name, c.file, c.index);
                         }
                         _ => return Err(Leaf::ExFnReturn(token)),
                     }
 
-                    if c.tokenizer.last_char() != b')' {
+                    /*
+                    if c.tokenizer.last_char() != b')' && c.tokenizer.get_char() != b')' {
                         return Err(Leaf::UnexInFnHeader(c.tokenizer.last_char() as char));
+                    }
+                    */
+                    let next = c.tokenizer.next_token(false);
+                    if next != Token::Key(Key::ParenClose) {
+                        return Err(Leaf::UnexInFnHeader(next));
                     }
                     return Ok(self);
                 }
@@ -166,6 +175,37 @@ impl FunctionBuilder {
                 tname, c.file, c.index,
             )))),
             _ => Err(()),
+        }
+    }
+
+    fn parse_function_parameter_type(&self, c: &mut Context) -> Result<Type, Leaf> {
+        let mut takes = Vec::new();
+        loop {
+            let token = c.tokenizer.next_token(false);
+            match token {
+                Token::Word(type_name) => takes.push(Identifier::from(&type_name, c.file, c.index)),
+                Token::Key(Key::ParenOpen) => takes.push(self.parse_function_parameter_type(c)?),
+                Token::Key(Key::HeaderArrow) => {
+                    let next = c.tokenizer.next_token(false);
+                    let returns: Type = match next {
+                        Token::Word(return_name) => {
+                            super::is_valid_identifier(&return_name)?;
+                            Identifier::from(&return_name, c.file, c.index)
+                        }
+                        _ => return Err(Leaf::ExFnReturn(token)),
+                    };
+                    let last = c.tokenizer.next_token(false);
+                    return if last != Token::Key(Key::ParenClose) {
+                        Err(Leaf::Unexpected(token))
+                    } else {
+                        Ok(Type::Closure(takes, Box::new(returns)))
+                    };
+                }
+                Token::EOF => {
+                    return Err(Leaf::Unmatched(token));
+                }
+                _ => return Err(Leaf::UnexInFnHeader(token)),
+            }
         }
     }
 }
@@ -265,7 +305,11 @@ impl FunctionBuilder {
                     token.inner = Token::TrackedGroup(self.build_buf(c, Some(&[Key::Pipe]))?)
                 }
                 Token::Key(Key::ParenOpen) => {
-                    token.inner = Token::TrackedGroup(self.build_buf(c, Some(&[Key::ParenClose]))?)
+                    token.inner = Token::TrackedGroup(self.build_buf(c, Some(&[Key::ParenClose]))?);
+                    let next = c.tokenizer.next_token(false);
+                    if next != Token::Key(Key::ParenClose) {
+                        panic!("ERROR_TODO: Missing matching '(': {:?}", next);
+                    }
                 }
                 Token::Key(Key::ElseIf) => {
                     c.tokenizer.regress(Key::ElseIf.to_string().len() + 1);
@@ -334,9 +378,11 @@ impl FunctionBuilder {
                     token.inner = Token::TrackedIfStatement(branches, else_branch);
                 }
                 Token::Key(k) => {
+                    println!("stoppers: {:?}\ngot: {:#?}", stop_at, k);
                     if let Some(stopper) = stop_at {
                         if stopper.contains(k) {
-                            c.tokenizer.regress(k.to_string().len() + 1);
+                            println!("{}", k.to_string().len());
+                            c.tokenizer.regress(k.to_string().len());
                             return Ok(tbuf);
                         }
                     }

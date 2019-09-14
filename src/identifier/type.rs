@@ -21,7 +21,7 @@ pub enum Type {
     UnsafeValid,
     Generic(u8),
     List(Box<Type>),
-    Closure(Box<(Vec<Type>, Type)>),
+    Closure(Vec<Type>, Box<Type>),
     Custom(usize, usize, Option<Box<Type>>),
 }
 
@@ -87,6 +87,17 @@ impl From<&Type> for String {
                 let a = &**of_t;
                 let s: String = a.into();
                 format!("[{}]", s)
+            }
+            Type::Closure(takes, gives) => {
+                let mut s = String::with_capacity(7);
+                s.push('(');
+                for t in takes {
+                    s.push_str(&format!("{} ", String::from(t)))
+                }
+                s.push_str("-> ");
+                s.push_str(&String::from(&**gives));
+                s.push(')');
+                s
             }
             Type::Custom(fid, id, typearg) => {
                 format!("Struct({}:{}<{:?}>)", fid, id, typearg.as_ref().clone())

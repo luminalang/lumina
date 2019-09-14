@@ -12,15 +12,15 @@ pub enum Leaf {
     ExFnReturn(Token),
     ExParam(Token),
     ExParamType(Token),
-    ToManyParams(FunctionHeader, Type),
-    ToFewParams(FunctionHeader, Vec<Type>),
+    ToManyParams(Box<FunctionHeader>, Type),
+    ToFewParams(Box<FunctionHeader>, Vec<Type>),
     RustCallNonum,
     RustCallInvUse(String, String),
-    UnexInFnHeader(char),
+    UnexInFnHeader(Token),
     TypeNotFound(String),
     FuncNotFound(String),
-    FuncTypeMismatch(FunctionHeader, Type, Type), // where Vec is generics
-    FuncRetWrongType(FunctionHeader, Type),
+    FuncTypeMismatch(Box<FunctionHeader>, Type, Type), // where Vec is generics
+    FuncRetWrongType(Box<FunctionHeader>, Type),
     IfStatementTypeMismatch(Vec<Type>),
     ListTypeMismatch(Type, Type),
     ModuleNotFound(String),
@@ -33,6 +33,7 @@ pub enum Leaf {
     // Generic errors
     Expected(Vec<Token>, Token),
     Unexpected(Token),
+    Unmatched(Token),
 
     // Evaler errors
 
@@ -69,6 +70,7 @@ impl fmt::Display for Leaf {
             Leaf::IllegalCharacter(s) => write!(f, "Identifier `{}` contains an illegal character", s),
             Leaf::Internal(s) => write!(f, "leaf has suffered an internal error. If you have the time then please report the error to github.com/simvux/leaf\n  error: {}", s),
             Leaf::Unimplemented(s) => write!(f, "Unimplemented feature: {}", s),
+            Leaf::Unmatched(t) => write!(f, "Unmatched {}", t),
             Leaf::Expected(one_of, got) => {
                 let middle =  match one_of.len() {
                     1 => format!("`{}`", one_of[0].to_string()),

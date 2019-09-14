@@ -127,6 +127,7 @@ impl<'a> Checker<'a> {
                 let (_walked, params) = self.check_params(i + 1, func.header.parameters.len())?;
                 self.dive_func(fid, funcid)
                     .validate_func(&params)
+                    .map_err(|e| e.with_linen(self.tbuf()[i].position))
                     .map(|_| ())
             }
             Token::TrackedRuntimeList(list) => {
@@ -255,7 +256,6 @@ impl<'a> Checker<'a> {
                     ),
                 )
                 .with_linen(next.unwrap().position));
-                //panic!("ERROR_TODO: Extra token after all required parameters. TODO: This error might or might not give lots of false positives, lets find out!\nOh btw the one I found was {:?}", token);
             }
         }
 

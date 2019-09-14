@@ -71,6 +71,7 @@ impl Parser {
         if let Err(e) = Checker::new(&self.index, &modules)
             .dive_func(fid, main_id)
             .validate_func(&[])
+            .map_err(|e| e.with_linen(modules[fid].functions[main_id].tokens[0].position))
         {
             let (error_source_fid, _) = self.index.try_get_file(&e.file).unwrap();
             return Err(Box::new(

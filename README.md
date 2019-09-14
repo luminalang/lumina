@@ -73,7 +73,7 @@ Maintaining simplicity is for the wrong cause if it hurts efficiency.\
 Leaf attempts to minimize boilerplate and generally reduce the parts of programming that is often found to be annoying by you describing behavior to add extra implicit functionality.
 
 ### The << Pipe Operator
-Data is most of the time separated by the `<<` operator, and using the `<<` operator should always be preferred over lisp-style parenthesis.\
+Data is most of the time separated by the `<<` operator, and using the `<<` operator should always be preferred over lisp-style parenthesis.
 
 If you're familiar with the `<|` operator from Elixir/Elm/F# or the `$` operator from Haskell, then getting used to this new style of data flow will be no problem. 
 
@@ -136,19 +136,20 @@ The project is not yet in an usable state but we're getting there!
  - [x] Design and implement the basic runner
  - [x] Implement int/string
  - [x] Create actually runnable Leaf programs
- - [ ] Add a TON of assertions to improve error messages
+ - [x] Add a TON of assertions to improve error messages
  - [x] Implement all other primitive types (including lists)
- - [ ] Design and implement list mutation
  - [x] Build a (Rust -> Leaf) bridge
  - [ ] Write a low-level standard library in Rust using the bridge
  - [ ] Implement conversions between the primitive types
  - [x] Add logic operations (if, elif, else)
  - [x] Swap out string identifier to vec indexes at parse-time for huge performance boosts
+ - [ ] Add { a | field = } and { field = } 
  - [ ] Add logic operations (match)
  - [ ] Add lambda support
+ - [ ] Implement function to closure conversion using '#'
  - [ ] Implement custom types (structs/enums)
  - [ ] Implement Leaf conversions
- - [ ] Design and implement generics
+ - [x] Design and implement generics
  - [ ] Internally design and implement implicit result handling
  - [ ] Write Leaf's standard library abstracting over the Rust bridge
  - [ ] Add a proper CLI

@@ -169,7 +169,7 @@ impl Tokenizer {
         let (gathered, was_on) = util::gather_to(mode, &self.source[self.index..], stop_at);
 
         // We want these stoppers to be included in the next gather
-        if was_on == b'(' || was_on == b'\n' || was_on == b'[' || was_on == b')' {
+        if b"(\n[)#".contains(&was_on) {
             self.index -= 1;
             if self.source.get(self.index) == Some(&b'\n') {
                 self.linecount.line -= 1;

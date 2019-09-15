@@ -377,6 +377,32 @@ impl FunctionBuilder {
                     }
                     token.inner = Token::TrackedIfStatement(branches, else_branch);
                 }
+                Token::Key(Key::ClosureMarker) => {
+                    let next = c.tokenizer.next_token(false);
+                    match next {
+                        // `#fname`
+                        Token::Word(_fnname) => {
+                            panic!("Closures unimplemented");
+                        }
+                        // `#(...)`
+                        Token::Key(Key::ParenOpen) => {
+                            let next = c.tokenizer.next_token(false);
+                            match next {
+                                // `#(\n: ...)`
+                                Token::LambdaHeader(_) => panic!("Lambda unimplemented"),
+                                // `#(fname ...)`
+                                Token::Word(fname) => {
+                                    panic!(fname.clone());
+                                }
+                                _ => panic!("ERROR_TODO: Unexpected thingy in closure marker"),
+                            }
+                        }
+                        _ => panic!(
+                            "ERROR_TODO: Unexpected thingy in closure marker: {:?}",
+                            next
+                        ),
+                    }
+                }
                 Token::Key(k) => {
                     println!("stoppers: {:?}\ngot: {:#?}", stop_at, k);
                     if let Some(stopper) = stop_at {

@@ -25,9 +25,12 @@ pub enum Token {
         Vec<Tracked<Token>>,
     ),
     TrackedRuntimeList(Vec<Tracked<Token>>),
+    TrackedExternClosure(String, u16, Vec<Tracked<Token>>),
     EOF,
 
     // Runtime
+    LocalClosure(Vec<Token>),
+    ExternClosure(usize, usize, Vec<Token>), // Vec<> here is a b in #(func a b)
     Key(Key),
     V(Value),
     LambdaValue(usize),
@@ -71,6 +74,7 @@ pub enum Key {
     ParenOpen,
     ParenClose,
     HeaderArrow,
+    ClosureMarker,
     PrimitiveExit,
     Comment,
 
@@ -122,6 +126,7 @@ impl Key {
             b'+' => Complete(Operator(Operators::Math(Math::Add))),
             b'/' => Complete(Operator(Operators::Math(Math::Div))),
             b'*' => Complete(Operator(Operators::Math(Math::Mul))),
+            b'#' => Complete(ClosureMarker),
             b'|' => Single(Comment),
             b'[' => Complete(ListOpen),
             b']' => Complete(ListClose),
@@ -182,6 +187,7 @@ impl fmt::Display for Key {
             ParenClose => ")",
             HeaderArrow => "->",
             PrimitiveExit => "exit",
+            ClosureMarker => "#",
             Comment => "||",
             Operator(op) => return op.fmt(f),
         };
@@ -230,6 +236,7 @@ impl fmt::Display for Token {
                     .map(|t| format!("{}:{:?}", t.position, t.inner))
                     .collect::<Vec<String>>(),
             ),
+            _ => write!(f, "{:#?}", self),
         }
     }
 }

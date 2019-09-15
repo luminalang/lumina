@@ -34,6 +34,9 @@ pub fn gather_to<'a>(mode: GatherMode, buf: &'a [u8], mut to: &[u8]) -> (&'a [u8
         // Edge-case for `a` in `(a b c)`
         // TODO: I should probably handle edge cases like these in a prettier way
         if index == 0 {
+            if c == b'#' {
+                return (b"#", b'#');
+            }
             if c == b'(' {
                 return (b"(", b'(');
             }

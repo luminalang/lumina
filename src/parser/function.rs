@@ -31,9 +31,9 @@ pub struct FunctionHeader {
 }
 
 const STOPPERS: &[(Token, u8)] = &[
-    (Token::Key(Key::HeaderFn), 3),
-    (Token::Key(Key::HeaderType), 5),
-    (Token::Key(Key::HeaderConvert), 8),
+    (Token::K(Key::HeaderFn), 3),
+    (Token::K(Key::HeaderType), 5),
+    (Token::K(Key::HeaderConvert), 8),
     (Token::EOF, 0),
 ];
 
@@ -94,7 +94,7 @@ impl FunctionBuilder {
                     super::is_valid_identifier(&name)?;
                     self.header.parameter_names.push(name)
                 }
-                Token::Key(Key::ParenOpen) => {
+                Token::K(Key::ParenOpen) => {
                     return self.get_param_types(c);
                 }
                 _ => return Err(Leaf::ExParam(token)),
@@ -107,8 +107,12 @@ impl FunctionBuilder {
             let token = c.tokenizer.next_token(true);
             match token {
                 Token::Word(tname) => {
-                    if c.tokenizer.last_char() == b')' || c.tokenizer.get_char() == b')' {
+                    if c.tokenizer.get_char() == b')' {
                         self.header.returns = Identifier::from(&tname, c.file, c.index);
+                        let next = c.tokenizer.next_token(false);
+                        if next != Token::K(Key::ParenClose) {
+                            return Err(Leaf::UnexInFnHeader(next));
+                        }
                         return Ok(self);
                     } else {
                         super::is_valid_identifier(&tname)?;
@@ -117,18 +121,18 @@ impl FunctionBuilder {
                             .push(Identifier::from(&tname, c.file, c.index));
                     }
                 }
-                Token::RuntimeList(entries) => {
+                Token::List(entries) => {
                     if entries.len() != 1 {
                         panic!("ERROR_TODO: Mixed types in list are not supported")
                     }
                     let t = self.list_to_type(c, &entries).unwrap(); // ? INSTEAD
                     self.header.parameters.push(t);
                 }
-                Token::Key(Key::ParenOpen) => self
+                Token::K(Key::ParenOpen) => self
                     .header
                     .parameters
                     .push(self.parse_function_parameter_type(c)?),
-                Token::Key(Key::HeaderArrow) => {
+                Token::K(Key::HeaderArrow) => {
                     let token = c.tokenizer.next_token(false);
                     match token {
                         Token::Word(return_name) => {
@@ -138,13 +142,8 @@ impl FunctionBuilder {
                         _ => return Err(Leaf::ExFnReturn(token)),
                     }
 
-                    /*
-                    if c.tokenizer.last_char() != b')' && c.tokenizer.get_char() != b')' {
-                        return Err(Leaf::UnexInFnHeader(c.tokenizer.last_char() as char));
-                    }
-                    */
                     let next = c.tokenizer.next_token(false);
-                    if next != Token::Key(Key::ParenClose) {
+                    if next != Token::K(Key::ParenClose) {
                         return Err(Leaf::UnexInFnHeader(next));
                     }
                     return Ok(self);
@@ -165,12 +164,12 @@ impl FunctionBuilder {
 
     // The tokenizer turns [a] into RuntimeList(Vec(Word("a"))), this is a hacky way to undo that
     // ERROR TODO
-    fn list_to_type(&self, c: &mut Context, runtime_list: &[Token]) -> Result<Type, ()> {
+    fn list_to_type(&self, c: &mut Context, runtime_list: &[Tracked<Token>]) -> Result<Type, ()> {
         if runtime_list.len() != 1 {
             return Err(());
         }
-        match &runtime_list[0] {
-            Token::RuntimeList(nested) => Ok(Type::List(Box::new(self.list_to_type(c, &nested)?))),
+        match &runtime_list[0].inner {
+            Token::List(nested) => Ok(Type::List(Box::new(self.list_to_type(c, &nested)?))),
             Token::Word(tname) => Ok(Type::List(Box::new(Identifier::from(
                 tname, c.file, c.index,
             )))),
@@ -184,8 +183,8 @@ impl FunctionBuilder {
             let token = c.tokenizer.next_token(false);
             match token {
                 Token::Word(type_name) => takes.push(Identifier::from(&type_name, c.file, c.index)),
-                Token::Key(Key::ParenOpen) => takes.push(self.parse_function_parameter_type(c)?),
-                Token::Key(Key::HeaderArrow) => {
+                Token::K(Key::ParenOpen) => takes.push(self.parse_function_parameter_type(c)?),
+                Token::K(Key::HeaderArrow) => {
                     let next = c.tokenizer.next_token(false);
                     let returns: Type = match next {
                         Token::Word(return_name) => {
@@ -195,7 +194,7 @@ impl FunctionBuilder {
                         _ => return Err(Leaf::ExFnReturn(token)),
                     };
                     let last = c.tokenizer.next_token(false);
-                    return if last != Token::Key(Key::ParenClose) {
+                    return if last != Token::K(Key::ParenClose) {
                         Err(Leaf::Unexpected(token))
                     } else {
                         Ok(Type::Closure(takes, Box::new(returns)))
@@ -244,19 +243,7 @@ impl FunctionBuilder {
                 }
             }
             match &token.inner {
-                Token::LambdaHeader(_) => {
-                    // TODO: How does << work here?
-                    let buf = self.build_buf(c, Some(&[Key::ParenOpen, Key::Pipe]))?;
-                    let _position = buf[0].position;
-                    // Invalid tracking
-                    token.inner = Token::Lambda(
-                        self.build_buf(c, Some(&[Key::ParenOpen, Key::Pipe]))?
-                            .drain(0..)
-                            .map(|tt| tt.untrack_t())
-                            .collect(),
-                    )
-                }
-                Token::Key(Key::ListOpen) => {
+                Token::K(Key::ListOpen) => {
                     let make_tracked = |t| Tracked {
                         inner: t,
                         position: token.position,
@@ -292,30 +279,30 @@ impl FunctionBuilder {
                             construct(raw_token);
                         }
                         if entity_buffer.len() > 1 {
-                            list_buffer.push(make_tracked(Token::TrackedGroup(entity_buffer)))
+                            list_buffer.push(make_tracked(Token::Group(entity_buffer)))
                         } else {
                             list_buffer.push(entity_buffer.remove(0))
                         }
                         Ok(())
                     })
                     .unwrap();
-                    token.inner = Token::TrackedRuntimeList(list_buffer);
+                    token.inner = Token::List(list_buffer);
                 }
-                Token::Key(Key::Pipe) => {
-                    token.inner = Token::TrackedGroup(self.build_buf(c, Some(&[Key::Pipe]))?)
+                Token::K(Key::Pipe) => {
+                    token.inner = Token::Group(self.build_buf(c, Some(&[Key::Pipe]))?)
                 }
-                Token::Key(Key::ParenOpen) => {
-                    token.inner = Token::TrackedGroup(self.build_buf(c, Some(&[Key::ParenClose]))?);
+                Token::K(Key::ParenOpen) => {
+                    token.inner = Token::Group(self.build_buf(c, Some(&[Key::ParenClose]))?);
                     let next = c.tokenizer.next_token(false);
-                    if next != Token::Key(Key::ParenClose) {
+                    if next != Token::K(Key::ParenClose) {
                         panic!("ERROR_TODO: Missing matching '(': {:?}", next);
                     }
                 }
-                Token::Key(Key::ElseIf) => {
+                Token::K(Key::ElseIf) => {
                     c.tokenizer.regress(Key::ElseIf.to_string().len() + 1);
                     return Ok(tbuf);
                 }
-                Token::Key(Key::Where) => loop {
+                Token::K(Key::Where) => loop {
                     let identifier = if let Token::Word(w) = c.tokenizer.next_token(false) {
                         w
                     } else {
@@ -324,26 +311,26 @@ impl FunctionBuilder {
                             token.inner,
                         ));
                     };
-                    if c.tokenizer.next_token(false) != Token::Key(Key::Assign) {
-                        return Err(Leaf::Expected(vec![Token::Key(Key::Assign)], token.inner));
+                    if c.tokenizer.next_token(false) != Token::K(Key::Assign) {
+                        return Err(Leaf::Expected(vec![Token::K(Key::Assign)], token.inner));
                     }
                     let tokens = self.build_buf(c, Some(&[Key::Where]))?;
                     self.header.wheres.push(identifier.to_owned());
                     self.wheres.push(tokens);
 
                     let next = c.tokenizer.next_token(false);
-                    if next != Token::Key(Key::Where) {
+                    if next != Token::K(Key::Where) {
                         c.tokenizer.regress(next.to_string().len() + 1);
                         return Ok(tbuf);
                     }
                 },
-                Token::Key(Key::If) => {
+                Token::K(Key::If) => {
                     let mut branches = Vec::new();
                     let conditional = self.build_buf(c, Some(&[Key::Then]))?;
                     //panic!("{}", self.tokenizer.next_token(false));
                     let next = c.tokenizer.next_token(false);
-                    if next != Token::Key(Key::Then) {
-                        return Err(Leaf::Expected(vec![Token::Key(Key::Then)], next));
+                    if next != Token::K(Key::Then) {
+                        return Err(Leaf::Expected(vec![Token::K(Key::Then)], next));
                     }
                     let eval = self.build_buf(c, Some(&[Key::ElseIf, Key::Else]))?;
                     c.tokenizer.regress_to(b' ');
@@ -352,15 +339,15 @@ impl FunctionBuilder {
                     loop {
                         let next = c.tokenizer.next_token(false);
                         match next {
-                            Token::Key(Key::Else) => {
+                            Token::K(Key::Else) => {
                                 else_branch = self.build_buf(c, None)?;
                                 break;
                             }
-                            Token::Key(Key::ElseIf) => {
+                            Token::K(Key::ElseIf) => {
                                 let conditional = self.build_buf(c, Some(&[Key::Then]))?;
                                 let next = c.tokenizer.next_token(false);
-                                if next != Token::Key(Key::Then) {
-                                    return Err(Leaf::Expected(vec![Token::Key(Key::Then)], next));
+                                if next != Token::K(Key::Then) {
+                                    return Err(Leaf::Expected(vec![Token::K(Key::Then)], next));
                                 }
                                 let eval = self.build_buf(c, Some(&[Key::ElseIf, Key::Else]))?;
                                 c.tokenizer.regress_to(b' ');
@@ -369,15 +356,15 @@ impl FunctionBuilder {
                             }
                             _ => {
                                 return Err(Leaf::Expected(
-                                    vec![Token::Key(Key::ElseIf), Token::Key(Key::Else)],
+                                    vec![Token::K(Key::ElseIf), Token::K(Key::Else)],
                                     next,
                                 ))
                             }
                         }
                     }
-                    token.inner = Token::TrackedIfStatement(branches, else_branch);
+                    token.inner = Token::IfStatement(branches, else_branch);
                 }
-                Token::Key(Key::ClosureMarker) => {
+                Token::K(Key::ClosureMarker) => {
                     let next = c.tokenizer.next_token(false);
                     match next {
                         // `#fname`
@@ -385,7 +372,7 @@ impl FunctionBuilder {
                             panic!("Closures unimplemented");
                         }
                         // `#(...)`
-                        Token::Key(Key::ParenOpen) => {
+                        Token::K(Key::ParenOpen) => {
                             let next = c.tokenizer.next_token(false);
                             match next {
                                 // `#(\n: ...)`
@@ -403,14 +390,18 @@ impl FunctionBuilder {
                         ),
                     }
                 }
-                Token::Key(k) => {
-                    println!("stoppers: {:?}\ngot: {:#?}", stop_at, k);
+                Token::K(k) => {
                     if let Some(stopper) = stop_at {
                         if stopper.contains(k) {
                             println!("{}", k.to_string().len());
                             c.tokenizer.regress(k.to_string().len());
                             return Ok(tbuf);
                         }
+                    }
+                }
+                Token::Word(w) => {
+                    if w == &self.header.name {
+                        token.inner = Token::Recurse(self.header.parameters.len());
                     }
                 }
                 _ => {}

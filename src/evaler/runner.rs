@@ -2,39 +2,32 @@ use super::function::Function;
 use super::module;
 use super::r#type::Value;
 use crate::assume;
-use crate::evaler::runner::operator::{Operator, Operators};
-use crate::parser::tokenizer::token::{Key, Token};
+use crate::evaler::runner::operator::Operator;
 use std::sync::Arc;
+
+mod entity;
+pub use entity::Entity;
 
 pub mod operator;
 pub mod rustbridge;
 pub mod tokenbuffer;
 use tokenbuffer::{SimpleBuffer, TokenBuffer, WhereBuffer};
 
-pub struct Runner<'p> {
-    params: &'p [Value],
-    wheres: Arc<Vec<Vec<Token>>>,
+pub struct Runner {
+    params: Vec<Value>,
+    wheres: Arc<Vec<Vec<Entity>>>,
     r_gp: Value,
-
-    // TODO: I need to be able to store a list here. But using a Vec to forcefully heap-allocate
-    // when I know that most of the time it'll only be 0-1 values in here seems like a bad idea.
-    // I suggest we add a `UnsafeBuffer(Vec<Type>)` variant to the Value struct, which is used
-    // internally. Point of it being that it doesn't hold type information, contains different
-    // types, and bypasses type checking
-    r_gp_secondary: Value,
 }
 
 enum EvalResult {
     // Put the value into the r_gp registrer
     Load(Value),
-    // Apply operator to r_gp and next value
-    Operator(Operators),
     // Call a native rust function
-    BridgedFunctionCall(rustbridge::FunctionID),
+    BridgedFunctionCall(rustbridge::FunctionID, Vec<Value>),
     // Call a leaf function
-    FunctionCall(Function),
+    FunctionCall(Function, Vec<Value>),
     // Tail recursion optimization
-    Recurse,
+    Recurse(Vec<Value>),
 }
 
 /* GUIDE
@@ -73,44 +66,82 @@ enum EvalResult {
  * the contents inbetween parenthesis are treated the same way but with different token buffers.
  */
 
-impl<'p> Runner<'p> {
-    pub fn run(func: &'p mut Function, params: &'p [Value]) -> Value {
+impl Runner {
+    pub fn run(func: &mut Function, params: Vec<Value>) -> Value {
         let mut runner = Runner {
             params,
             wheres: func.wheres.clone(),
             r_gp: Value::Nothing,
-            r_gp_secondary: Value::Nothing,
         };
 
         runner.run_buf(func)
     }
 
-    fn eval(&mut self, token: &Token) -> EvalResult {
-        match token {
+    fn run_buf<B: TokenBuffer>(&mut self, mut tbuf: B) -> Value {
+        loop {
+            let token = match tbuf.next_entity() {
+                Some(t) => t,
+                None => return self.r_gp.take(),
+            };
+            match self.eval(token) {
+                EvalResult::Load(v) => self.r_gp = v,
+                EvalResult::Recurse(params) => {
+                    tbuf.reset();
+                    self.params = params;
+                    self.r_gp = Value::Nothing;
+                }
+                EvalResult::FunctionCall(mut func, params) => {
+                    self.r_gp = Runner::run(&mut func, params);
+                }
+                EvalResult::BridgedFunctionCall(bfid, params) => {
+                    self.r_gp = {
+                        let f = rustbridge::get_function(bfid);
+                        f(&params)
+                    };
+                }
+            }
+        }
+    }
+
+    fn eval(&mut self, entity: &Entity) -> EvalResult {
+        match entity {
             // Inline values such as strings and numbers
-            Token::V(v) => EvalResult::Load(v.clone()),
+            Entity::V(v) => EvalResult::Load(v.clone()),
             // Usage of a function parameter
-            Token::ParamValue(v) => EvalResult::Load(self.params[*v].clone()),
+            Entity::ParamValue(v) => EvalResult::Load(self.params[*v].clone()),
             // Tail recursion
-            Token::Recurse => EvalResult::Recurse,
+            Entity::Recurse(params) => {
+                let mut evaluated_params = Vec::with_capacity(params.len());
+                for p in params.iter() {
+                    match self.eval(p) {
+                        EvalResult::Load(v) => {
+                            evaluated_params.push(v);
+                        }
+                        EvalResult::Recurse(_) => panic!("Impossible tail recursion"),
+                        EvalResult::FunctionCall(mut func, params) => {
+                            assert_eq!(params.len(), 0);
+                            evaluated_params.push(Runner::run(&mut func, Vec::new()));
+                        }
+                        EvalResult::BridgedFunctionCall(bfid, params) => {
+                            assert_eq!(params.len(), 0);
+                            let f = rustbridge::get_function(bfid);
+                            evaluated_params.push(f(&[]));
+                        }
+                    }
+                }
+                EvalResult::Recurse(evaluated_params)
+            }
             // Usage of a where statement
-            Token::WhereValue(whereid) => {
+            Entity::WhereValue(whereid) => {
                 let buf = WhereBuffer::new(self.wheres.clone(), *whereid);
                 EvalResult::Load(self.run_buf(buf))
             }
-            // Lambda expression
-            Token::Lambda(tbuf) => {
-                let buf = SimpleBuffer::new(tbuf);
-                self.r_gp_secondary = self.r_gp.take();
-                self.r_gp = Value::Nothing;
-                EvalResult::Load(self.run_buf(buf))
-            }
             // Tokens that together result in one value. For example the content between parenthesis
-            Token::Group(tbuf) => {
+            Entity::Group(tbuf) => {
                 let buf = SimpleBuffer::new(tbuf);
                 EvalResult::Load(self.run_buf(buf))
             }
-            Token::RuntimeList(entities) => {
+            Entity::EvaluationList(entities) => {
                 let mut v_list: Vec<Value> = Vec::with_capacity(entities.len());
 
                 for entity in entities {
@@ -121,13 +152,54 @@ impl<'p> Runner<'p> {
                 EvalResult::Load(Value::List(v_list))
             }
             // Function calls
-            Token::Function(fid, funcid) => {
+            Entity::Function(fid, funcid, params) => {
                 let func = module::get(*fid).unwrap().get_function(*funcid);
-                EvalResult::FunctionCall(func)
+                let mut evaluated_params = Vec::with_capacity(params.len());
+                for p in params.iter() {
+                    match self.eval(p) {
+                        EvalResult::Load(v) => {
+                            evaluated_params.push(v);
+                        }
+                        EvalResult::Recurse(_) => panic!("Impossible tail recursion"),
+                        EvalResult::FunctionCall(mut func, params) => {
+                            assert_eq!(params.len(), 0);
+                            evaluated_params.push(Runner::run(&mut func, Vec::new()));
+                        }
+                        EvalResult::BridgedFunctionCall(bfid, params) => {
+                            assert_eq!(params.len(), 0);
+                            let f = rustbridge::get_function(bfid);
+                            evaluated_params.push(f(&[]));
+                        }
+                    }
+                }
+                EvalResult::FunctionCall(func, evaluated_params)
             }
             // rust:call<n> functions
-            Token::BridgedFunction(bfid) => EvalResult::BridgedFunctionCall(*bfid),
-            Token::IfStatement(branches, else_do) => {
+            Entity::BridgedFunction(bfid, params) => {
+                let mut evaluated_params = Vec::with_capacity(params.len());
+                for p in params.iter() {
+                    match self.eval(p) {
+                        EvalResult::Load(v) => {
+                            evaluated_params.push(v);
+                            break;
+                        }
+                        EvalResult::Recurse(_) => panic!("Impossible tail recursion"),
+                        EvalResult::FunctionCall(mut func, params) => {
+                            assert_eq!(params.len(), 0);
+                            evaluated_params.push(Runner::run(&mut func, Vec::new()));
+                            break;
+                        }
+                        EvalResult::BridgedFunctionCall(bfid, params) => {
+                            assert_eq!(params.len(), 0);
+                            let f = rustbridge::get_function(bfid);
+                            evaluated_params.push(f(&[]));
+                            break;
+                        }
+                    }
+                }
+                EvalResult::BridgedFunctionCall(*bfid, evaluated_params)
+            }
+            Entity::IfStatement(branches, else_do) => {
                 for branch in branches.iter() {
                     if assume!(self.run_buf(SimpleBuffer::new(&branch.0)), Value::Bool) {
                         let v = self.run_buf(SimpleBuffer::new(&branch.1));
@@ -138,66 +210,26 @@ impl<'p> Runner<'p> {
                 let v = self.run_buf(SimpleBuffer::new(&else_do));
                 EvalResult::Load(v)
             }
-            // Operators
-            Token::Key(Key::Operator(op)) => EvalResult::Operator(op.clone()),
-            _ => panic!("{}", &token),
-        }
-    }
-
-    fn run_buf<B: TokenBuffer>(&mut self, mut tbuf: B) -> Value {
-        loop {
-            let token = match tbuf.next_token() {
-                Some(t) => t,
-                None => return self.r_gp.take(),
-            };
-            match self.eval(token) {
-                EvalResult::Load(v) => self.r_gp = v,
-                EvalResult::Operator(op) => {
-                    let left = self.r_gp.take();
-                    let right = self.get_params(&mut tbuf, 1);
-                    self.r_gp = op.operate(&left, &right[0]);
-                }
-                EvalResult::Recurse => {
-                    tbuf.reset();
-                    self.r_gp = Value::Nothing;
-                }
-                EvalResult::FunctionCall(mut func) => {
-                    let params = self.get_params(&mut tbuf, func.params as usize);
-                    self.r_gp = Runner::run(&mut func, &params);
-                }
-                //EvalResult::Error(e) => return Err(e),
-                EvalResult::BridgedFunctionCall(bfid) => return self.run_bridged(&mut tbuf, bfid),
+            Entity::Operation(left_right, op) => {
+                //let deref = *left_right;
+                let mut eval = |e| -> Value {
+                    match self.eval(e) {
+                        EvalResult::Load(v) => v,
+                        EvalResult::Recurse(_) => panic!("Impossible tail recursion"),
+                        EvalResult::FunctionCall(mut func, params) => {
+                            Runner::run(&mut func, params)
+                        }
+                        EvalResult::BridgedFunctionCall(bfid, params) => {
+                            let f = rustbridge::get_function(bfid);
+                            f(&params)
+                        }
+                    }
+                };
+                let left = eval(&left_right.0);
+                let right = eval(&left_right.1);
+                EvalResult::Load(op.operate(&left, &right))
             }
-        }
-    }
-
-    fn run_bridged<B: TokenBuffer>(&mut self, tbuf: &mut B, bfid: rustbridge::FunctionID) -> Value {
-        let param = self.get_param(tbuf);
-        let f = rustbridge::get_function(bfid);
-        f(param)
-    }
-
-    fn get_params<B: TokenBuffer>(&mut self, tbuf: &mut B, amount: usize) -> Vec<Value> {
-        let mut params = Vec::with_capacity(amount);
-        for _i in 0..amount {
-            params.push(self.get_param(tbuf));
-        }
-        params
-    }
-
-    fn get_param<B: TokenBuffer>(&mut self, tbuf: &mut B) -> Value {
-        match self.eval(tbuf.next_token().unwrap()) {
-            EvalResult::Load(v) => v,
-            EvalResult::Recurse => panic!("Impossible tail recursion"),
-            EvalResult::FunctionCall(mut nested_func) => {
-                let nested_params = self.get_params(tbuf, nested_func.params as usize);
-                Runner::run(&mut nested_func, &nested_params)
-            }
-            EvalResult::BridgedFunctionCall(bfid) => self.run_bridged(tbuf, bfid),
-            EvalResult::Operator(op) => panic!(
-                "Attempted to use standalone operator as parameter without wrapper ({:?})",
-                op
-            ),
+            _ => panic!("{}", &entity),
         }
     }
 }

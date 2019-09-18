@@ -2,7 +2,7 @@ use super::index::Index;
 use super::tokenizer::{token::Token, Tokenizer};
 use super::FunctionBuilder;
 use super::ParseModule;
-use crate::evaler::runner::rustbridge;
+use crate::evaler::runner::{rustbridge, Entity};
 use crate::identifier::r#type::CustomType;
 use crate::identifier::r#type::{BaseType, Type};
 use std::path::Path;
@@ -47,10 +47,10 @@ fn rust_str() -> FunctionBuilder {
     FunctionBuilder::from_raw_ir(
         LEAF_PRIM_FILE,
         "str",
-        vec![
-            Token::BridgedFunction(rustbridge::TO_STRING),
-            Token::ParamValue(0),
-        ],
+        vec![Token::Finished(Entity::BridgedFunction(
+            rustbridge::TO_STRING,
+            vec![Entity::ParamValue(0)],
+        ))],
         Type::Custom(LEAF_PRIM_FID, STRING_ID, None),
         vec![Type::Generic(0)],
     )

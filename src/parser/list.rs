@@ -44,14 +44,6 @@ where
             i += raw_entity.len();
         }
 
-        /*
-        // Dirty hack for fixing strings breaking in lists
-        // TODO: Figure out a better way
-        if was_on != b',' {
-            i += util::count_to(&slice[i..], b',');
-        }
-        */
-
         let trimmed = util::trim(raw_entity);
         with_each(trimmed)?;
     }

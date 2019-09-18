@@ -1,12 +1,13 @@
 use super::runner::tokenbuffer::TokenBuffer;
+use super::runner::Entity;
 use crate::parser::function::FunctionBuilder;
-use crate::parser::tokenizer::token::Token;
 use std::sync::Arc;
+mod optimizer;
 
 #[derive(Debug)]
 pub struct Function {
-    pub tokens: Arc<Vec<Token>>,
-    pub wheres: Arc<Vec<Vec<Token>>>,
+    pub tokens: Arc<Vec<Entity>>,
+    pub wheres: Arc<Vec<Vec<Entity>>>,
     pub params: u8,
 
     r_ip: usize,
@@ -15,14 +16,8 @@ pub struct Function {
 impl From<FunctionBuilder> for Function {
     fn from(mut func: FunctionBuilder) -> Self {
         Self {
-            tokens: Arc::new(func.tokens.drain(0..).map(|tt| tt.untrack_t()).collect()),
-            wheres: Arc::new(
-                // Removes source tracking
-                func.wheres
-                    .drain(0..)
-                    .map(|mut vectt| vectt.drain(0..).map(|tt| tt.untrack_t()).collect())
-                    .collect(),
-            ),
+            tokens: Arc::new(optimizer::from_tbuf(func.tokens)),
+            wheres: Arc::new(func.wheres.drain(0..).map(optimizer::from_tbuf).collect()),
             params: func.header.parameters.len() as u8,
             r_ip: std::usize::MAX,
         }
@@ -42,7 +37,7 @@ impl Clone for Function {
 
 impl TokenBuffer for &mut Function {
     #[inline]
-    fn next_token(&mut self) -> Option<&Token> {
+    fn next_entity(&mut self) -> Option<&Entity> {
         if self.r_ip == std::usize::MAX {
             self.r_ip = 0
         } else {
@@ -73,7 +68,7 @@ impl Function {
         }
     }
 
-    pub fn new(params: u8, tokens: Vec<Token>, wheres: Vec<Vec<Token>>) -> Self {
+    pub fn new(params: u8, tokens: Vec<Entity>, wheres: Vec<Vec<Entity>>) -> Self {
         Self {
             wheres: Arc::new(wheres),
             tokens: Arc::new(tokens),

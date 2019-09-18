@@ -74,7 +74,7 @@ impl Module {
 
     pub fn run(mut self, entrypoint: usize) -> Value {
         let func = &mut self.functions[entrypoint];
-        Runner::run(func, &[])
+        Runner::run(func, Vec::new())
     }
 }
 

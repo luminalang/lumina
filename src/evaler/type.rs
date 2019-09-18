@@ -79,43 +79,6 @@ impl TryFrom<&[u8]> for Value {
                 }
                 return Ok(Value::Byte(slice[1]));
             }
-            /*
-            Some(b'[') => {
-                if *slice.last().unwrap() != b']' {
-                    panic!(
-                        "List missing ending: {:?}",
-                        slice.last().map(|a| *a as char)
-                    );
-                }
-
-                let mut list_buf: Vec<Value> = Vec::new();
-                let mut of_type: Option<Type> = None;
-
-                let append = |entity: &[u8]| {
-                    let value = match Value::try_from(entity) {
-                        // Oh ok this list contains inlined code. We'll handle this list later then
-                        Err(_) => return Err(()),
-                        Ok(v) => v,
-                    };
-                    match &of_type {
-                        None => of_type = Some((&value).into()),
-                        Some(t) => {
-                            let got: Type = (&value).into();
-                            if got != *t {
-                                panic!("ERROR_TODO: List contains mixed types");
-                            }
-                        }
-                    };
-                    list_buf.push(value);
-                    Ok(())
-                };
-
-                list::build_list(slice, append)?;
-
-                let final_list = Ok(Value::List(list_buf));
-                return final_list;
-            }
-            */
             Some(b'"') => {
                 if slice.last().copied() != Some(b'"') {
                     return Err(()); // TODO: Handle

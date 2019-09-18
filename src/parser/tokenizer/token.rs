@@ -1,51 +1,29 @@
 use super::Tracked;
-use crate::evaler::r#type::Value;
 use crate::evaler::runner::operator::{cond::Cond, list::List, math::Math, Operators};
+use crate::evaler::runner::Entity;
 use std::fmt;
 use std::path::PathBuf;
 
-// TODO: I should consider reworking this into two enums, ParseToken and RuntimeToken. That should
-// make the Tracked<> situation easier and I could just implement From<> Into<> between them.
-//
-// Could also prevent compiler failure-caused undefined behavior since I can know that no
-// parse-time things like Word<S> or Key::If can't sneak into runtime
-//
-// Could also just create a trait for code reusability
+type TrackedMore = Vec<Tracked<Token>>;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Parsetime
     Word(String),
     LambdaHeader(String),
     Import(PathBuf),
     HeaderFnEndNoArgs,
-    TrackedGroup(Vec<Tracked<Token>>),
-    TrackedIfStatement(
-        Vec<(Vec<Tracked<Token>>, Vec<Tracked<Token>>)>,
-        Vec<Tracked<Token>>,
-    ),
-    TrackedRuntimeList(Vec<Tracked<Token>>),
-    TrackedExternClosure(String, u16, Vec<Tracked<Token>>),
-    EOF,
-
-    // Runtime
-    LocalClosure(Vec<Token>),
-    ExternClosure(usize, usize, Vec<Token>), // Vec<> here is a b in #(func a b)
-    Key(Key),
-    V(Value),
-    LambdaValue(usize),
-    ParamValue(usize),
-    WhereValue(usize),
-    Function(usize, usize),
+    Group(TrackedMore),
+    IfStatement(Vec<(TrackedMore, TrackedMore)>, TrackedMore),
+    List(TrackedMore),
+    ExternClosure(String, u16, TrackedMore),
+    LocalClosure(TrackedMore),
+    K(Key),
+    Function(usize, usize, usize),
+    Recurse(usize),
     BridgedFunction(u16),
-    Recurse,
-    RuntimeList(Vec<Token>),
-    Lambda(Vec<Token>),
-    Group(Vec<Token>),
-    IfStatement(Vec<(Vec<Token>, Vec<Token>)>, Vec<Token>),
 
-    // Other
-    AnyValue,
+    Finished(Entity),
+    EOF,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -198,7 +176,7 @@ impl fmt::Display for Key {
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Token::Key(k) => k.fmt(f),
+            Token::K(k) => k.fmt(f),
             Token::Import(source) => {
                 let path_representation = source
                     .iter()
@@ -207,36 +185,26 @@ impl fmt::Display for Token {
                     .join(":");
                 write!(f, "use {}", path_representation,)
             }
-            Token::Function(_, _) => write!(f, "function"),
-            Token::BridgedFunction(_) => write!(f, "rust bridged function"),
-            Token::IfStatement(_, _) => write!(f, "if statement"),
-            Token::TrackedIfStatement(_, _) => write!(f, "if statement"),
-            Token::Recurse => write!(f, "function"),
-            Token::RuntimeList(_) => write!(f, "list"),
-            Token::TrackedRuntimeList(_) => write!(f, "list"),
-            Token::LambdaValue(_) => write!(f, "value"),
-            Token::ParamValue(_) => write!(f, "parameter"),
-            Token::WhereValue(_) => write!(f, "value"),
+            Token::Finished(entity) => entity.fmt(f),
             Token::LambdaHeader(_) => write!(f, "lambda"),
-            Token::Lambda(_) => write!(f, "lambda"),
+            Token::IfStatement(_, _) => write!(f, "if statement"),
             Token::Word(s) => f.write_str(&s),
             Token::HeaderFnEndNoArgs => f.write_str("new line"),
-            Token::V(t) => write!(f, "{}", t.pretty_print()),
             Token::EOF => write!(f, "end of file"),
-            Token::AnyValue => write!(f, "any value"),
+            Token::Function(_, _, _) => write!(f, "function"),
+            Token::Recurse(_) => write!(f, "recursive function call"),
+            Token::BridgedFunction(_) => write!(f, "bridged function"),
+            Token::List(_) => write!(f, "list"),
+            Token::ExternClosure(_, _, _) => write!(f, "function closure"),
+            Token::LocalClosure(_) => write!(f, "lambda closure"),
             Token::Group(buf) => write!(
                 f,
                 "Group<\n{:?}\n>",
-                buf.iter().map(|t| t.to_string()).collect::<Vec<String>>(),
-            ),
-            Token::TrackedGroup(buf) => write!(
-                f,
-                "TrackedGroup<\n{:?}\n>",
                 buf.iter()
-                    .map(|t| format!("{}:{:?}", t.position, t.inner))
+                    .map(|t| t.inner.to_string())
                     .collect::<Vec<String>>(),
             ),
-            _ => write!(f, "{:#?}", self),
+            // _ => write!(f, "{:#?}", self),
         }
     }
 }

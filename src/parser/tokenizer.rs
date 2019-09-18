@@ -8,6 +8,7 @@ use token::{Key, Token};
 use super::util;
 use super::util::GatherMode;
 use crate::evaler::r#type::Value;
+use crate::evaler::runner::Entity;
 
 const STOPPERS: &[u8] = &[b' ', b'(', b')', b'\n', b'[', b']'];
 
@@ -27,33 +28,6 @@ pub struct Tracked<T: PartialEq + Clone> {
 impl<T: PartialEq + Clone> PartialEq for Tracked<T> {
     fn eq(&self, other: &Self) -> bool {
         self.inner.eq(&other.inner)
-    }
-}
-
-impl Tracked<Token> {
-    // We need recursion for nested tokens
-    pub fn untrack_t(self) -> Token {
-        match self.inner {
-            Token::TrackedGroup(mut tbuf) => {
-                Token::Group(tbuf.drain(0..).map(|tt| tt.untrack_t()).collect())
-            }
-            Token::TrackedRuntimeList(mut tbuf) => {
-                Token::RuntimeList(tbuf.drain(0..).map(|tt| tt.untrack_t()).collect())
-            }
-            Token::TrackedIfStatement(mut branches, mut else_branch) => Token::IfStatement(
-                branches
-                    .drain(0..)
-                    .map(|(mut ctv, mut rtv)| {
-                        (
-                            ctv.drain(0..).map(|tt| tt.untrack_t()).collect(),
-                            rtv.drain(0..).map(|tt| tt.untrack_t()).collect(),
-                        )
-                    })
-                    .collect(),
-                else_branch.drain(0..).map(|tt| tt.untrack_t()).collect(),
-            ),
-            _ => self.inner,
-        }
     }
 }
 
@@ -81,8 +55,8 @@ impl Tokenizer {
     }
 
     pub fn build_token(chars: &[u8]) -> token::Result<Token> {
-        if let Ok(t) = Value::try_from(chars) {
-            let token = Token::V(t);
+        if let Ok(v) = Value::try_from(chars) {
+            let token = Token::Finished(Entity::V(v));
             return token::Result::Complete(token);
         }
 
@@ -91,17 +65,17 @@ impl Tokenizer {
             Some(t) => *t,
         };
         match Key::matches(first) {
-            token::Result::Complete(key) => return token::Result::Complete(Token::Key(key)),
+            token::Result::Complete(key) => return token::Result::Complete(Token::K(key)),
             token::Result::Single(key) => {
                 if key.is(chars) {
-                    let token = Token::Key(key);
+                    let token = Token::K(key);
                     return token::Result::Complete(token);
                 }
             }
             token::Result::Multiple(key_matches) => {
                 for key in key_matches {
                     if key.is(chars) {
-                        let token = Token::Key(key.clone());
+                        let token = Token::K(key.clone());
                         return token::Result::Complete(token);
                     }
                 }
@@ -139,7 +113,7 @@ impl Tokenizer {
             }
             if *c == b')' {
                 self.next();
-                return Token::Key(Key::ParenClose);
+                return Token::K(Key::ParenClose);
             }
         }
 
@@ -151,7 +125,7 @@ impl Tokenizer {
         match token {
             token::Result::Empty => self.next_token(is_header),
             token::Result::Complete(t) => {
-                if let Token::Key(Key::Comment) = t {
+                if let Token::K(Key::Comment) = t {
                     self.skip_to(b'\n');
                     self.next_token(is_header)
                 } else {

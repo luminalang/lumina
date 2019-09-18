@@ -6,7 +6,7 @@ use std::io::Write;
 
 pub type FunctionID = u16;
 
-type BridgedFunction = fn(Value) -> Value;
+type BridgedFunction = fn(&[Value]) -> Value;
 
 const WRITE_STDOUT: u16 = 0;
 const READ_STDIN: u16 = 1;
@@ -18,12 +18,22 @@ macro_rules! PRIMITIVE_STRING {
     };
 }
 
+// TODO: This is temporary
+pub fn get_function_parameter_amount(f: FunctionID) -> usize {
+    match f {
+        WRITE_STDOUT => 1,
+        READ_STDIN => 1,
+        TO_STRING => 1,
+        _ => panic!("Builtin function doesn't exist"),
+    }
+}
+
 pub fn get_function(f: FunctionID) -> BridgedFunction {
     match f {
-        WRITE_STDOUT => |param| match param {
+        WRITE_STDOUT => |param| match &param[0] {
             Value::Byte(b) => {
-                std::io::stdout().write_all(&[b]).ok();
-                param
+                std::io::stdout().write_all(&[*b]).ok();
+                param[0].clone()
             }
             Value::Struct(PRIMITIVE_STRING!(), str_fields) => {
                 let inner = &str_fields[0];
@@ -46,7 +56,7 @@ pub fn get_function(f: FunctionID) -> BridgedFunction {
                 param
             ),
         },
-        READ_STDIN => |param| match param {
+        READ_STDIN => |param| match param[0] {
             Value::Byte(b) => {
                 let mut buf: Vec<Value> = Vec::new();
                 for c in std::io::stdin().lock().bytes() {
@@ -64,7 +74,7 @@ pub fn get_function(f: FunctionID) -> BridgedFunction {
             ),
         },
         TO_STRING => |param| {
-            let s = param.pretty_print().into_bytes();
+            let s = param[0].pretty_print().into_bytes();
             Value::Struct(
                 PRIMITIVE_STRING!(),
                 vec![Value::List(

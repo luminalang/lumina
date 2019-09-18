@@ -31,8 +31,8 @@ impl fmt::Debug for ParseModule {
                 func.header,
                 func.tokens
                     .iter()
-                    .map(|a| a.clone().untrack_t())
-                    .collect::<Vec<Token>>()
+                    .map(|a| &a.inner)
+                    .collect::<Vec<&Token>>()
             ));
         }
         let mut types = String::new();

@@ -168,11 +168,11 @@ impl Index {
             .map(|fid| (*fid, self.files[*fid].clone()))
     }
 
-    pub fn optimize_func(
+    pub fn translate_func(
         &mut self,
         mut func: FunctionBuilder,
     ) -> Result<FunctionBuilder, ParseError> {
-        let mut translator = Translator::new(self, &func.header.name);
+        let mut translator = Translator::new(self);
         for (i, param) in func.header.parameters.iter().enumerate() {
             translator.tag_param(&func.header.parameter_names[i], param.clone())
         }
@@ -180,6 +180,8 @@ impl Index {
             translator.tag_where(wheres.as_ref());
         }
         // TODO: Am i forgetting to translate the tokens in where statements?
+        // I don't think I am since it recursively goes down the where's when the identifiers are
+        // encountered in the bodies.
         translator.translate_buf(&func.file, &mut func.tokens)?;
 
         Ok(func)

@@ -22,7 +22,8 @@ fn main() {
     match parser.run(PathBuf::from(env::entrypoint())) {
         Err(e) => eprintln!("{}", e),
         Ok(main_id) => {
-            let v = Runner::run(&mut module::get(1).unwrap().get_function(main_id), &[]);
+            let main = &mut module::get(1).unwrap().get_function(main_id);
+            let v = Runner::run(main, Vec::new());
             if debug::is_dev() {
                 println!("\nmain returns {:?}", v);
             }

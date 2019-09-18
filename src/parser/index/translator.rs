@@ -1,5 +1,6 @@
 use super::Index;
 use crate::error::Leaf;
+use crate::evaler::runner::Entity;
 use crate::identifier::r#type::Type;
 use crate::parser::error::ParseError;
 use crate::parser::prelude;
@@ -9,7 +10,6 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub struct Translator<'a, 'k> {
-    parent_func: &'a str,
     index: &'a mut Index,
     values: HashMap<&'k str, ValueSource>,
     values_len: ValueLengths,
@@ -28,9 +28,8 @@ struct ValueLengths {
 }
 
 impl<'a, 'k> Translator<'a, 'k> {
-    pub fn new(index: &'a mut Index, parent_func: &'a str) -> Self {
+    pub fn new(index: &'a mut Index) -> Self {
         Self {
-            parent_func,
             index,
             values: HashMap::new(),
             values_len: ValueLengths { p: 0, l: 0, w: 0 },
@@ -62,15 +61,15 @@ impl<'a, 'k> Translator<'a, 'k> {
             match &mut t.inner {
                 Token::Word(w) => match self.values.get(w.as_str()) {
                     Some(Parameter(id, _type)) => {
-                        t.inner = Token::ParamValue(*id);
+                        t.inner = Token::Finished(Entity::ParamValue(*id));
                         continue;
                     }
                     Some(Lambda(id)) => {
-                        t.inner = Token::LambdaValue(*id);
+                        t.inner = Token::Finished(Entity::BufferValue(*id));
                         continue;
                     }
                     Some(Where(id)) => {
-                        t.inner = Token::WhereValue(*id);
+                        t.inner = Token::Finished(Entity::WhereValue(*id));
                         continue;
                     }
                     None => {
@@ -83,11 +82,14 @@ impl<'a, 'k> Translator<'a, 'k> {
                                 // Is it a local function?
                                 match self_module.try_get_func(first) {
                                     Some(funcid) => {
-                                        t.inner = if first == self.parent_func {
-                                            Token::Recurse
-                                        } else {
-                                            Token::Function(self_fid, funcid)
-                                        }
+                                        let params = self
+                                            .index
+                                            .get_file_from(self_fid)
+                                            .borrow()
+                                            .get_func_header(funcid)
+                                            .parameters
+                                            .len();
+                                        t.inner = Token::Function(self_fid, funcid, params);
                                     }
                                     None => {
                                         // Must be prelude then
@@ -96,7 +98,15 @@ impl<'a, 'k> Translator<'a, 'k> {
                                         let prelude_mod = a.borrow();
                                         t.inner = match prelude_mod.try_get_func(first) {
                                             Some(funcid) => {
-                                                Token::Function(prelude::LEAF_PRIM_FID, funcid)
+                                                let params = prelude_mod
+                                                    .get_func_header(funcid)
+                                                    .parameters
+                                                    .len();
+                                                Token::Function(
+                                                    prelude::LEAF_PRIM_FID,
+                                                    funcid,
+                                                    params,
+                                                )
                                             }
                                             None => {
                                                 return Err(ParseError::new(
@@ -146,21 +156,24 @@ impl<'a, 'k> Translator<'a, 'k> {
                                     };
                                     let (fid, tagger) = self.index.try_get_file(path_mod).unwrap();
                                     let funcid = tagger.borrow().get_func(second);
-                                    t.inner = Token::Function(fid, funcid);
+                                    let params =
+                                        tagger.borrow().get_func_header(funcid).parameters.len();
+                                    t.inner = Token::Function(fid, funcid, params);
                                 }
                             }
                         };
                     }
                 },
-                Token::TrackedRuntimeList(tbuf) => self.translate_buf(self_mod, tbuf)?,
-                Token::TrackedGroup(tbuf) => self.translate_buf(self_mod, tbuf)?,
-                Token::TrackedIfStatement(branches, else_do_buf) => {
+                Token::List(tbuf) => self.translate_buf(self_mod, tbuf)?,
+                Token::Group(tbuf) => self.translate_buf(self_mod, tbuf)?,
+                Token::IfStatement(branches, else_do_buf) => {
                     self.translate_buf(self_mod, else_do_buf)?;
                     for branch in branches {
                         self.translate_buf(self_mod, &mut branch.0)?;
                         self.translate_buf(self_mod, &mut branch.1)?;
                     }
                 }
+                /*
                 Token::Lambda(_tbuf) => {
                     return Err(ParseError::new(
                         self_mod.to_owned(),
@@ -168,6 +181,7 @@ impl<'a, 'k> Translator<'a, 'k> {
                     )
                     .with_linen(t.position))
                 }
+                */
                 _ => {}
             }
         }

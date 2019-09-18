@@ -1,32 +1,32 @@
-use crate::parser::tokenizer::token::Token;
+use super::Entity;
 use std::sync::Arc;
 
 pub trait TokenBuffer {
-    fn next_token(&mut self) -> Option<&Token>;
+    fn next_entity(&mut self) -> Option<&Entity>;
     fn reset(&mut self);
 }
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct SimpleBuffer<'t> {
-    inner: &'t [Token],
+    inner: &'t [Entity],
     r_ip: usize,
 }
 
 impl<'t> SimpleBuffer<'t> {
-    pub fn new(tokens: &'t [Token]) -> Self {
+    pub fn new(entities: &'t [Entity]) -> Self {
         Self {
-            inner: tokens,
+            inner: entities,
             r_ip: std::usize::MAX,
         }
     }
 
-    pub fn to_inner(&self) -> &[Token] {
+    pub fn to_inner(&self) -> &[Entity] {
         self.inner
     }
 }
 
 impl<'t> TokenBuffer for SimpleBuffer<'t> {
-    fn next_token(&mut self) -> Option<&Token> {
+    fn next_entity(&mut self) -> Option<&Entity> {
         if self.r_ip == std::usize::MAX {
             self.r_ip = 0
         } else {
@@ -41,13 +41,13 @@ impl<'t> TokenBuffer for SimpleBuffer<'t> {
 }
 
 pub struct WhereBuffer {
-    inner: Arc<Vec<Vec<Token>>>,
+    inner: Arc<Vec<Vec<Entity>>>,
     useid: usize,
     r_ip: usize,
 }
 
 impl WhereBuffer {
-    pub fn new(ptr: Arc<Vec<Vec<Token>>>, useid: usize) -> Self {
+    pub fn new(ptr: Arc<Vec<Vec<Entity>>>, useid: usize) -> Self {
         Self {
             inner: ptr,
             useid,
@@ -57,7 +57,7 @@ impl WhereBuffer {
 }
 
 impl TokenBuffer for WhereBuffer {
-    fn next_token(&mut self) -> Option<&Token> {
+    fn next_entity(&mut self) -> Option<&Entity> {
         if self.r_ip == std::usize::MAX {
             self.r_ip = 0
         } else {

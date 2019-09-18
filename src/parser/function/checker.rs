@@ -1,5 +1,6 @@
 use super::FunctionBuilder;
 use crate::error::Leaf;
+use crate::evaler::runner::Entity;
 use crate::identifier::r#type::{BaseType, Type};
 use crate::parser::error::ParseError;
 use crate::parser::index::Index;
@@ -118,11 +119,10 @@ impl<'a> Checker<'a> {
         }
         let token = &self.tbuf()[i];
         match &token.inner {
-            Token::Function(fid, funcid) => {
+            Token::Function(fid, funcid, _params) => {
                 let fid = *fid;
                 let funcid = *funcid;
 
-                // TODO: We're getting the func from modules twice
                 let func = &self.modules[fid].functions[funcid];
                 let (_walked, params) = self.check_params(i + 1, func.header.parameters.len())?;
                 self.dive_func(fid, funcid)
@@ -130,12 +130,12 @@ impl<'a> Checker<'a> {
                     .map_err(|e| e.with_linen(self.tbuf()[i].position))
                     .map(|_| ())
             }
-            Token::TrackedRuntimeList(list) => {
+            Token::List(list) => {
                 let first_type = self.discover_type(&list[0]).unwrap();
 
                 for entity in list.iter() {
                     // This list contains inlined code, lets check that as well
-                    if let Token::TrackedGroup(entity_contents) = &entity.inner {
+                    if let Token::Group(entity_contents) = &entity.inner {
                         self.dive_tbuf(entity_contents)
                             .run(0)
                             .map_err(|e| e.with_linen(entity.position))?;
@@ -165,35 +165,23 @@ impl<'a> Checker<'a> {
             }
             let token = &self.tbuf()[i];
             match &token.inner {
-                Token::V(v) => param_types.push(v.into()), // TODO: For equality operators this is wrong
-                Token::ParamValue(n) => param_types.push(self.func().header.parameters[*n].clone()),
-                Token::TrackedRuntimeList(list) => {
-                    self.dive_tbuf(list).run(0)?;
-                    let first_type = self.discover_type(&list[0]).unwrap();
-
-                    for entity in list.iter() {
-                        let this_type = self.discover_type(entity).unwrap();
-                        if this_type != first_type {
-                            return Err(ParseError::new(
-                                self.func().file.clone(),
-                                Leaf::ListTypeMismatch(first_type, this_type),
-                            )
-                            .with_linen(entity.position));
-                        }
+                Token::Finished(entity) => match entity {
+                    Entity::V(v) => param_types.push(v.into()), // TODO: For equality operators this is wrong
+                    Entity::ParamValue(n) => {
+                        param_types.push(self.func().header.parameters[*n].clone())
                     }
-
-                    param_types.push(first_type);
-                }
-                Token::WhereValue(n) => {
-                    let where_buf = &self.func().wheres[*n];
-                    let t = match self.discover_type(&where_buf[0]) {
-                        Found(t) => t,
-                        UnsafeValid => Type::UnsafeValid,
-                    };
-                    self.dive_tbuf(&where_buf).run(0)?;
-                    param_types.push(t);
-                }
-                Token::TrackedGroup(tbuf) => {
+                    Entity::WhereValue(n) => {
+                        let where_buf = &self.func().wheres[*n];
+                        let t = match self.discover_type(&where_buf[0]) {
+                            Found(t) => t,
+                            UnsafeValid => Type::UnsafeValid,
+                        };
+                        self.dive_tbuf(&where_buf).run(0)?;
+                        param_types.push(t);
+                    }
+                    _ => panic!(),
+                },
+                Token::Group(tbuf) => {
                     let t = match self.discover_type(&tbuf[0]) {
                         Found(t) => t,
                         UnsafeValid => Type::UnsafeValid,
@@ -201,7 +189,7 @@ impl<'a> Checker<'a> {
                     self.dive_tbuf(tbuf).run(0)?;
                     param_types.push(t);
                 }
-                Token::TrackedIfStatement(branches, else_do) => {
+                Token::IfStatement(branches, else_do) => {
                     let mut types = Vec::with_capacity(branches.len() + 1);
 
                     // Conditional branches
@@ -222,20 +210,32 @@ impl<'a> Checker<'a> {
                         ));
                     }
                 }
-                Token::Function(fid, funcid) => {
-                    // Is this enough? I don't think it is right. I need to go through the
-                    // parameters. The problem is that we're stateless and I cannot index forward
-                    // the parent.
-                    // Actually nevermind, Because I'm in check_params. I can safely assume that
-                    // this function has no parameters.
+                Token::List(list) => {
+                    self.dive_tbuf(list).run(0)?;
+                    let first_type = self.discover_type(&list[0]).unwrap();
+
+                    for entity in list.iter() {
+                        let this_type = self.discover_type(entity).unwrap();
+                        if this_type != first_type {
+                            return Err(ParseError::new(
+                                self.func().file.clone(),
+                                Leaf::ListTypeMismatch(first_type, this_type),
+                            )
+                            .with_linen(entity.position));
+                        }
+                    }
+
+                    param_types.push(first_type);
+                }
+                Token::Function(fid, funcid, _params) => {
                     let mut c = self.dive_func(*fid, *funcid);
                     let t = c.func().header.returns.clone();
                     c.run(0)?;
                     param_types.push(t);
                 }
-                Token::Key(Key::PrimitiveExit) => param_types.push(Type::UnsafeValid),
+                Token::Recurse(_params) => param_types.push(self.func().header.returns.clone()),
                 Token::BridgedFunction(_) => param_types.push(Type::UnsafeValid),
-                Token::Group(_) => panic!(),
+                Token::K(Key::PrimitiveExit) => param_types.push(Type::UnsafeValid),
                 _ => {}
             }
             i += 1;
@@ -245,7 +245,7 @@ impl<'a> Checker<'a> {
         let next = &self.tbuf().get(i);
         if let Some(token) = next.map(|v| &v.inner) {
             // Operators are allowed to come afterwards
-            if let Token::Key(Key::Operator(_)) = token {
+            if let Token::K(Key::Operator(_)) = token {
             } else {
                 let func = self.func();
                 return Err(ParseError::new(
@@ -272,17 +272,20 @@ impl<'a> Checker<'a> {
 
     fn discover_type(&self, t: &Tracked<Token>) -> DiscoverResult {
         match &t.inner {
-            Token::V(v) => Found(v.into()),
-            Token::LambdaValue(_lid) => panic!("Lambda type from token is like not a thing atm"),
-            Token::ParamValue(n) => Found(self.func().header.parameters[*n].clone()),
-            Token::WhereValue(n) => self.discover_type(&self.func().wheres[*n][0]),
+            Token::Finished(entity) => match entity {
+                Entity::V(v) => Found(v.into()),
+                Entity::ParamValue(n) => Found(self.func().header.parameters[*n].clone()),
+                Entity::WhereValue(n) => self.discover_type(&self.func().wheres[*n][0]),
+                Entity::Recurse(_params) => DiscoverResult::Found(self.func().header.returns.clone()),
+                Entity::BridgedFunction(_, _) => DiscoverResult::UnsafeValid,
+                _ => panic!("{:?}", entity),
+            },
+            Token::Group(tbuf) => self.discover_type(&tbuf[0]),
+            Token::IfStatement(branches, _else) => self.discover_type(&branches[0].1[0]),
+            Token::List(list) => self.discover_type(&list[0]),
+            Token::K(Key::PrimitiveExit) => DiscoverResult::UnsafeValid,
             Token::BridgedFunction(_) => UnsafeValid,
-            Token::TrackedGroup(tbuf) => self.discover_type(&tbuf[0]),
-            Token::TrackedIfStatement(branches, _else) => self.discover_type(&branches[0].1[0]),
-            Token::TrackedRuntimeList(list) => self.discover_type(&list[0]),
-            Token::Recurse => DiscoverResult::Found(self.func().header.returns.clone()),
-            Token::Key(Key::PrimitiveExit) => DiscoverResult::UnsafeValid,
-            Token::Function(fid, funcid) => {
+            Token::Function(fid, funcid, _params) => {
                 let header = self
                     .index
                     .get_file_from(*fid)

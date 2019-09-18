@@ -78,8 +78,6 @@ impl Parser {
                 e.find_line(&modules[error_source_fid].tokenizer.source()),
             ));
         }
-        // TODO: To be able to attach source code data I need to move the raw source code &[u8] in
-        // ParseModule instead of having it in local scope
 
         // GLOBAL MUTATION
         unsafe { RUNTIME = modules.into() }
@@ -104,7 +102,7 @@ impl Parser {
             let token = module.tokenizer.next_token(false);
             // Lets see which sub-parser to switch to
             match token {
-                Token::Key(Key::Use) => {
+                Token::K(Key::Use) => {
                     if let Token::Import(src) = {
                         let t = module.tokenizer.next_token(false);
                         import_from(t).map_err(|e| {
@@ -120,7 +118,7 @@ impl Parser {
                         self.parse_file(mod_path)?;
                     }
                 }
-                Token::Key(Key::HeaderFn) => {
+                Token::K(Key::HeaderFn) => {
                     let mut context = Context::new(&file, &mut module.tokenizer, &mut self.index);
                     let func = match FunctionBuilder::new(file.clone()).with_header(&mut context) {
                         Err(e) => {
@@ -142,7 +140,7 @@ impl Parser {
 
                     functions.push(func);
                 }
-                Token::Key(Key::HeaderType) => {}
+                Token::K(Key::HeaderType) => {}
                 Token::EOF => break,
                 _ => {
                     return Err(ParseError::new(file.clone(), Leaf::ExHeader(token))
@@ -168,7 +166,7 @@ impl Parser {
         for func in functions.drain(0..) {
             let optimized_func = self
                 .index
-                .optimize_func(func)
+                .translate_func(func)
                 .map_err(|e| e.find_line(&module.tokenizer.source()))?;
             module.functions.push(optimized_func);
         }

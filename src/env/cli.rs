@@ -11,6 +11,7 @@ use debug::RunProfile;
 
 impl Default for Arguments {
     fn default() -> Self {
+        #[allow(unused_mut)]
         let mut args = Arguments {
             source_file: String::new(),
             profile: RunProfile::Standard,

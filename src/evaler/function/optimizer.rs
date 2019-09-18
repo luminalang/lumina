@@ -84,7 +84,12 @@ impl<S: Iterator<Item = Token>> Optimizer<S> {
                 }
                 Entity::BridgedFunction(funcid, param_buf)
             }
+            // TODO: Is there better performance in just doing what I'm doing on Token::List
             Token::Group(tokens) => Entity::Group(from_tbuf(tokens)),
+            Token::List(mut list) => {
+                Entity::EvaluationList(list.drain(0..).map(|t| self.optimize(t.inner)).collect())
+                // TODO: Value lists
+            }
             Token::Finished(entity) => entity, // TODO: Dive
             _ => panic!(
                 "Unexpected token escaped into final optimization stage: {:?}",

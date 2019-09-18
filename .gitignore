@@ -3,3 +3,5 @@ notes.md
 target
 leafstd/modules/almightyfloppyfish
 *.gdb_history*
+*peda-session*
+leaf

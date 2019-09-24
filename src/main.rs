@@ -1,35 +1,31 @@
-#![feature(const_vec_new)]
-#![feature(test)]
-pub mod env;
-pub mod error;
-pub mod evaler;
-pub mod identifier;
-pub mod parser;
+const TEST_SOURCECODE: &[u8] = b"
 
-use evaler::module;
-use evaler::runner::Runner;
+";
 
-use crate::env::cli::debug;
-use std::path::PathBuf;
+mod parser;
+use parser::{Parser, MAIN_MODULE_ID};
 
 fn main() {
-    //let t = std::time::SystemTime::now();
-    unsafe {
-        env::ENV = env::Environment::initialize();
-    }
+    let parser = Parser::new();
 
-    let parser = parser::Parser::new();
-    match parser.run(PathBuf::from(env::entrypoint())) {
-        Err(e) => eprintln!("{}", e),
-        Ok(main_id) => {
-            let main = &mut module::get(1).unwrap().get_function(main_id);
-            let v = Runner::run(main, Vec::new());
-            if debug::is_dev() {
-                println!("\nmain returns {:?}", v);
-            }
-        }
+    // Construct a raw token representation of the code
+    let tokens = match parser.tokenize(TEST_SOURCECODE) {
+        Ok(tokens) => tokens,
+        Err(e) => panic!("{:?}", e),
     };
 
-    //let took = t.elapsed();
-    //println!("{:?}", took.unwrap());
+    // Verify syntax and typing of token representation and group values based on `<<` `()`
+    let grouped = match parser.group_and_verify(tokens) {
+        Ok(grouped) => grouped,
+        Err(e) => panic!("{:?}", e),
+    };
+
+    // Perform optimizations, remove all metadata and generate raw unsafe IR
+    let optimized_ir = match parser.optimize {
+        Ok(optimized_ir) => optimized_ir,
+        Err(e) => panic!("{:?}", e),
+    };
+
+    let func = parser.get_function(MAIN_MODULE_ID, "main");
+    evaler.run(func);
 }

@@ -1,19 +1,21 @@
 const TEST_SOURCECODE: &[u8] = b"
-
+||fn main
+fn add x y (int int -> int) 
+    4+ << to_int{t|first=1, second=[1,add 2 2]}
 ";
 
 mod parser;
-use parser::{Parser, MAIN_MODULE_ID};
+use parser::Parser;
 
 fn main() {
-    let parser = Parser::new();
+    let mut parser = Parser::new();
+
+    println!("{}\n", String::from_utf8(TEST_SOURCECODE.to_vec()).unwrap());
 
     // Construct a raw token representation of the code
-    let tokens = match parser.tokenize(TEST_SOURCECODE) {
-        Ok(tokens) => tokens,
-        Err(e) => panic!("{:?}", e),
-    };
+    let _tokens = parser.tokenize(TEST_SOURCECODE);
 
+    /*
     // Verify syntax and typing of token representation and group values based on `<<` `()`
     let grouped = match parser.group_and_verify(tokens) {
         Ok(grouped) => grouped,
@@ -28,4 +30,13 @@ fn main() {
 
     let func = parser.get_function(MAIN_MODULE_ID, "main");
     evaler.run(func);
+    */
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($x:expr) => {
+        use colored::*;
+        println!("{}: {:?}", " ! ".red(), $x);
+    };
 }

@@ -1,7 +1,7 @@
 mod token;
 use crate::debug;
 use std::convert::TryFrom;
-pub use token::Token;
+pub use token::{Header, Inlined, Key, RawToken, Token};
 
 pub struct Tokenizer<'s> {
     source_code: &'s [u8],
@@ -28,7 +28,7 @@ impl<'s> From<&'s [u8]> for Tokenizer<'s> {
 }
 
 impl<'s> Tokenizer<'s> {
-    fn _regress(&mut self, n: usize) {
+    pub fn regress(&mut self, n: usize) {
         self.index -= n;
     }
     fn progress(&mut self, n: usize) {

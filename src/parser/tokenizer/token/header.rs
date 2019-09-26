@@ -18,3 +18,12 @@ impl TryFrom<&[u8]> for Header {
         Ok(res)
     }
 }
+
+impl Header {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Header::Function => "fn",
+            Header::Type => "type",
+        }
+    }
+}

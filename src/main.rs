@@ -1,7 +1,9 @@
 const TEST_SOURCECODE: &[u8] = b"
-||fn main
+fn main
+    add (1+1) << 1 +1
+
 fn add x y (int int -> int) 
-    4+ << to_int{t|first=1, second=[1,add 2 2]}
+    x+y
 ";
 
 mod parser;
@@ -13,7 +15,15 @@ fn main() {
     println!("{}\n", String::from_utf8(TEST_SOURCECODE.to_vec()).unwrap());
 
     // Construct a raw token representation of the code
-    let _tokens = parser.tokenize(TEST_SOURCECODE);
+    let functions = match parser.tokenize("entrypoint", TEST_SOURCECODE) {
+        Ok(functions) => functions,
+        Err(e) => panic!("{:?}", e),
+    };
+    println!("{:#?}", parser);
+    println!();
+    for func in functions {
+        println!("{:?}", func);
+    }
 
     /*
     // Verify syntax and typing of token representation and group values based on `<<` `()`

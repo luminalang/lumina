@@ -7,11 +7,12 @@ mod key;
 pub use key::Key;
 mod inlined;
 pub use inlined::Inlined;
+pub mod flags;
 
 pub struct Token {
     source_index: usize,
-    inner: RawToken,
-    // flags: ParserFlags,
+    flags: flags::Flag,
+    pub inner: RawToken,
 }
 
 impl Token {
@@ -54,6 +55,7 @@ impl TryFrom<&[u8]> for Token {
         let t = Token {
             inner: find_inner(),
             source_index: 0,
+            flags: flags::Flag::default(),
         };
         Ok(t)
     }

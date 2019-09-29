@@ -1,9 +1,10 @@
 use std::convert::TryFrom;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Inlined {
     Int(i32),
     Float(f32),
+    Bool(bool),
     // String(Vec<u8>),
 }
 
@@ -18,6 +19,9 @@ impl TryFrom<&[u8]> for Inlined {
         if let Ok(float) = as_str.parse::<f32>() {
             return Ok(Inlined::Float(float));
         };
+        if let Ok(boolean) = as_str.parse::<bool>() {
+            return Ok(Inlined::Bool(boolean));
+        }
         Err(())
     }
 }

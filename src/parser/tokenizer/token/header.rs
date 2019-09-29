@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Header {
     Function,
     Type,

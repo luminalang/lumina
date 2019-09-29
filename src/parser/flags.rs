@@ -2,7 +2,7 @@ const FLAG_MUT: u8 = 1;
 const FLAG_USED: u8 = 2;
 
 pub struct Flag {
-    bits: u8,
+    pub bits: u8,
 }
 
 impl std::default::Default for Flag {

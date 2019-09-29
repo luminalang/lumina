@@ -1,3 +1,4 @@
+use super::flags::Flag;
 use super::Key;
 use super::RawToken;
 use super::Token;
@@ -10,9 +11,8 @@ use std::fmt;
 pub struct FunctionBuilder {
     pub name: String,
     pub parameter_names: Vec<String>,
-    pub parameter_types: Vec<Type>,
+    pub parameter_types: Vec<(Flag, Type)>,
     pub returns: Type,
-    generics: Vec<(u16, Type)>,
     body: Vec<Token>,
 }
 
@@ -23,7 +23,6 @@ impl FunctionBuilder {
             parameter_names: Vec::new(),
             parameter_types: Vec::new(),
             returns: Type::default(),
-            generics: Vec::new(),
             body: Vec::new(),
         }
     }
@@ -67,9 +66,9 @@ impl FunctionBuilder {
         loop {
             let next = tokenizer.next();
             match next.map(|t| t.inner) {
-                Some(RawToken::Identifier(name)) => {
-                    self.parameter_types.push(Type::try_from(name.as_str())?)
-                }
+                Some(RawToken::Identifier(name)) => self
+                    .parameter_types
+                    .push((Flag::default(), Type::try_from(name.as_str())?)),
                 Some(RawToken::Key(Key::ParenClose)) => return Ok(self),
                 Some(RawToken::Key(Key::Arrow)) => return self.with_return(tokenizer),
                 None => panic!("ERROR_TODO: File ended"),
@@ -97,10 +96,11 @@ impl FunctionBuilder {
     pub fn _reserve(&mut self, additional: usize) {
         self.body.reserve(additional)
     }
-
     pub fn push(&mut self, t: Token) {
         self.body.push(t);
     }
+
+    pub fn group_and_verify(&mut self, parser: &super::Parser) {}
 }
 
 impl fmt::Debug for FunctionBuilder {
@@ -108,7 +108,7 @@ impl fmt::Debug for FunctionBuilder {
         let types = self
             .parameter_types
             .iter()
-            .map(|t| t.to_string())
+            .map(|(_flags, t)| t.to_string())
             .collect::<Vec<String>>();
         let annotation = if types.is_empty() {
             format!("{}", self.returns)

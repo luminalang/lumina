@@ -8,8 +8,8 @@ pub struct Tokenizer<'s> {
     index: usize,
 }
 
-const BREAK_AT: &[u8] = b" ,()[]+*/\n#{}|=";
-const IGNORES_SPACE: &[u8] = b",([+*/\n#{}|";
+const BREAK_AT: &[u8] = b" ,()[]+*/\n#{}|=:";
+const IGNORES_SPACE: &[u8] = b",([+*/\n#{}|:";
 // &[(x, [y])] -> Only early-breaks on x if the next byte isn't any of y
 const MAYBE_IGNORES_SPACE: &[(u8, &[u8])] = &[
     (b'-', &[b'>']),
@@ -66,6 +66,16 @@ impl<'s> Tokenizer<'s> {
                 return c;
             }
             i += 1;
+        }
+    }
+    pub fn skip_spaces_and_newlines(&mut self) {
+        let c = self.source_code.get(self.index);
+        match c {
+            Some(b' ') | Some(b'\n') => {
+                self.progress(1);
+                self.skip_spaces_and_newlines();
+            }
+            _ => {}
         }
     }
 
@@ -134,4 +144,14 @@ impl<'s> Iterator for Tokenizer<'s> {
             .ok()
             .map(|t| t.with_source_index(self.index))
     }
+}
+
+// For some reason the ordinary .contains method on slices gives me false negatives
+fn contains<T: PartialEq>(slice: &[T], check: T) -> bool {
+    for t in slice {
+        if *t == check {
+            return true;
+        }
+    }
+    false
 }

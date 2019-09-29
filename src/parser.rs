@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::fmt;
 
 pub const MAIN_MODULE_ID: usize = 0;
@@ -9,6 +10,7 @@ mod function;
 pub use function::FunctionBuilder;
 mod r#type;
 pub use r#type::Type;
+pub mod flags;
 
 pub struct Parser {
     module_ids: HashMap<String, usize>,
@@ -19,6 +21,7 @@ pub struct Parser {
 struct ParseModule {
     functions: HashMap<String, usize>,
     types: HashMap<String, usize>,
+    type_fields: Vec<Vec<(String, Type)>>,
 }
 
 impl Parser {
@@ -59,12 +62,13 @@ impl Parser {
             }
         }
     }
-    fn new_type(&mut self, fid: usize, name: &str) -> usize {
+    fn new_type(&mut self, fid: usize, name: String, fields: Vec<(String, Type)>) -> usize {
         match &mut self.modules[fid] {
             None => panic!("Module {} used before initialized", name),
             Some(module) => {
                 let typeid = module.types.len();
                 module.types.insert(name.to_owned(), typeid);
+                module.type_fields.push(fields);
                 typeid
             }
         }
@@ -91,24 +95,80 @@ impl Parser {
                         let mut funcb = FunctionBuilder::new().with_header(&mut tokenizer)?;
 
                         while let Some(token) = tokenizer.next() {
-                            if let RawToken::Header(h) = token.inner {
-                                tokenizer.regress(h.as_str().len() + 1);
-                                break;
+                            match token.inner {
+                                RawToken::Header(h) => {
+                                    tokenizer.regress(h.as_str().len() + 1);
+                                    break;
+                                }
+                                RawToken::NewLine => {}
+                                _ => funcb.push(token),
                             }
-                            funcb.push(token);
                         }
 
                         self.new_function(fid, &funcb.name);
                         function_buf.push(funcb);
                     }
                     Header::Type => {
-                        unimplemented!("Custom Types");
+                        let (type_name, fields) = self.parse_type_decl(&mut tokenizer)?;
+
+                        self.new_type(fid, type_name, fields);
                     }
                 },
                 RawToken::NewLine => continue,
                 _ => panic!("ERROR_TODO: Unexpected {:?}, wanted header", token),
             }
         }
+    }
+
+    pub fn group_and_verify(
+        &mut self,
+        mut functions: Vec<FunctionBuilder>,
+    ) -> Result<Vec<FunctionBuilder>, ()> {
+        for func in functions.iter_mut() {
+            func.group_and_verify(&self)
+        }
+        Ok(functions)
+    }
+
+    fn parse_type_decl(
+        &mut self,
+        tokenizer: &mut Tokenizer,
+    ) -> Result<(String, Vec<(String, Type)>), ()> {
+        let first = tokenizer.next().expect("ERROR_TODO");
+        let type_name = match first.inner {
+            RawToken::Identifier(name) => name,
+            _ => panic!("ERROR_TODO: Wanted type name, got {:?}", first),
+        };
+        let mut fields = Vec::new();
+        loop {
+            if tokenizer.next().map(|t| t.inner) != Some(RawToken::NewLine) {
+                panic!("Expected newline")
+            }
+            tokenizer.skip_spaces_and_newlines();
+
+            let next = tokenizer.next().expect("ERROR_TODO: File ended");
+            let field_name = match next.inner {
+                RawToken::Identifier(field_name) => field_name,
+                RawToken::Header(h) => {
+                    tokenizer.regress(h.as_str().len() + 1);
+                    break;
+                }
+                _ => panic!("ERROR_TODO: Unexpected thingy in field decl, {:?}", next),
+            };
+            let next = tokenizer.next().expect("ERROR_TODO");
+            if let RawToken::Identifier(type_name) = next.inner {
+                fields.push((
+                    field_name.to_owned(),
+                    Type::try_from(type_name.as_str()).unwrap(),
+                ))
+            } else {
+                panic!(
+                    "ERROR_TODO: Invalid syntax in field decleration, got {:?}",
+                    next
+                );
+            }
+        }
+        Ok((type_name, fields))
     }
 }
 
@@ -138,7 +198,16 @@ impl fmt::Debug for ParseModule {
             "types:\n {}\nfunctions:\n{}",
             self.types
                 .iter()
-                .map(|(tname, tid)| format!("  #{} {}", tid, tname))
+                .map(|(tname, tid)| format!(
+                    "  #{} {}\n{}",
+                    tid,
+                    tname,
+                    self.type_fields[*tid]
+                        .iter()
+                        .map(|(f, t)| format!("      {} {}", f, t))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                ))
                 .collect::<Vec<String>>()
                 .join("\n"),
             self.functions

@@ -1,6 +1,18 @@
 const TEST_SOURCECODE: &[u8] = b"
+type Coordinate
+    x int
+    y int 
+
+type Direction
+    left a
+    right b
+
 fn main
-    add (1+1) << 1 +1
+    io:puts << 
+      match add 4 2
+        | 1: \"one\"
+        | add 1 << if true then 1 else 2: \"two\"
+        | else: \"other\"
 
 fn add x y (int int -> int) 
     x+y
@@ -21,17 +33,17 @@ fn main() {
     };
     println!("{:#?}", parser);
     println!();
-    for func in functions {
+    for func in &functions {
         println!("{:?}", func);
     }
 
-    /*
     // Verify syntax and typing of token representation and group values based on `<<` `()`
-    let grouped = match parser.group_and_verify(tokens) {
+    let grouped = match parser.group_and_verify(functions) {
         Ok(grouped) => grouped,
         Err(e) => panic!("{:?}", e),
     };
 
+    /*
     // Perform optimizations, remove all metadata and generate raw unsafe IR
     let optimized_ir = match parser.optimize {
         Ok(optimized_ir) => optimized_ir,

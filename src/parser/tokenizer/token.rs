@@ -6,8 +6,8 @@ pub use header::Header;
 mod key;
 pub use key::Key;
 mod inlined;
+use crate::parser::flags;
 pub use inlined::Inlined;
-pub mod flags;
 
 pub struct Token {
     source_index: usize,
@@ -61,7 +61,7 @@ impl TryFrom<&[u8]> for Token {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RawToken {
     Identifier(String),
 
@@ -70,4 +70,10 @@ pub enum RawToken {
     Inlined(Inlined),
 
     NewLine,
+}
+
+impl PartialEq for Token {
+    fn eq(&self, other: &Token) -> bool {
+        self.inner.eq(&other.inner)
+    }
 }

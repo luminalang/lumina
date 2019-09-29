@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Key {
     ParenOpen,
     ParenClose,
@@ -13,6 +13,14 @@ pub enum Key {
     ListClose,
     RecordOpen,
     RecordClose,
+    Match,
+    If,
+    Elif,
+    Else,
+    Then,
+    Colon,
+    Where,
+    PrimitiveExit,
 }
 
 impl TryFrom<&[u8]> for Key {
@@ -31,6 +39,14 @@ impl TryFrom<&[u8]> for Key {
             b"]" => Key::ListClose,
             b"{" => Key::RecordOpen,
             b"}" => Key::RecordClose,
+            b":" => Key::Colon,
+            b"match" => Key::Match,
+            b"if" => Key::If,
+            b"elif" => Key::Elif,
+            b"else" => Key::Else,
+            b"then" => Key::Then,
+            b"where" => Key::Where,
+            b"exit" => Key::PrimitiveExit,
             _ => return Err(()),
         };
         Ok(res)

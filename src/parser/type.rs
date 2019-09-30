@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
 use std::fmt;
 
+#[derive(PartialEq, Debug, Clone, Hash, Eq)]
 pub enum Type {
     Nothing,
     Int,

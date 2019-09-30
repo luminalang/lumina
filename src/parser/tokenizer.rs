@@ -1,7 +1,6 @@
 mod token;
-use crate::debug;
 use std::convert::TryFrom;
-pub use token::{Header, Inlined, Key, RawToken, Token};
+pub use token::{is_valid_identifier, Header, Inlined, Key, RawToken, Token};
 
 pub struct Tokenizer<'s> {
     source_code: &'s [u8],
@@ -144,14 +143,4 @@ impl<'s> Iterator for Tokenizer<'s> {
             .ok()
             .map(|t| t.with_source_index(self.index))
     }
-}
-
-// For some reason the ordinary .contains method on slices gives me false negatives
-fn contains<T: PartialEq>(slice: &[T], check: T) -> bool {
-    for t in slice {
-        if *t == check {
-            return true;
-        }
-    }
-    false
 }

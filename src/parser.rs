@@ -5,9 +5,9 @@ use std::fmt;
 pub const MAIN_MODULE_ID: usize = 0;
 
 mod tokenizer;
-pub use tokenizer::{Header, Key, RawToken, Token, Tokenizer};
+pub use tokenizer::{is_valid_identifier, Header, Key, RawToken, Token, Tokenizer};
 mod function;
-pub use function::FunctionBuilder;
+pub use function::{Bodymode, FunctionBuilder};
 mod r#type;
 pub use r#type::Type;
 pub mod flags;
@@ -19,7 +19,9 @@ pub struct Parser {
 
 #[derive(Default)]
 struct ParseModule {
-    functions: HashMap<String, usize>,
+    // TODO: I probably want to convert Vec<Type> into a numeric representation like `0425` to save
+    // heap allocations just for id lookups
+    functions: HashMap<(String, Vec<Type>, Type), usize>,
     types: HashMap<String, usize>,
     type_fields: Vec<Vec<(String, Type)>>,
 }
@@ -32,10 +34,19 @@ impl Parser {
         }
     }
 
-    fn _get_function_id(&self, fid: usize, name: &str) -> Option<usize> {
+    fn _get_function_id(
+        &self,
+        fid: usize,
+        name: &str,
+        params: Vec<Type>,
+        returns: Type,
+    ) -> Option<usize> {
         match self.modules.get(fid)? {
             None => panic!("Module {} used before created", name),
-            Some(module) => module.functions.get(name).copied(),
+            Some(module) => module
+                .functions
+                .get(&(name.to_owned(), params, returns))
+                .copied(),
         }
     }
     fn _get_type_id(&self, fid: usize, name: &str) -> Option<usize> {
@@ -52,12 +63,24 @@ impl Parser {
         self.modules.push(Some(ParseModule::default()));
         fid
     }
-    fn new_function(&mut self, fid: usize, name: &str) -> usize {
+    fn new_function(&mut self, fid: usize, funcb: &FunctionBuilder) -> usize {
         match &mut self.modules[fid] {
-            None => panic!("Module {} used before initialized", name),
+            None => panic!("Module {} used before initialized", funcb.name),
             Some(module) => {
                 let funcid = module.functions.len();
-                module.functions.insert(name.to_owned(), funcid);
+                module.functions.insert(
+                    (
+                        funcb.name.clone(),
+                        funcb
+                            .parameter_types
+                            .iter()
+                            .cloned()
+                            .map(|(_flags, t)| t)
+                            .collect(),
+                        funcb.returns.clone(),
+                    ),
+                    funcid,
+                );
                 funcid
             }
         }
@@ -94,18 +117,11 @@ impl Parser {
                     Header::Function => {
                         let mut funcb = FunctionBuilder::new().with_header(&mut tokenizer)?;
 
-                        while let Some(token) = tokenizer.next() {
-                            match token.inner {
-                                RawToken::Header(h) => {
-                                    tokenizer.regress(h.as_str().len() + 1);
-                                    break;
-                                }
-                                RawToken::NewLine => {}
-                                _ => funcb.push(token),
-                            }
-                        }
+                        let body_entry = funcb.parse_func_body(&mut tokenizer)?;
 
-                        self.new_function(fid, &funcb.name);
+                        funcb.push(body_entry);
+
+                        self.new_function(fid, &funcb);
                         function_buf.push(funcb);
                     }
                     Header::Type => {
@@ -120,12 +136,12 @@ impl Parser {
         }
     }
 
-    pub fn group_and_verify(
+    pub fn type_check(
         &mut self,
         mut functions: Vec<FunctionBuilder>,
     ) -> Result<Vec<FunctionBuilder>, ()> {
         for func in functions.iter_mut() {
-            func.group_and_verify(&self)
+            func.verify(&self)
         }
         Ok(functions)
     }
@@ -212,7 +228,10 @@ impl fmt::Debug for ParseModule {
                 .join("\n"),
             self.functions
                 .iter()
-                .map(|(fname, funcid)| format!("  #{} {}", funcid, fname))
+                .map(|((fname, params, returns), funcid)| format!(
+                    "  #{} {} ({:?} -> {:?})",
+                    funcid, fname, params, returns
+                ))
                 .collect::<Vec<String>>()
                 .join("\n"),
         )

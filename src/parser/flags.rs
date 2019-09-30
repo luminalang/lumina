@@ -1,6 +1,7 @@
-const FLAG_MUT: u8 = 1;
-const FLAG_USED: u8 = 2;
+const _FLAG_MUT: u8 = 1;
+const _FLAG_USED: u8 = 2;
 
+#[derive(Clone, Copy)]
 pub struct Flag {
     pub bits: u8,
 }

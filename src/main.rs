@@ -3,19 +3,11 @@ type Coordinate
     x int
     y int 
 
-type Direction
-    left a
-    right b
-
 fn main
-    io:puts << 
-      match add 4 2
-        | 1: \"one\"
-        | add 1 << if true then 1 else 2: \"two\"
-        | else: \"other\"
+    add 5 (2 + << 1 + 2)
 
-fn add x y (int int -> int) 
-    x+y
+fn add x y (int int -> int)
+    x + y
 ";
 
 mod parser;
@@ -37,8 +29,8 @@ fn main() {
         println!("{:?}", func);
     }
 
-    // Verify syntax and typing of token representation and group values based on `<<` `()`
-    let grouped = match parser.group_and_verify(functions) {
+    // Verify syntax and infer types
+    let grouped = match parser.type_check(functions) {
         Ok(grouped) => grouped,
         Err(e) => panic!("{:?}", e),
     };

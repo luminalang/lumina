@@ -1,3 +1,5 @@
+use crate::datatypes::FlatVec;
+use crate::parser::{flags, Type};
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -6,9 +8,8 @@ pub use header::Header;
 mod key;
 pub use key::Key;
 mod inlined;
-use crate::parser::{flags, Type};
-mod operator;
 pub use inlined::Inlined;
+mod operator;
 pub use operator::Operator;
 
 #[derive(Clone)]
@@ -52,6 +53,12 @@ impl Token {
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}: {:#?}", self.source_index, self.inner)
+    }
+}
+impl Default for Token {
+    // I just don't want to accidentally Token::default instead of RawToken::default
+    fn default() -> Self {
+        panic!("Attempted to default a token")
     }
 }
 
@@ -104,8 +111,16 @@ pub enum RawToken {
 
     Parameter(usize, Type),
     Operator(Operator),
+    IfStatement(FlatVec<Token>),
+    MatchStatement(FlatVec<Token>),
 
     NewLine,
+}
+
+impl Default for RawToken {
+    fn default() -> Self {
+        RawToken::NewLine
+    }
 }
 
 impl PartialEq for Token {

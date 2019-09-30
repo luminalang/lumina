@@ -13,6 +13,8 @@ fn add x y (int int -> int)
 mod parser;
 use parser::Parser;
 
+pub mod datatypes;
+
 fn main() {
     let mut parser = Parser::new();
 

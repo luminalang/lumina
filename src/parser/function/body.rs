@@ -80,8 +80,6 @@ impl FunctionBuilder {
                     Some(a) => a,
                     None => return Ok(Some(v)),
                 };
-                // TODO: I think it's always supposed to be ParenClose here. Could I double check
-                // that?
                 match mode {
                     Mode::Operator(left, op) => {
                         match after.inner {

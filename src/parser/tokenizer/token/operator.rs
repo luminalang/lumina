@@ -14,10 +14,12 @@ impl TryFrom<&[u8]> for Operator {
     type Error = ();
 
     fn try_from(s: &[u8]) -> Result<Self, Self::Error> {
-        const allowed_characters: &[u8] = b"!$%&/=?^~@+-*/;";
+        const ALLOWED_CHARACTERS: &[u8] = b"!$%&/=?^~@+-*/;:";
+        // TODO: `:` should be allowed if the character before / after it is also a operator
+        // allowed character. I need to implement this into the tokenizer!
 
         for c in s {
-            if !allowed_characters.contains(&c) {
+            if !ALLOWED_CHARACTERS.contains(&c) {
                 return Err(());
             }
         }

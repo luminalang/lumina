@@ -1,6 +1,6 @@
 mod token;
 use std::convert::TryFrom;
-pub use token::{is_valid_identifier, Header, Inlined, Key, RawToken, Token};
+pub use token::{is_valid_identifier, Header, Inlined, Key, Operator, RawToken, Token};
 
 pub struct Tokenizer<'s> {
     source_code: &'s [u8],
@@ -27,6 +27,9 @@ impl<'s> From<&'s [u8]> for Tokenizer<'s> {
 }
 
 impl<'s> Tokenizer<'s> {
+    pub fn index(&self) -> usize {
+        self.index
+    }
     pub fn regress(&mut self, n: usize) {
         self.index -= n;
     }
@@ -47,14 +50,22 @@ impl<'s> Tokenizer<'s> {
             self.progress(1);
         }
     }
-    fn next_char(&mut self) -> u8 {
+    pub fn next_char(&mut self) -> u8 {
         let mut i = 1;
         loop {
             let c = self.source_code[self.index + i];
-            if c != b' ' {
+            if c != b' ' && c != b'\n' {
                 return c;
             }
             i += 1;
+        }
+    }
+    pub fn get_char(&mut self, offset: usize) -> u8 {
+        let c = self.source_code[self.index];
+        if c == b' ' || c == b'\n' {
+            self.get_char(offset + 1)
+        } else {
+            c
         }
     }
     fn _last_char(&mut self) -> u8 {

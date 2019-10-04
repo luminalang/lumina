@@ -4,10 +4,7 @@ type Coordinate
     y int 
 
 fn main
-    add 5 (2 + << 1 + 2)
-
-fn add x y (int int -> int)
-    x + y
+    io:puts \"hello world!\"
 ";
 
 mod parser;

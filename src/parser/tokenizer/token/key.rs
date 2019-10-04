@@ -1,11 +1,11 @@
 use std::convert::TryFrom;
+use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Key {
     ParenOpen,
     ParenClose,
     Arrow,
-    TypeSep,
     Pipe,
     Bar,
     ClosureMarker,
@@ -14,6 +14,7 @@ pub enum Key {
     RecordOpen,
     RecordClose,
     Match,
+    Comma,
     If,
     Elif,
     Else,
@@ -32,7 +33,6 @@ impl TryFrom<&[u8]> for Key {
             b"(" => Key::ParenOpen,
             b")" => Key::ParenClose,
             b"->" => Key::Arrow,
-            b"::" => Key::TypeSep,
             b"<<" => Key::Pipe,
             b"|" => Key::Bar,
             b"#" => Key::ClosureMarker,
@@ -41,6 +41,7 @@ impl TryFrom<&[u8]> for Key {
             b"{" => Key::RecordOpen,
             b"}" => Key::RecordClose,
             b":" => Key::Colon,
+            b"," => Key::Comma,
             b"match" => Key::Match,
             b"if" => Key::If,
             b"elif" => Key::Elif,
@@ -52,5 +53,32 @@ impl TryFrom<&[u8]> for Key {
             _ => return Err(()),
         };
         Ok(res)
+    }
+}
+
+impl Key {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Key::ParenOpen => "(",
+            Key::ParenClose => ")",
+            Key::Arrow => "->",
+            Key::Pipe => "<<",
+            Key::Bar => "|",
+            Key::ClosureMarker => "#",
+            Key::ListOpen => "[",
+            Key::ListClose => "]",
+            Key::RecordOpen => "{",
+            Key::RecordClose => "}",
+            Key::Colon => ":",
+            Key::Comma => ",",
+            Key::Match => "match",
+            Key::If => "if",
+            Key::Elif => "elif",
+            Key::Else => "else",
+            Key::Then => "then",
+            Key::Where => "where",
+            Key::PrimitiveExit => "exit",
+            Key::PrimitiveUnimplemented => "unimplemented",
+        }
     }
 }

@@ -7,7 +7,7 @@ pub const MAIN_MODULE_ID: usize = 0;
 mod tokenizer;
 pub use tokenizer::{is_valid_identifier, Header, Key, RawToken, Token, Tokenizer};
 mod function;
-pub use function::{Bodymode, FunctionBuilder};
+pub use function::FunctionBuilder;
 mod r#type;
 pub use r#type::Type;
 pub mod flags;
@@ -136,14 +136,11 @@ impl Parser {
         }
     }
 
-    pub fn type_check(
-        &mut self,
-        mut functions: Vec<FunctionBuilder>,
-    ) -> Result<Vec<FunctionBuilder>, ()> {
+    pub fn type_check(&mut self, mut functions: Vec<FunctionBuilder>) -> Result<(), ()> {
         for func in functions.iter_mut() {
-            func.verify(&self)
+            func.verify(&self)?;
         }
-        Ok(functions)
+        Ok(())
     }
 
     fn parse_type_decl(

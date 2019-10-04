@@ -107,12 +107,15 @@ pub enum RawToken {
     Inlined(Inlined),
     Group(Vec<Token>),
     Operation(Box<(Token, Token)>, Operator),
+    Parameters(Vec<Token>),
     Parameterized(String, Vec<Token>),
+    Constant(String),
 
     Parameter(usize, Type),
     Operator(Operator),
     IfStatement(FlatVec<Token>),
     MatchStatement(FlatVec<Token>),
+    List(Vec<Token>),
 
     NewLine,
 }

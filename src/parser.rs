@@ -7,7 +7,7 @@ pub const MAIN_MODULE_ID: usize = 0;
 mod tokenizer;
 pub use tokenizer::{is_valid_identifier, Header, Key, RawToken, Token, Tokenizer};
 mod function;
-pub use function::FunctionBuilder;
+pub use function::{BodySource, FunctionBuilder};
 mod r#type;
 pub use r#type::Type;
 pub mod flags;

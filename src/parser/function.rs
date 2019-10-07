@@ -8,6 +8,7 @@ use std::convert::TryFrom;
 use std::fmt;
 
 mod body;
+pub use body::BodySource;
 mod checker;
 
 #[derive(Default)]
@@ -119,7 +120,7 @@ impl FunctionBuilder {
     }
 
     pub fn parse_func_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
-        let entry = self.walk_body(body::Mode::Neutral, tokenizer)?;
+        let entry = tokenizer.walk(body::Mode::Neutral)?;
         match entry {
             body::WalkResult::Value(v) => Ok(v),
             _ => panic!("{:?}", entry),

@@ -32,9 +32,6 @@ impl<'s> Tokenizer<'s> {
     pub fn index(&self) -> usize {
         self.index
     }
-    pub fn undo(&mut self) {
-        self.index = self.last_index;
-    }
     pub fn regress(&mut self, n: usize) {
         self.index -= n;
     }
@@ -144,14 +141,15 @@ impl<'s> Tokenizer<'s> {
     }
 }
 
-impl<'s> Iterator for Tokenizer<'s> {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
+impl<'s> super::function::BodySource for Tokenizer<'s> {
+    fn next(&mut self) -> Option<Token> {
         self.last_index = self.index;
         let raw = self.gather_to(BREAK_AT);
         Token::try_from(raw)
             .ok()
             .map(|t| t.with_source_index(self.index))
+    }
+    fn undo(&mut self) {
+        self.index = self.last_index;
     }
 }

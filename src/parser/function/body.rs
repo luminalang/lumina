@@ -1,5 +1,10 @@
 pub use super::FunctionBuilder;
-use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken, Token, Tokenizer};
+pub use crate::parser::tokenizer::Token;
+use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken};
+
+mod first;
+mod list;
+mod r#match;
 
 #[derive(PartialEq, Debug)]
 pub enum Mode {
@@ -15,11 +20,20 @@ pub enum WalkResult {
     EOF,
 }
 
-impl FunctionBuilder {
-    pub fn walk_body(&mut self, mode: Mode, tokenizer: &mut Tokenizer) -> Result<WalkResult, ()> {
-        tokenizer.skip_spaces_and_newlines();
-        let token = match tokenizer.next() {
-            Some(t) => t,
+pub trait BodySource {
+    fn next(&mut self) -> Option<Token>;
+    fn undo(&mut self);
+
+    fn walk(&mut self, mode: Mode) -> Result<WalkResult, ()> {
+        // tokenizer.skip_spaces_and_newlines();
+        let token = match self.next() {
+            Some(t) => {
+                if t.inner == RawToken::NewLine {
+                    return self.walk(mode);
+                } else {
+                    t
+                }
+            }
             None => {
                 return match mode {
                     Mode::Parameters(v) => {
@@ -35,10 +49,10 @@ impl FunctionBuilder {
         };
 
         match token.inner {
-            RawToken::Header(h) => match mode {
+            RawToken::Header(_) => match mode {
                 Mode::Operator(_v, _op) => panic!("ET: No right side of operator"),
                 Mode::Parameters(previous) => {
-                    tokenizer.regress(h.as_str().len());
+                    self.undo();
                     let source = previous[0].source_index;
                     Ok(WalkResult::Value(Token::new(
                         RawToken::Parameters(previous),
@@ -46,23 +60,22 @@ impl FunctionBuilder {
                     )))
                 }
                 Mode::Neutral => {
-                    tokenizer.regress(h.as_str().len());
+                    self.undo();
                     Ok(WalkResult::EOF)
                 }
             },
             RawToken::Key(Key::Pipe) => match mode {
                 Mode::Neutral => panic!("ET: Pipe into void"),
                 Mode::Parameters(mut previous) => {
-                    let v = self.walk_body(Mode::Neutral, tokenizer)?;
+                    let v = self.walk(Mode::Neutral)?;
                     let source = match v {
                         WalkResult::Value(t) => {
                             previous.push(t);
                             previous[0].source_index
                         }
-                        WalkResult::EOF => previous
-                            .get(0)
-                            .map(|a| a.source_index)
-                            .unwrap_or_else(|| tokenizer.index()),
+                        WalkResult::EOF => {
+                            previous.get(0).map(|a| a.source_index).unwrap_or_else(|| 0)
+                        }
                         WalkResult::CloseParen(t) => {
                             panic!("ET: Unexpected `]` with last being {:?}", t)
                         }
@@ -78,10 +91,10 @@ impl FunctionBuilder {
                         Token::new(RawToken::Operation(Box::new((left, right)), op), source)
                     };
 
-                    match self.walk_body(Mode::Neutral, tokenizer)? {
+                    match self.walk(Mode::Neutral)? {
                         WalkResult::Value(t) => {
                             let operation = operation(left, op, t);
-                            self.handle_after(operation, tokenizer)
+                            self.handle_after(operation)
                         }
                         WalkResult::CloseParen(t) => {
                             // panic!("ET: Unexpected `)` with last being {:?}", t)
@@ -95,9 +108,9 @@ impl FunctionBuilder {
             },
             RawToken::Key(Key::ParenOpen) => match mode {
                 Mode::Neutral => {
-                    let v = self.walk_body(Mode::Neutral, tokenizer)?;
+                    let v = self.walk(Mode::Neutral)?;
                     match v {
-                        WalkResult::CloseParen(Some(v)) => self.handle_after(v, tokenizer),
+                        WalkResult::CloseParen(Some(v)) => self.handle_after(v),
                         WalkResult::CloseParen(None) => {
                             panic!("ET: Empty parenthesis are not allowed (for unit value use `_`)")
                         }
@@ -105,11 +118,11 @@ impl FunctionBuilder {
                     }
                 }
                 Mode::Parameters(mut previous) => {
-                    let v = self.walk_body(Mode::Neutral, tokenizer)?;
+                    let v = self.walk(Mode::Neutral)?;
                     match v {
                         WalkResult::CloseParen(Some(v)) => {
                             previous.push(v);
-                            self.walk_body(Mode::Parameters(previous), tokenizer)
+                            self.walk(Mode::Parameters(previous))
                         }
                         WalkResult::CloseParen(None) => {
                             panic!("ET: Empty parenthesis are not allowed (for unit value use `_`)")
@@ -123,14 +136,14 @@ impl FunctionBuilder {
                         Token::new(RawToken::Operation(Box::new((left, right)), op), source)
                     };
 
-                    match self.walk_body(Mode::Neutral, tokenizer)? {
+                    match self.walk(Mode::Neutral)? {
                         WalkResult::Value(t) => {
                             let operation = operation(left, op, t);
-                            self.handle_after(operation, tokenizer)
+                            self.handle_after(operation)
                         }
                         WalkResult::CloseParen(t) => {
                             let operation = operation(left, op, t.unwrap());
-                            self.handle_after(operation, tokenizer)
+                            self.handle_after(operation)
                         }
                         WalkResult::EOF => panic!("No right side of operator"),
                     }
@@ -141,10 +154,10 @@ impl FunctionBuilder {
                 let reconstruct = Token::new(RawToken::Inlined(v), source);
 
                 match mode {
-                    Mode::Neutral => self.handle_after(reconstruct, tokenizer),
+                    Mode::Neutral => self.handle_after(reconstruct),
                     Mode::Parameters(mut previous) => {
                         previous.push(reconstruct);
-                        self.walk_body(Mode::Parameters(previous), tokenizer)
+                        self.walk(Mode::Parameters(previous))
                     }
                     Mode::Operator(left, op) => {
                         let source = left.source_index;
@@ -152,7 +165,7 @@ impl FunctionBuilder {
                             RawToken::Operation(Box::new((left, reconstruct)), op),
                             source,
                         );
-                        self.handle_after(operation, tokenizer)
+                        self.handle_after(operation)
                     }
                 }
             }
@@ -162,15 +175,14 @@ impl FunctionBuilder {
                 };
                 match mode {
                     Mode::Neutral => {
-                        let want_params =
-                            self.walk_body(Mode::Parameters(Vec::new()), tokenizer)?;
+                        let want_params = self.walk(Mode::Parameters(Vec::new()))?;
                         let source = token.source_index;
                         let make_parameterized =
                             |params| Token::new(RawToken::Parameterized(ident, params), source);
                         match want_params {
                             WalkResult::Value(v) => match v.inner {
                                 RawToken::Parameters(params) => {
-                                    self.handle_after(make_parameterized(params), tokenizer)
+                                    self.handle_after(make_parameterized(params))
                                 }
                                 _ => panic!("Wanted parameters but got {:?}", v),
                             },
@@ -187,12 +199,12 @@ impl FunctionBuilder {
                         let source = token.source_index;
                         let this = Token::new(RawToken::Constant(ident), source);
                         previous.push(this);
-                        self.walk_body(Mode::Parameters(previous), tokenizer)
+                        self.walk(Mode::Parameters(previous))
                     }
                     Mode::Operator(left, op) => {
-                        tokenizer.regress(ident.as_str().len());
+                        self.undo();
                         let source = left.source_index;
-                        let v = self.walk_body(Mode::Neutral, tokenizer)?;
+                        let v = self.walk(Mode::Neutral)?;
                         match v {
                             WalkResult::Value(v) => match &v.inner {
                                 RawToken::Parameterized(_n, _p) => {
@@ -201,7 +213,7 @@ impl FunctionBuilder {
                                         source,
                                     );
                                     // Ok(WalkResult::Value(operation))
-                                    self.handle_after(operation, tokenizer)
+                                    self.handle_after(operation)
                                 }
                                 _ => panic!(),
                             },
@@ -220,9 +232,9 @@ impl FunctionBuilder {
                 }
                 Mode::Neutral => Ok(WalkResult::CloseParen(None)),
             },
-            RawToken::Operator(op) => match mode {
+            RawToken::Operator(_) => match mode {
                 Mode::Parameters(previous) => {
-                    tokenizer.regress(op.identifier.len());
+                    self.undo();
                     let t = Token::new(RawToken::Parameters(previous), token.source_index);
                     Ok(WalkResult::Value(t))
                 }
@@ -232,17 +244,18 @@ impl FunctionBuilder {
         }
     }
 
-    fn handle_after(&mut self, v: Token, tokenizer: &mut Tokenizer) -> Result<WalkResult, ()> {
-        let next = tokenizer.next();
+    fn handle_after(&mut self, v: Token) -> Result<WalkResult, ()> {
+        let next = self.next();
         match next.map(|t| t.inner) {
             None => {
-                tokenizer.undo();
+                self.undo();
                 Ok(WalkResult::Value(v))
             }
-            Some(RawToken::Operator(op)) => self.walk_body(Mode::Operator(v, op), tokenizer),
+            Some(RawToken::Operator(op)) => self.walk(Mode::Operator(v, op)),
+            Some(RawToken::NewLine) => self.handle_after(v),
             Some(RawToken::Key(Key::ParenClose)) => Ok(WalkResult::CloseParen(Some(v))),
             _ => {
-                tokenizer.undo();
+                self.undo();
                 Ok(WalkResult::Value(v))
             }
         }

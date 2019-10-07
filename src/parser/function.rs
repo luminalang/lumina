@@ -119,9 +119,10 @@ impl FunctionBuilder {
     }
 
     pub fn parse_func_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
-        match self.walk_body(body::Mode::Neutral, tokenizer)? {
-            Some(v) => Ok(v),
-            _ => panic!(),
+        let entry = self.walk_body(body::Mode::Neutral, tokenizer)?;
+        match entry {
+            body::WalkResult::Value(v) => Ok(v),
+            _ => panic!("{:?}", entry),
         }
     }
 

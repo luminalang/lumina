@@ -4,6 +4,7 @@ pub use token::{is_valid_identifier, Header, Inlined, Key, Operator, RawToken, T
 
 pub struct Tokenizer<'s> {
     source_code: &'s [u8],
+    last_index: usize,
     index: usize,
 }
 
@@ -21,6 +22,7 @@ impl<'s> From<&'s [u8]> for Tokenizer<'s> {
     fn from(source_code: &'s [u8]) -> Self {
         Self {
             source_code,
+            last_index: 0,
             index: 0,
         }
     }
@@ -29,6 +31,9 @@ impl<'s> From<&'s [u8]> for Tokenizer<'s> {
 impl<'s> Tokenizer<'s> {
     pub fn index(&self) -> usize {
         self.index
+    }
+    pub fn undo(&mut self) {
+        self.index = self.last_index;
     }
     pub fn regress(&mut self, n: usize) {
         self.index -= n;
@@ -60,30 +65,24 @@ impl<'s> Tokenizer<'s> {
             i += 1;
         }
     }
-    pub fn get_char(&mut self, offset: usize) -> u8 {
-        let c = self.source_code[self.index];
-        if c == b' ' || c == b'\n' {
-            self.get_char(offset + 1)
-        } else {
-            c
-        }
-    }
-    fn _last_char(&mut self) -> u8 {
-        let mut i = 1;
-        loop {
-            let c = self.source_code[self.index - i];
-            if c != b' ' {
-                return c;
-            }
-            i += 1;
-        }
-    }
     pub fn skip_spaces_and_newlines(&mut self) {
         let c = self.source_code.get(self.index);
         match c {
             Some(b' ') | Some(b'\n') => {
                 self.progress(1);
                 self.skip_spaces_and_newlines();
+            }
+            Some(b'|') => {
+                let next = self.source_code.get(self.index + 1).copied();
+                if next == Some(b'|') {
+                    self.progress_until(|s| s.source_code[s.index] == b'\n');
+                    self.skip_spaces_and_newlines();
+                } else if next == Some(b'>') {
+                    self.progress_until(|s| {
+                        (s.source_code[s.index] == b'|' && s.next_char() == b'<')
+                            || (s.source_code[s.index] == b'<' && s.next_char() == b'|')
+                    });
+                }
             }
             _ => {}
         }
@@ -149,6 +148,7 @@ impl<'s> Iterator for Tokenizer<'s> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.last_index = self.index;
         let raw = self.gather_to(BREAK_AT);
         Token::try_from(raw)
             .ok()

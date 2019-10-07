@@ -4,7 +4,28 @@ type Coordinate
     y int 
 
 fn main
-    io:puts \"hello world!\"
+    double << add 20 << 20 + 20
+
+fn ree
+    (4)
+
+fn reee
+    add 4 << (4 + 4) + 4
+
+fn reeee
+    (4 + 4) + (4)
+
+fn reeeee
+    4 + (4 + 4)
+    
+fn nil (int)
+    0
+
+fn constant_test
+    constant 2 + constant (2 + << 2 + 2) 2
+
+fn group_test
+    add 1 (add 2 3)
 ";
 
 mod parser;
@@ -44,12 +65,4 @@ fn main() {
     let func = parser.get_function(MAIN_MODULE_ID, "main");
     evaler.run(func);
     */
-}
-
-#[macro_export]
-macro_rules! debug {
-    ($x:expr) => {
-        use colored::*;
-        println!("{}: {:?}", " ! ".red(), $x);
-    };
 }

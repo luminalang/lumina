@@ -32,22 +32,6 @@ impl Token {
         self.source_index = source_index;
         self
     }
-
-    pub fn untracked(t: RawToken) -> Self {
-        Self {
-            source_index: 0,
-            flags: flags::Flag::default(),
-            inner: t,
-        }
-    }
-
-    pub fn group(vec: Vec<Token>, source_index: usize) -> Token {
-        Token {
-            source_index,
-            flags: flags::Flag::default(),
-            inner: RawToken::Group(vec),
-        }
-    }
 }
 
 impl fmt::Debug for Token {

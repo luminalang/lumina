@@ -1,7 +1,7 @@
 use super::{BodySource, Mode, SimpleSource, WalkResult};
 use crate::parser::tokenizer::{Key, RawToken, Token};
 
-pub fn build<S: BodySource>(source: &mut S) -> Result<Vec<Token>, ()> {
+pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, ()> {
     let mut entries: Vec<Token> = Vec::new();
     'list: loop {
         let mut raw_tokens: Vec<Token> = Vec::new();

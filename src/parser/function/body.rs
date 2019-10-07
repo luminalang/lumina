@@ -244,6 +244,24 @@ pub trait BodySource {
                     }
                 }
             }
+            RawToken::Key(Key::ListOpen) => {
+                let list = list::build(self)?;
+                let v = Token::new(RawToken::List(list), token.source_index);
+                match mode {
+                    Mode::Neutral => self.handle_after(v),
+                    Mode::Parameters(mut previous) => {
+                        previous.push(v);
+                        self.walk(Mode::Parameters(previous))
+                    }
+                    Mode::Operator(left, op) => {
+                        let operation = Token::new(
+                            RawToken::Operation(Box::new((left, v)), op),
+                            token.source_index,
+                        );
+                        self.handle_after(operation)
+                    }
+                }
+            }
             RawToken::Key(Key::ParenClose) => match mode {
                 Mode::Parameters(previous) => {
                     let t = Token::new(RawToken::Parameters(previous), token.source_index);

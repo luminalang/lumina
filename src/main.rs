@@ -26,6 +26,9 @@ fn constant_test
 
 fn group_test
     add 1 (add 2 3)
+
+fn list_test
+    sum_all [1, 2] [add 1 2, add 3 4]
 ";
 
 mod parser;

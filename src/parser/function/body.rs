@@ -20,6 +20,28 @@ pub enum WalkResult {
     EOF,
 }
 
+pub struct SimpleSource<'a> {
+    buf: &'a [Token],
+    index: usize,
+}
+
+impl<'a> BodySource for SimpleSource<'a> {
+    fn next(&mut self) -> Option<Token> {
+        let v = self.buf.get(self.index).cloned();
+        self.index += 1;
+        v
+    }
+    fn undo(&mut self) {
+        self.index -= 1;
+    }
+}
+
+impl<'a> SimpleSource<'a> {
+    pub fn new(buf: &'a [Token]) -> Self {
+        Self { index: 0, buf }
+    }
+}
+
 pub trait BodySource {
     fn next(&mut self) -> Option<Token>;
     fn undo(&mut self);

@@ -99,6 +99,7 @@ pub enum RawToken {
     Operator(Operator),
     IfStatement(FlatVec<Token>),
     MatchStatement(FlatVec<Token>),
+    FirstStatement(Vec<Token>),
     List(Vec<Token>),
 
     NewLine,

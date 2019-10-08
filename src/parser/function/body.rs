@@ -1,6 +1,5 @@
 pub use super::FunctionBuilder;
-pub use crate::parser::tokenizer::Token;
-use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken};
+use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken, Token};
 
 mod first;
 mod list;
@@ -247,6 +246,24 @@ pub trait BodySource {
             RawToken::Key(Key::ListOpen) => {
                 let list = list::build(self)?;
                 let v = Token::new(RawToken::List(list), token.source_index);
+                match mode {
+                    Mode::Neutral => self.handle_after(v),
+                    Mode::Parameters(mut previous) => {
+                        previous.push(v);
+                        self.walk(Mode::Parameters(previous))
+                    }
+                    Mode::Operator(left, op) => {
+                        let operation = Token::new(
+                            RawToken::Operation(Box::new((left, v)), op),
+                            token.source_index,
+                        );
+                        self.handle_after(operation)
+                    }
+                }
+            }
+            RawToken::Key(Key::First) => {
+                let firststm = first::build(self)?;
+                let v = Token::new(RawToken::FirstStatement(firststm), token.source_index);
                 match mode {
                     Mode::Neutral => self.handle_after(v),
                     Mode::Parameters(mut previous) => {

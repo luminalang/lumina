@@ -29,6 +29,13 @@ fn group_test
 
 fn list_test
     sum_all [1, 2] [add 1 2, add 3 4]
+
+fn first_test
+    add 5 <<
+        first add 1 2
+        and   add 1 2
+        and   add 1 2
+        then  add 1 2
 ";
 
 mod parser;
@@ -53,8 +60,8 @@ fn main() {
     }
 
     // Verify syntax and infer types
-    let grouped = match parser.type_check(functions) {
-        Ok(grouped) => grouped,
+    match parser.type_check(functions) {
+        Ok(_) => {}
         Err(e) => panic!("{:?}", e),
     };
 

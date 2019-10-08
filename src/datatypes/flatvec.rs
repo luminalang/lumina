@@ -3,13 +3,13 @@ use std::fmt;
 // A vec that expects its data to be [x, y, x, y, x, y, z]
 // Used for things like If and Match statements
 
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct FlatVec<T: fmt::Debug + Clone + Sized + Default> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlatVec<T: fmt::Debug + Clone + Sized> {
     data: Vec<T>,
     sealed: bool,
 }
 
-impl<T: fmt::Debug + Clone + Sized + Default> FlatVec<T> {
+impl<T: fmt::Debug + Clone + Sized> FlatVec<T> {
     pub fn new() -> Self {
         Self {
             data: Vec::with_capacity(2),

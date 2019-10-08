@@ -2,6 +2,7 @@ pub use super::FunctionBuilder;
 use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken, Token};
 
 mod first;
+mod r#if;
 mod list;
 mod r#match;
 
@@ -264,6 +265,24 @@ pub trait BodySource {
             RawToken::Key(Key::First) => {
                 let firststm = first::build(self)?;
                 let v = Token::new(RawToken::FirstStatement(firststm), token.source_index);
+                match mode {
+                    Mode::Neutral => self.handle_after(v),
+                    Mode::Parameters(mut previous) => {
+                        previous.push(v);
+                        self.walk(Mode::Parameters(previous))
+                    }
+                    Mode::Operator(left, op) => {
+                        let operation = Token::new(
+                            RawToken::Operation(Box::new((left, v)), op),
+                            token.source_index,
+                        );
+                        self.handle_after(operation)
+                    }
+                }
+            }
+            RawToken::Key(Key::If) => {
+                let ifstm = r#if::build(self)?;
+                let v = Token::new(RawToken::IfStatement(ifstm), token.source_index);
                 match mode {
                     Mode::Neutral => self.handle_after(v),
                     Mode::Parameters(mut previous) => {

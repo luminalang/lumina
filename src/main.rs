@@ -36,6 +36,20 @@ fn first_test
         and   add 1 2
         and   add 1 2
         then  add 1 2
+
+fn if_statement
+    if 
+        if true then 
+            false 
+        elif 4 then 
+            true 
+        else true 
+      then 1 
+    elif false then 
+        if true 
+          then if true then 6 else 8
+          else 3
+    else 0
 ";
 
 mod parser;

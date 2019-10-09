@@ -10,20 +10,23 @@ mod function;
 pub use function::{BodySource, FunctionBuilder};
 mod r#type;
 pub use r#type::Type;
+mod checker;
 pub mod flags;
+use checker::TypeChecker;
 
 pub struct Parser {
     module_ids: HashMap<String, usize>,
     modules: Vec<Option<ParseModule>>,
+    pub completed: Vec<FunctionBuilder>,
 }
 
 #[derive(Default)]
 struct ParseModule {
     // TODO: I probably want to convert Vec<Type> into a numeric representation like `0425` to save
     // heap allocations just for id lookups
-    functions: HashMap<(String, Vec<Type>, Type), usize>,
-    types: HashMap<String, usize>,
-    type_fields: Vec<Vec<(String, Type)>>,
+    pub functions: HashMap<(String, Vec<Type>, Type), usize>,
+    pub types: HashMap<String, usize>,
+    pub type_fields: Vec<Vec<(String, Type)>>,
 }
 
 impl Parser {
@@ -31,6 +34,7 @@ impl Parser {
         Self {
             module_ids: HashMap::new(),
             modules: Vec::new(),
+            completed: Vec::new(),
         }
     }
 
@@ -137,9 +141,7 @@ impl Parser {
     }
 
     pub fn type_check(&mut self, mut functions: Vec<FunctionBuilder>) -> Result<(), ()> {
-        for func in functions.iter_mut() {
-            func.verify(&self)?;
-        }
+        TypeChecker::new(self);
         Ok(())
     }
 

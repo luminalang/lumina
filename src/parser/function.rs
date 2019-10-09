@@ -9,7 +9,6 @@ use std::fmt;
 
 mod body;
 pub use body::BodySource;
-mod checker;
 
 #[derive(Default)]
 pub struct FunctionBuilder {
@@ -150,10 +149,6 @@ impl FunctionBuilder {
                 Some(v) => panic!("ET: Unexpected {:?}", v),
             }
         }
-    }
-
-    pub fn verify(&mut self, _parser: &super::Parser) -> Result<Type, ()> {
-        Ok(Type::Nothing)
     }
 }
 

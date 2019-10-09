@@ -65,7 +65,6 @@ pub trait BodySource {
                 }
             }
         };
-        dbg!(&token);
 
         match token.inner {
             RawToken::Header(_) | RawToken::Key(Key::Where) => match mode {

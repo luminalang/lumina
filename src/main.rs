@@ -3,62 +3,9 @@ type Coordinate
     x int
     y int 
 
-||fn main
-||    double << add 20 << 20 + 20
+fn main
+   double << add 20 << 20 + 20
 
-fn main 
-    x + 1
-    where x: 2
-
-fn ree
-    (4)
-
-fn reee
-    add 4 << (4 + 4) + 4
-
-fn reeee
-    (4 + 4) + (4)
-
-fn reeeee
-    4 + (4 + 4)
-    
-fn nil (int)
-    0
-
-fn constant_test
-    constant 2 + constant (2 + << 2 + 2) 2
-
-fn group_test
-    add 1 (add 2 3)
-
-fn list_test
-    sum_all [1, 2] [add 1 2, add 3 4]
-
-fn first_test
-    add 5 <<
-        first add 1 2
-        and   add 1 2
-        and   add 1 2
-        then  add 1 2
-
-fn if_statement
-    if 
-        if true then 
-            false 
-        elif 4 then 
-            true 
-        else true 
-      then 1 
-    elif false then 
-        if true 
-          then if true then 6 else 8
-          else 3
-    else 0
-
-fn where_statement (int)
-    x + y
-      where x: 1 + 2 + (3 + 4 + << 5 + 6)
-      where y: 2
 ";
 
 mod parser;

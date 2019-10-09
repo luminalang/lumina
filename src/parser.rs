@@ -117,7 +117,7 @@ impl Parser {
                     Header::Function => {
                         let mut funcb = FunctionBuilder::new().with_header(&mut tokenizer)?;
 
-                        let body_entry = funcb.parse_func_body(&mut tokenizer)?;
+                        let body_entry = funcb.parse_func(&mut tokenizer)?;
 
                         funcb.push(body_entry);
 

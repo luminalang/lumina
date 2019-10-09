@@ -5,6 +5,7 @@ mod first;
 mod r#if;
 mod list;
 mod r#match;
+pub mod r#where;
 
 #[derive(PartialEq, Debug)]
 pub enum Mode {
@@ -47,7 +48,6 @@ pub trait BodySource {
     fn undo(&mut self);
 
     fn walk(&mut self, mode: Mode) -> Result<WalkResult, ()> {
-        // tokenizer.skip_spaces_and_newlines();
         let token = match self.next() {
             Some(t) => {
                 if t.inner == RawToken::NewLine {
@@ -59,26 +59,22 @@ pub trait BodySource {
             None => {
                 return match mode {
                     Mode::Parameters(v) => {
-                        let source = v[0].source_index;
-                        Ok(WalkResult::Value(Token::new(
-                            RawToken::Parameters(v),
-                            source,
-                        )))
+                        Ok(WalkResult::Value(Token::new(RawToken::Parameters(v), 0)))
                     }
                     _ => Ok(WalkResult::EOF),
                 }
             }
         };
+        dbg!(&token);
 
         match token.inner {
-            RawToken::Header(_) => match mode {
+            RawToken::Header(_) | RawToken::Key(Key::Where) => match mode {
                 Mode::Operator(_v, _op) => panic!("ET: No right side of operator"),
                 Mode::Parameters(previous) => {
                     self.undo();
-                    let source = previous[0].source_index;
                     Ok(WalkResult::Value(Token::new(
                         RawToken::Parameters(previous),
-                        source,
+                        0,
                     )))
                 }
                 Mode::Neutral => {
@@ -199,8 +195,13 @@ pub trait BodySource {
                     Mode::Neutral => {
                         let want_params = self.walk(Mode::Parameters(Vec::new()))?;
                         let source = token.source_index;
-                        let make_parameterized =
-                            |params| Token::new(RawToken::Parameterized(ident, params), source);
+                        let make_parameterized = |params: Vec<Token>| {
+                            if params.is_empty() {
+                                Token::new(RawToken::Constant(ident), source)
+                            } else {
+                                Token::new(RawToken::Parameterized(ident, params), source)
+                            }
+                        };
                         match want_params {
                             WalkResult::Value(v) => match v.inner {
                                 RawToken::Parameters(params) => {
@@ -234,7 +235,13 @@ pub trait BodySource {
                                         RawToken::Operation(Box::new((left, v)), op),
                                         source,
                                     );
-                                    // Ok(WalkResult::Value(operation))
+                                    self.handle_after(operation)
+                                }
+                                RawToken::Constant(_n) => {
+                                    let operation = Token::new(
+                                        RawToken::Operation(Box::new((left, v)), op),
+                                        source,
+                                    );
                                     self.handle_after(operation)
                                 }
                                 _ => panic!(),

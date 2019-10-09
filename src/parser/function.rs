@@ -18,6 +18,7 @@ pub struct FunctionBuilder {
     pub parameter_types: Vec<(Flag, Type)>,
     pub returns: Type,
     pub body: Vec<Token>,
+    pub wheres: Vec<(String, Token)>,
 }
 
 impl FunctionBuilder {
@@ -28,6 +29,7 @@ impl FunctionBuilder {
             parameter_types: Vec::new(),
             returns: Type::default(),
             body: Vec::new(),
+            wheres: Vec::new(),
         }
     }
 
@@ -119,11 +121,34 @@ impl FunctionBuilder {
         self.body.push(t);
     }
 
+    pub fn parse_func(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
+        let entry = self.parse_func_body(tokenizer)?;
+        self.parse_func_wheres(tokenizer)?;
+        Ok(entry)
+    }
+
     pub fn parse_func_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
         let entry = tokenizer.walk(body::Mode::Neutral)?;
         match entry {
             body::WalkResult::Value(v) => Ok(v),
             _ => panic!("{:?}", entry),
+        }
+    }
+
+    pub fn parse_func_wheres(&mut self, tokenizer: &mut Tokenizer) -> Result<(), ()> {
+        loop {
+            let next = tokenizer.next();
+            match next.map(|t| t.inner) {
+                Some(RawToken::Key(Key::Where)) => {
+                    let (name, t) = body::r#where::build(tokenizer)?;
+                    self.wheres.push((name, t));
+                }
+                None | Some(RawToken::Header(_)) => {
+                    tokenizer.undo();
+                    return Ok(());
+                }
+                Some(v) => panic!("ET: Unexpected {:?}", v),
+            }
         }
     }
 
@@ -144,13 +169,20 @@ impl fmt::Debug for FunctionBuilder {
         } else {
             format!("{} -> {}", types.join(" "), self.returns)
         };
+        let where_statements = self
+            .wheres
+            .iter()
+            .map(|(name, entry)| format!("where {}: {:?}", name, entry))
+            .collect::<Vec<String>>()
+            .join("\n  ");
         write!(
             f,
-            "fn {} {} ({})\n{:#?}",
+            "fn {} {} ({})\n{:#?}{}",
             self.name,
             self.parameter_names.join(" "),
             annotation,
-            self.body
+            self.body,
+            where_statements,
         )
     }
 }

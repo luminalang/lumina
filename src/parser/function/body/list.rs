@@ -26,6 +26,9 @@ pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, ()> {
                         }
                         break 'list;
                     }
+                    RawToken::Header(_) | RawToken::Key(Key::Where) => {
+                        panic!("Unexpected {:?}", t);
+                    }
                     _ => raw_tokens.push(t),
                 },
             }

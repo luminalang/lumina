@@ -57,7 +57,7 @@ fn gather_segm<S: BodySource + ?Sized>(source: &mut S) -> Result<(FirstBreak, Ve
                 RawToken::Key(Key::Then) => {
                     return Ok((Then, raw_tokens));
                 }
-                RawToken::Header(_) => {
+                RawToken::Header(_) | RawToken::Key(Key::Where) => {
                     source.undo();
                     return Ok((EOF, raw_tokens));
                 }

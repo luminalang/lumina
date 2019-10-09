@@ -60,7 +60,7 @@ fn gather_cond<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, ()>
         match next {
             None => panic!("ET: missing `then`"),
             Some(t) => match t.inner {
-                RawToken::Header(_) => panic!("ET: missing `then`"),
+                RawToken::Header(_) | RawToken::Key(Key::Where) => panic!("ET: missing `then`"),
                 RawToken::NewLine => {}
                 RawToken::Key(Key::If) => {
                     nested += 1;
@@ -98,7 +98,7 @@ fn gather_eval<S: BodySource + ?Sized>(source: &mut S) -> Result<(IfBreak, Vec<T
         match next {
             None => return Ok((EOF, raw_tokens)),
             Some(t) => match t.inner {
-                RawToken::Header(_) => {
+                RawToken::Header(_) | RawToken::Key(Key::Where) => {
                     source.undo();
                     return Ok((EOF, raw_tokens));
                 }

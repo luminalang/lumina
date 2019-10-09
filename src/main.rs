@@ -3,8 +3,12 @@ type Coordinate
     x int
     y int 
 
-fn main
-    double << add 20 << 20 + 20
+||fn main
+||    double << add 20 << 20 + 20
+
+fn main 
+    x + 1
+    where x: 2
 
 fn ree
     (4)
@@ -50,6 +54,11 @@ fn if_statement
           then if true then 6 else 8
           else 3
     else 0
+
+fn where_statement (int)
+    x + y
+      where x: 1 + 2 + (3 + 4 + << 5 + 6)
+      where y: 2
 ";
 
 mod parser;

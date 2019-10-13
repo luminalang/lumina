@@ -140,7 +140,6 @@ impl<'a> Parser<'a> {
                                 Some(other) => panic!("ET: Unexpected {:?}", other),
                             }
                         }
-                        dbg!(&module_path);
                         let file_path = {
                             if module_path == crate::entrypoint() {
                                 leafmod::FileSource::try_from((
@@ -163,7 +162,6 @@ impl<'a> Parser<'a> {
                         }; // ET
 
                         let mut source_code = Vec::with_capacity(20);
-                        dbg!(&file_path);
                         File::open(file_path.to_pathbuf(self.environment))
                             .unwrap() // ET
                             .read_to_end(&mut source_code)

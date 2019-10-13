@@ -22,6 +22,12 @@ impl FileSource {
             }
         }
     }
+    pub fn pop(&mut self) -> Option<String> {
+        match self {
+            FileSource::Project(levels) => levels.pop(),
+            FileSource::Leafpath(levels) => levels.pop(),
+        }
+    }
 
     pub fn to_pathbuf<'a>(&'a self, env: &Environment) -> PathBuf {
         match self {

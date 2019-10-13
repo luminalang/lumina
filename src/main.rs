@@ -1,7 +1,9 @@
 use std::fs::File;
 use std::io::Read;
 
-const ENTRYPOINT: &str = "main";
+pub fn entrypoint() -> FileSource {
+    FileSource::Project(vec!["main".to_owned()])
+}
 
 mod parser;
 use parser::Parser;
@@ -26,7 +28,7 @@ fn main() {
         .unwrap()
         .read_to_end(&mut source_code)
         .unwrap();
-    let file_path = FileSource::Project(vec![ENTRYPOINT.to_owned()]);
+    let file_path = entrypoint();
 
     // Construct a raw token representation of the code
     let fid = match parser.tokenize(file_path.clone(), &source_code) {

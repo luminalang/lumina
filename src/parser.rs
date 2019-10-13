@@ -98,7 +98,7 @@ impl<'a> Parser<'a> {
 
     // We only have to return Functions because custom types only need to be indexed
     pub fn tokenize(&mut self, module_path: FileSource, source_code: &[u8]) -> Result<usize, ()> {
-        let fid = self.new_module(module_path);
+        let fid = self.new_module(module_path.clone());
 
         let mut tokenizer = Tokenizer::from(source_code);
         // let mut function_buf: Vec<FunctionBuilder> = Vec::new();
@@ -140,17 +140,30 @@ impl<'a> Parser<'a> {
                                 Some(other) => panic!("ET: Unexpected {:?}", other),
                             }
                         }
-                        let file_path = leafmod::FileSource::try_from((
-                            import
-                                .iter()
-                                .map(|s| &**s)
-                                .collect::<Vec<&str>>()
-                                .as_slice(),
-                            self.environment,
-                        ))
-                        .unwrap(); // ET
+                        dbg!(&module_path);
+                        let file_path = {
+                            if module_path == crate::entrypoint() {
+                                leafmod::FileSource::try_from((
+                                    import
+                                        .iter()
+                                        .map(|s| &**s)
+                                        .collect::<Vec<&str>>()
+                                        .as_slice(),
+                                    self.environment,
+                                ))
+                                .unwrap()
+                            } else {
+                                let mut new_module_path = module_path.clone();
+                                new_module_path.pop();
+                                for level in import.iter() {
+                                    new_module_path = new_module_path.join(level.clone());
+                                }
+                                new_module_path
+                            }
+                        }; // ET
 
                         let mut source_code = Vec::with_capacity(20);
+                        dbg!(&file_path);
                         File::open(file_path.to_pathbuf(self.environment))
                             .unwrap() // ET
                             .read_to_end(&mut source_code)

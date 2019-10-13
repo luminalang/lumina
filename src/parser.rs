@@ -12,6 +12,7 @@ mod r#type;
 pub use r#type::Type;
 pub mod flags;
 use std::path::Path;
+use std::io::Read;
 
 pub struct Parser {
     module_ids: HashMap<String, usize>,
@@ -104,17 +105,27 @@ impl Parser {
         let leafpath : &Path = Path::new(&env_leafpath);
 
         // get current working directory from environment variable
-        let env_current_dir = std::env::current_dir().expect("Current directory couldn't be read.");
-        let current_dir : &Path = env_current_dir.as_path();
+        let current_dir : &Path = &std::env::current_dir().expect("Current directory couldn't be read.");
 
         self.tokenize_prelude(leafpath.join("prelude").as_path());
         self.tokenize_prelude(current_dir.join("prelude").as_path());
     }
 
     fn tokenize_prelude(&mut self, path : &Path) {
-        for entry in std::fs::read_dir(path).expect("Couldn't read directory") {
-            let file = entry.expect("Couldn't read file.");
-            println!("{:?}", file.path());
+        for entry in path.read_dir().expect("Couldn't read prelude directory.") {
+            let file_path = entry.expect("Prelude file path doesn't exist.").path();
+            if file_path.extension() == Some(std::ffi::OsStr::new("lf")) {
+                let mut source_code_buffer : std::vec::Vec<u8> = Vec::new();
+                std::fs::File::open(file_path)
+                    .expect("Couldn't open file.")
+                    .read_to_end(&mut source_code_buffer)
+                    .expect("Couldn't read file.");
+
+                self.tokenize(
+                    &path.to_str().expect("This shouldn't happen."),
+                    &source_code_buffer)
+                    .expect("Tokenization failed.");
+            }
         }
     }
 

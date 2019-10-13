@@ -36,7 +36,7 @@ impl FunctionBuilder {
         let first = tokenizer.next();
         let name = match first.map(|a| a.inner) {
             Some(RawToken::Identifier(name)) => name,
-            _ => return Err(()),
+            _ => panic!("ET: Missing function name"),
         };
         self.name = name;
 

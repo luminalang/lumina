@@ -29,32 +29,11 @@ fn main() {
     let file_path = FileSource::Project(vec![ENTRYPOINT.to_owned()]);
 
     // Construct a raw token representation of the code
-    let (functions, fid) = match parser.tokenize(file_path.clone(), &source_code) {
+    let fid = match parser.tokenize(file_path.clone(), &source_code) {
         Ok(functions) => functions,
         Err(e) => panic!("{:?}", e),
     };
-    parser.finalize_module(fid, functions);
     println!("{:#?}\n", parser);
-    println!(
-        "{}",
-        parser
-            .completed
-            .iter()
-            .enumerate()
-            .map(|(fid, a)| {
-                let mut buf = a
-                    .as_ref()
-                    .unwrap()
-                    .iter()
-                    .map(|f| format!("{:#?}", f))
-                    .collect::<Vec<String>>()
-                    .join("\n");
-                buf.insert_str(0, &format!("#{} functions: \n", fid));
-                buf
-            })
-            .collect::<Vec<String>>()
-            .join("\n\n"),
-    );
 
     // Verify syntax and infer types
     match parser.type_check(fid, "main") {

@@ -22,7 +22,6 @@ use checker::TypeChecker;
 pub struct Parser<'a> {
     pub module_ids: HashMap<FileSource, usize>,
     modules: Vec<ParseModule>,
-    pub completed: Vec<Option<Vec<FunctionBuilder>>>,
     environment: &'a Environment,
 }
 
@@ -30,7 +29,7 @@ pub struct Parser<'a> {
 struct ParseModule {
     // TODO: I probably want to convert Vec<Type> into a numeric representation like `0425` to save
     // heap allocations just for id lookups
-    pub functions: HashMap<(String, Vec<Type>, Type), usize>,
+    pub functions: HashMap<(String, Vec<Type>, Type), (FunctionBuilder, usize)>,
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
     pub imports: HashMap<String, usize>,
@@ -41,23 +40,21 @@ impl<'a> Parser<'a> {
         Self {
             module_ids: HashMap::new(),
             modules: Vec::new(),
-            completed: Vec::new(),
             environment,
         }
     }
 
-    fn _get_function_id(
+    fn _get_function(
         &self,
         fid: usize,
         name: &str,
         params: Vec<Type>,
         returns: Type,
-    ) -> Option<usize> {
+    ) -> Option<&(FunctionBuilder, usize)> {
         self.modules
             .get(fid)?
             .functions
             .get(&(name.to_owned(), params, returns))
-            .copied()
     }
     fn _get_type_id(&self, fid: usize, name: &str) -> Option<usize> {
         self.modules.get(fid)?.types.get(name).copied()
@@ -70,7 +67,7 @@ impl<'a> Parser<'a> {
         self.modules.push(ParseModule::default());
         fid
     }
-    fn new_function(&mut self, fid: usize, funcb: &FunctionBuilder) -> usize {
+    fn new_function(&mut self, fid: usize, funcb: FunctionBuilder) -> usize {
         let module = &mut self.modules[fid];
         let funcid = module.functions.len();
         module.functions.insert(
@@ -84,7 +81,7 @@ impl<'a> Parser<'a> {
                     .collect(),
                 funcb.returns.clone(),
             ),
-            funcid,
+            (funcb, funcid),
         );
         funcid
     }
@@ -97,19 +94,15 @@ impl<'a> Parser<'a> {
     }
 
     // We only have to return Functions because custom types only need to be indexed
-    pub fn tokenize(
-        &mut self,
-        module_path: FileSource,
-        source_code: &[u8],
-    ) -> Result<(Vec<FunctionBuilder>, usize), ()> {
+    pub fn tokenize(&mut self, module_path: FileSource, source_code: &[u8]) -> Result<usize, ()> {
         let fid = self.new_module(module_path);
 
         let mut tokenizer = Tokenizer::from(source_code);
-        let mut function_buf: Vec<FunctionBuilder> = Vec::new();
+        // let mut function_buf: Vec<FunctionBuilder> = Vec::new();
         loop {
             let token = match tokenizer.next() {
                 Some(t) => t,
-                None => return Ok((function_buf, fid)),
+                None => return Ok(fid),
             };
             match token.inner {
                 RawToken::Header(h) => match h {
@@ -120,8 +113,8 @@ impl<'a> Parser<'a> {
 
                         funcb.push(body_entry);
 
-                        self.new_function(fid, &funcb);
-                        function_buf.push(funcb);
+                        self.new_function(fid, funcb);
+                        // self.modules[fid].functions.push(funcb);
                     }
                     Header::Type => {
                         let (type_name, fields) = self.parse_type_decl(&mut tokenizer)?;
@@ -161,26 +154,15 @@ impl<'a> Parser<'a> {
                             .read_to_end(&mut source_code)
                             .unwrap(); // ET
 
-                        let (functions, usefid) = self.tokenize(file_path.clone(), &source_code)?;
-                        self.finalize_module(usefid, functions);
+                        let usefid = self.tokenize(file_path.clone(), &source_code)?;
+                        self.modules[fid]
+                            .imports
+                            .insert(import.last().unwrap().clone(), usefid);
                     }
                 },
                 RawToken::NewLine => continue,
                 _ => panic!("ERROR_TODO: Unexpected {:?}, wanted header", token),
             }
-        }
-    }
-
-    // Assumes the module will never be mutated again
-    pub fn finalize_module(&mut self, fid: usize, functions: Vec<FunctionBuilder>) {
-        // TODO: Reserve for free slight performance boost
-        while self.completed.len() < fid {
-            self.completed.push(None);
-        }
-        if self.completed.len() == fid {
-            self.completed.push(Some(functions));
-        } else {
-            self.completed[fid] = Some(functions);
         }
     }
 
@@ -247,7 +229,12 @@ impl fmt::Debug for ParseModule {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "types:\n {}\nfunctions:\n{}",
+            "imports:\n {}\ntypes:\n {}\nfunctions:\n{}",
+            self.imports
+                .iter()
+                .map(|(name, fid)| format!(" {} -> {}", name, fid))
+                .collect::<Vec<String>>()
+                .join("\n"),
             self.types
                 .iter()
                 .map(|(tname, tid)| format!(
@@ -263,10 +250,18 @@ impl fmt::Debug for ParseModule {
                 .collect::<Vec<String>>()
                 .join("\n"),
             self.functions
-                .iter()
-                .map(|((fname, params, returns), funcid)| format!(
-                    "  #{} {} ({:?} -> {:?})",
-                    funcid, fname, params, returns
+                .values()
+                .map(|(funcb, funcid)| format!(
+                    "  #{} {} ({:?} -> {:?})\n{:#?}",
+                    funcid,
+                    funcb.name,
+                    funcb
+                        .parameter_types
+                        .iter()
+                        .map(|(_flag, t)| t)
+                        .collect::<Vec<&Type>>(),
+                    funcb.returns,
+                    funcb.body,
                 ))
                 .collect::<Vec<String>>()
                 .join("\n"),

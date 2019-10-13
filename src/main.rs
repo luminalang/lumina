@@ -1,38 +1,65 @@
-const TEST_SOURCECODE: &[u8] = b"
-type Coordinate
-    x int
-    y int 
+use std::fs::File;
+use std::io::Read;
 
-fn main
-   double << add 20 << 20 + 20
-
-";
+const ENTRYPOINT: &str = "main";
 
 mod parser;
 use parser::Parser;
+mod env;
+use env::Environment;
+use parser::FileSource;
 
 pub mod datatypes;
 
 fn main() {
-    let mut parser = Parser::new();
+    let environment = match Environment::discover() {
+        Ok(env) => env,
+        Err(e) => {
+            eprintln!("{}", e);
+            return;
+        }
+    };
+    let mut parser = Parser::new(&environment);
 
-    println!("{}\n", String::from_utf8(TEST_SOURCECODE.to_vec()).unwrap());
+    let mut source_code = Vec::with_capacity(20);
+    File::open(&environment.entrypoint)
+        .unwrap()
+        .read_to_end(&mut source_code)
+        .unwrap();
+    let file_path = FileSource::Project(vec![ENTRYPOINT.to_owned()]);
 
     // Construct a raw token representation of the code
-    let functions = match parser.tokenize("entrypoint", TEST_SOURCECODE) {
+    let (functions, fid) = match parser.tokenize(file_path.clone(), &source_code) {
         Ok(functions) => functions,
         Err(e) => panic!("{:?}", e),
     };
-    println!("{:#?}", parser);
-    println!();
-    for func in &functions {
-        println!("{:?}", func);
-    }
+    parser.finalize_module(fid, functions);
+    println!("{:#?}\n", parser);
+    println!(
+        "{}",
+        parser
+            .completed
+            .iter()
+            .enumerate()
+            .map(|(fid, a)| {
+                let mut buf = a
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|f| format!("{:#?}", f))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                buf.insert_str(0, &format!("#{} functions: \n", fid));
+                buf
+            })
+            .collect::<Vec<String>>()
+            .join("\n\n"),
+    );
 
     // Verify syntax and infer types
-    match parser.type_check(functions) {
-        Ok(_) => {}
+    match parser.type_check(fid, "main") {
         Err(e) => panic!("{:?}", e),
+        Ok(_main_return) => {}
     };
 
     /*

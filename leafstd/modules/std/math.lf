@@ -1,0 +1,5 @@
+fn add x y (int int -> int)
+    x + y
+
+fn sub x y (int int -> int)
+    x - y

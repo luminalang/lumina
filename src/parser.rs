@@ -61,11 +61,16 @@ impl<'a> Parser<'a> {
     }
 
     fn new_module(&mut self, source: FileSource) -> usize {
-        let fid = self.module_ids.len();
-        assert_eq!(fid, self.modules.len());
-        self.module_ids.insert(source, fid);
-        self.modules.push(ParseModule::default());
-        fid
+        match self.module_ids.get(&source) {
+            Some(fid) => *fid,
+            None => {
+                let fid = self.module_ids.len();
+                assert_eq!(fid, self.modules.len());
+                self.module_ids.insert(source, fid);
+                self.modules.push(ParseModule::default());
+                fid
+            }
+        }
     }
     fn new_function(&mut self, fid: usize, funcb: FunctionBuilder) -> usize {
         let module = &mut self.modules[fid];
@@ -114,7 +119,6 @@ impl<'a> Parser<'a> {
                         funcb.push(body_entry);
 
                         self.new_function(fid, funcb);
-                        // self.modules[fid].functions.push(funcb);
                     }
                     Header::Type => {
                         let (type_name, fields) = self.parse_type_decl(&mut tokenizer)?;

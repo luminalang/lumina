@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub enum FileSource {
     Project(Vec<String>),
     Leafpath(Vec<String>),
+    Prelude,
 }
 
 impl FileSource {
@@ -20,12 +21,14 @@ impl FileSource {
                 levels.push(next);
                 FileSource::Leafpath(levels)
             }
+            FileSource::Prelude => panic!("Use statements in prelude unsupported"),
         }
     }
     pub fn pop(&mut self) -> Option<String> {
         match self {
             FileSource::Project(levels) => levels.pop(),
             FileSource::Leafpath(levels) => levels.pop(),
+            FileSource::Prelude => panic!("Use statements in prelude unsupported"),
         }
     }
 
@@ -41,6 +44,7 @@ impl FileSource {
                 path.set_extension("lf");
                 path
             }
+            FileSource::Prelude => panic!("Use statements in prelude unsupported"),
         }
     }
 }
@@ -50,6 +54,7 @@ impl fmt::Display for FileSource {
         match self {
             FileSource::Project(levels) => write!(f, "project:{}", levels.join(":")),
             FileSource::Leafpath(levels) => write!(f, "leaf:{}", levels.join(":")),
+            FileSource::Prelude => write!(f, "prelude"),
         }
     }
 }

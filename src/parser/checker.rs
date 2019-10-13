@@ -1,5 +1,4 @@
-use super::FunctionBuilder;
-use crate::parser::{Key, Parser, RawToken, Token, Type};
+use crate::parser::{Parser, Type};
 
 pub struct TypeChecker<'f> {
     func: (usize, usize),

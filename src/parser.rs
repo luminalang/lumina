@@ -5,8 +5,6 @@ use std::fmt;
 use std::fs::File;
 use std::io::Read;
 
-pub const MAIN_MODULE_ID: usize = 0;
-
 mod tokenizer;
 pub use tokenizer::{is_valid_identifier, Header, Key, RawToken, Token, Tokenizer};
 mod function;

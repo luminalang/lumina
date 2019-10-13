@@ -1,7 +1,7 @@
 use crate::env::Environment;
 use std::convert::TryFrom;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub enum FileSource {

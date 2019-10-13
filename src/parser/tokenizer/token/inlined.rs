@@ -5,6 +5,7 @@ pub enum Inlined {
     Int(i32),
     Float(f32),
     Bool(bool),
+    Nothing,
     // String(Vec<u8>),
 }
 
@@ -21,6 +22,15 @@ impl TryFrom<&[u8]> for Inlined {
         };
         if let Ok(boolean) = as_str.parse::<bool>() {
             return Ok(Inlined::Bool(boolean));
+        }
+        if bytes == b"_" {
+            return Ok(Inlined::Nothing);
+        }
+        if bytes.first().copied() == Some(b'"') {
+            unimplemented!("string literals");
+        }
+        if bytes.first().copied() == Some(b'\'') {
+            unimplemented!("byte literals");
         }
         Err(())
     }

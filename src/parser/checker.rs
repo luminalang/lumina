@@ -3,7 +3,7 @@ use crate::parser::{Key, Parser, RawToken, Token, Type};
 
 pub struct TypeChecker<'f> {
     func: (usize, usize),
-    parser: &'f Parser<'f>,
+    parser: &'f Parser,
     infered_types: Vec<Type>,
 }
 

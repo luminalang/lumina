@@ -1,29 +1,23 @@
-use crate::env::Environment;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt;
-use std::fs::File;
-use std::io::Read;
 
 pub const MAIN_MODULE_ID: usize = 0;
 
 mod tokenizer;
 pub use tokenizer::{is_valid_identifier, Header, Key, RawToken, Token, Tokenizer};
 mod function;
-mod leafmod;
 pub use function::{BodySource, FunctionBuilder};
-pub use leafmod::FileSource;
 mod r#type;
 pub use r#type::Type;
 mod checker;
 pub mod flags;
 use checker::TypeChecker;
 
-pub struct Parser<'a> {
-    pub module_ids: HashMap<FileSource, usize>,
-    modules: Vec<ParseModule>,
-    pub completed: Vec<Option<Vec<FunctionBuilder>>>,
-    environment: &'a Environment,
+pub struct Parser {
+    module_ids: HashMap<String, usize>,
+    modules: Vec<Option<ParseModule>>,
+    pub completed: Vec<FunctionBuilder>,
 }
 
 #[derive(Default)]
@@ -33,16 +27,14 @@ struct ParseModule {
     pub functions: HashMap<(String, Vec<Type>, Type), usize>,
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
-    pub imports: HashMap<String, usize>,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(environment: &'a Environment) -> Self {
+impl Parser {
+    pub fn new() -> Self {
         Self {
             module_ids: HashMap::new(),
             modules: Vec::new(),
             completed: Vec::new(),
-            environment,
         }
     }
 
@@ -53,63 +45,76 @@ impl<'a> Parser<'a> {
         params: Vec<Type>,
         returns: Type,
     ) -> Option<usize> {
-        self.modules
-            .get(fid)?
-            .functions
-            .get(&(name.to_owned(), params, returns))
-            .copied()
+        match self.modules.get(fid)? {
+            None => panic!("Module {} used before created", name),
+            Some(module) => module
+                .functions
+                .get(&(name.to_owned(), params, returns))
+                .copied(),
+        }
     }
     fn _get_type_id(&self, fid: usize, name: &str) -> Option<usize> {
-        self.modules.get(fid)?.types.get(name).copied()
+        match self.modules.get(fid)? {
+            None => panic!("Module {} used before created", name),
+            Some(module) => module.types.get(name).copied(),
+        }
     }
 
-    fn new_module(&mut self, source: FileSource) -> usize {
+    fn new_module(&mut self, name: &str) -> usize {
         let fid = self.module_ids.len();
         assert_eq!(fid, self.modules.len());
-        self.module_ids.insert(source, fid);
-        self.modules.push(ParseModule::default());
+        self.module_ids.insert(name.to_owned(), fid);
+        self.modules.push(Some(ParseModule::default()));
         fid
     }
     fn new_function(&mut self, fid: usize, funcb: &FunctionBuilder) -> usize {
-        let module = &mut self.modules[fid];
-        let funcid = module.functions.len();
-        module.functions.insert(
-            (
-                funcb.name.clone(),
-                funcb
-                    .parameter_types
-                    .iter()
-                    .cloned()
-                    .map(|(_flags, t)| t)
-                    .collect(),
-                funcb.returns.clone(),
-            ),
-            funcid,
-        );
-        funcid
+        match &mut self.modules[fid] {
+            None => panic!("Module {} used before initialized", funcb.name),
+            Some(module) => {
+                let funcid = module.functions.len();
+                module.functions.insert(
+                    (
+                        funcb.name.clone(),
+                        funcb
+                            .parameter_types
+                            .iter()
+                            .cloned()
+                            .map(|(_flags, t)| t)
+                            .collect(),
+                        funcb.returns.clone(),
+                    ),
+                    funcid,
+                );
+                funcid
+            }
+        }
     }
     fn new_type(&mut self, fid: usize, name: String, fields: Vec<(String, Type)>) -> usize {
-        let module = &mut self.modules[fid];
-        let typeid = module.types.len();
-        module.types.insert(name.to_owned(), typeid);
-        module.type_fields.push(fields);
-        typeid
+        match &mut self.modules[fid] {
+            None => panic!("Module {} used before initialized", name),
+            Some(module) => {
+                let typeid = module.types.len();
+                module.types.insert(name.to_owned(), typeid);
+                module.type_fields.push(fields);
+                typeid
+            }
+        }
     }
 
     // We only have to return Functions because custom types only need to be indexed
     pub fn tokenize(
         &mut self,
-        module_path: FileSource,
+        mod_name: &str,
         source_code: &[u8],
-    ) -> Result<(Vec<FunctionBuilder>, usize), ()> {
-        let fid = self.new_module(module_path);
+    ) -> Result<Vec<FunctionBuilder>, ()> {
+        let fid = self.new_module(mod_name);
 
         let mut tokenizer = Tokenizer::from(source_code);
         let mut function_buf: Vec<FunctionBuilder> = Vec::new();
         loop {
             let token = match tokenizer.next() {
                 Some(t) => t,
-                None => return Ok((function_buf, fid)),
+                None => return Ok(function_buf),
             };
             match token.inner {
                 RawToken::Header(h) => match h {
@@ -128,42 +133,6 @@ impl<'a> Parser<'a> {
 
                         self.new_type(fid, type_name, fields);
                     }
-                    Header::Use => {
-                        let mut import: Vec<String> = Vec::new();
-                        while let Some(RawToken::Identifier(ident)) =
-                            tokenizer.next().map(|t| t.inner)
-                        {
-                            import.push(ident);
-                            match tokenizer.next().map(|t| t.inner) {
-                                Some(RawToken::Key(Key::Colon)) => continue,
-                                Some(RawToken::Header(_)) => {
-                                    tokenizer.undo();
-                                    break;
-                                }
-                                Some(RawToken::NewLine) => break,
-                                None => break,
-                                Some(other) => panic!("ET: Unexpected {:?}", other),
-                            }
-                        }
-                        let file_path = leafmod::FileSource::try_from((
-                            import
-                                .iter()
-                                .map(|s| &**s)
-                                .collect::<Vec<&str>>()
-                                .as_slice(),
-                            self.environment,
-                        ))
-                        .unwrap(); // ET
-
-                        let mut source_code = Vec::with_capacity(20);
-                        File::open(file_path.to_pathbuf(self.environment))
-                            .unwrap() // ET
-                            .read_to_end(&mut source_code)
-                            .unwrap(); // ET
-
-                        let (functions, usefid) = self.tokenize(file_path.clone(), &source_code)?;
-                        self.finalize_module(usefid, functions);
-                    }
                 },
                 RawToken::NewLine => continue,
                 _ => panic!("ERROR_TODO: Unexpected {:?}, wanted header", token),
@@ -171,22 +140,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // Assumes the module will never be mutated again
-    pub fn finalize_module(&mut self, fid: usize, functions: Vec<FunctionBuilder>) {
-        // TODO: Reserve for free slight performance boost
-        while self.completed.len() < fid {
-            self.completed.push(None);
-        }
-        if self.completed.len() == fid {
-            self.completed.push(Some(functions));
-        } else {
-            self.completed[fid] = Some(functions);
-        }
-    }
-
-    pub fn type_check(&mut self, fid: usize, entry: &str) -> Result<Type, ()> {
+    pub fn type_check(&mut self, mut functions: Vec<FunctionBuilder>) -> Result<(), ()> {
         TypeChecker::new(self);
-        Ok(Type::Nothing)
+        Ok(())
     }
 
     fn parse_type_decl(
@@ -231,12 +187,19 @@ impl<'a> Parser<'a> {
     }
 }
 
-impl fmt::Debug for Parser<'_> {
+impl fmt::Debug for Parser {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = self
             .module_ids
             .iter()
-            .map(|(mod_name, fid)| format!("#{} {}\n{:?}", fid, mod_name, &self.modules[*fid]))
+            .map(|(mod_name, fid)| {
+                format!(
+                    "#{} {}\n{:?}",
+                    fid,
+                    mod_name,
+                    &self.modules[*fid].as_ref().unwrap()
+                )
+            })
             .collect::<Vec<String>>()
             .join("\n ---\n");
         f.write_str(&s)

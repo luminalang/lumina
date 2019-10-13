@@ -153,13 +153,3 @@ impl<'s> super::function::BodySource for Tokenizer<'s> {
         self.index = self.last_index;
     }
 }
-
-/*
-impl Iterator for super::function::BodySource {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        super::function::BodySource::next()
-    }
-}
-*/

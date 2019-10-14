@@ -9,7 +9,6 @@ use std::fmt;
 
 mod body;
 pub use body::BodySource;
-mod checker;
 
 #[derive(Default)]
 pub struct FunctionBuilder {
@@ -37,7 +36,7 @@ impl FunctionBuilder {
         let first = tokenizer.next();
         let name = match first.map(|a| a.inner) {
             Some(RawToken::Identifier(name)) => name,
-            _ => return Err(()),
+            _ => panic!("ET: Missing function name"),
         };
         self.name = name;
 
@@ -150,10 +149,6 @@ impl FunctionBuilder {
                 Some(v) => panic!("ET: Unexpected {:?}", v),
             }
         }
-    }
-
-    pub fn verify(&mut self, _parser: &super::Parser) -> Result<Type, ()> {
-        Ok(Type::Nothing)
     }
 }
 

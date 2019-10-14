@@ -1,5 +1,4 @@
 use std::convert::TryFrom;
-use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Key {

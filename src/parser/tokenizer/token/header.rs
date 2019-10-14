@@ -4,6 +4,7 @@ use std::convert::TryFrom;
 pub enum Header {
     Function,
     Type,
+    Use,
 }
 
 impl TryFrom<&[u8]> for Header {
@@ -13,6 +14,7 @@ impl TryFrom<&[u8]> for Header {
         let res = match bytes {
             b"fn" => Header::Function,
             b"type" => Header::Type,
+            b"use" => Header::Use,
             _ => return Err(()),
         };
         Ok(res)
@@ -24,6 +26,7 @@ impl Header {
         match self {
             Header::Function => "fn",
             Header::Type => "type",
+            Header::Use => "use",
         }
     }
 }

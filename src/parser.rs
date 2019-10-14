@@ -98,15 +98,22 @@ impl<'a> Parser<'a> {
     }
 
     pub fn read_prelude_source(&mut self) {
-        let env_leafpath = std::env::var("LEAFPATH").expect("LEAFPATH variable not set.");
         // get path object from LEAFPATH environment variable string
         let leafpath = &self.environment.leafpath;
 
         // get current working directory from environment variable
         let current_dir = self.environment.entrypoint.parent().unwrap();
 
-        self.tokenize_prelude(leafpath.join("prelude").as_path());
-        self.tokenize_prelude(current_dir.join("prelude").as_path());
+        let leafpath_prelude = leafpath.join("prelude");
+        let current_dir_prelude = current_dir.join("prelude");
+
+        if leafpath_prelude.exists() {
+            self.tokenize_prelude(leafpath_prelude.as_path());
+        }
+
+        if current_dir_prelude.exists() {
+            self.tokenize_prelude(current_dir_prelude.as_path());
+        }
     }
 
     fn tokenize_prelude(&mut self, path : &Path) {

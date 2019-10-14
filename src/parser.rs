@@ -98,10 +98,10 @@ impl<'a> Parser<'a> {
     }
 
     pub fn read_prelude_source(&mut self) {
-        // get path object from LEAFPATH environment variable string
+        // get the leafpath root directory
         let leafpath = &self.environment.leafpath;
 
-        // get current working directory from environment variable
+        // get the directory containing our entrypoint .lf file
         let current_dir = self.environment.entrypoint.parent().unwrap();
 
         let leafpath_prelude = leafpath.join("prelude");

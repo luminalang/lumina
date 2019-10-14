@@ -22,6 +22,7 @@ fn main() {
         }
     };
     let mut parser = Parser::new(&environment);
+    parser.read_prelude_source();
 
     let mut source_code = Vec::with_capacity(20);
     File::open(&environment.entrypoint)

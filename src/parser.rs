@@ -102,10 +102,10 @@ impl Parser {
     pub fn read_prelude_source(&mut self) {
         let env_leafpath = std::env::var("LEAFPATH").expect("LEAFPATH variable not set.");
         // get path object from LEAFPATH environment variable string
-        let leafpath : &Path = Path::new(&env_leafpath);
+        let leafpath = Path::new(&env_leafpath);
 
         // get current working directory from environment variable
-        let current_dir : &Path = &std::env::current_dir().expect("Current directory couldn't be read.");
+        let current_dir = std::env::current_dir().expect("Current directory couldn't be read.");
 
         self.tokenize_prelude(leafpath.join("prelude").as_path());
         self.tokenize_prelude(current_dir.join("prelude").as_path());
@@ -115,15 +115,13 @@ impl Parser {
         for entry in path.read_dir().expect("Couldn't read prelude directory.") {
             let file_path = entry.expect("Prelude file path doesn't exist.").path();
             if file_path.extension() == Some(std::ffi::OsStr::new("lf")) {
-                let mut source_code_buffer : std::vec::Vec<u8> = Vec::new();
+                let mut source_code_buffer = Vec::new();
                 std::fs::File::open(file_path)
                     .expect("Couldn't open file.")
                     .read_to_end(&mut source_code_buffer)
                     .expect("Couldn't read file.");
 
-                self.tokenize(
-                    &path.to_str().expect("This shouldn't happen."),
-                    &source_code_buffer)
+                self.tokenize("prelude", &source_code_buffer)
                     .expect("Tokenization failed.");
             }
         }

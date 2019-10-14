@@ -4,6 +4,7 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::fs::File;
 use std::io::Read;
+use std::path::Path;
 
 mod tokenizer;
 pub use tokenizer::{is_valid_identifier, Header, Key, RawToken, Token, Tokenizer};
@@ -94,6 +95,41 @@ impl<'a> Parser<'a> {
         module.types.insert(name.to_owned(), typeid);
         module.type_fields.push(fields);
         typeid
+    }
+
+    pub fn read_prelude_source(&mut self) {
+        // get path object from LEAFPATH environment variable string
+        let leafpath = &self.environment.leafpath;
+
+        // get current working directory from environment variable
+        let current_dir = self.environment.entrypoint.parent().unwrap();
+
+        let leafpath_prelude = leafpath.join("prelude");
+        let current_dir_prelude = current_dir.join("prelude");
+
+        if leafpath_prelude.exists() {
+            self.tokenize_prelude(leafpath_prelude.as_path());
+        }
+
+        if current_dir_prelude.exists() {
+            self.tokenize_prelude(current_dir_prelude.as_path());
+        }
+    }
+
+    fn tokenize_prelude(&mut self, path : &Path) {
+        for entry in path.read_dir().expect("Couldn't read prelude directory.") {
+            let file_path = entry.expect("Prelude file path doesn't exist.").path();
+            if file_path.extension() == Some(std::ffi::OsStr::new("lf")) {
+                let mut source_code_buffer = Vec::new();
+                std::fs::File::open(file_path)
+                    .expect("Couldn't open file.")
+                    .read_to_end(&mut source_code_buffer)
+                    .expect("Couldn't read file.");
+
+                self.tokenize(FileSource::Prelude, &source_code_buffer)
+                    .expect("Tokenization failed.");
+            }
+        }
     }
 
     // We only have to return Functions because custom types only need to be indexed

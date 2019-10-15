@@ -1,5 +1,5 @@
 use crate::datatypes::FlatVec;
-use crate::parser::{flags, Type};
+use crate::parser::flags;
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -85,17 +85,15 @@ impl TryFrom<&[u8]> for Token {
 #[derive(Debug, PartialEq, Clone)]
 pub enum RawToken {
     Identifier(String),
+    ExternalIdentifier(String, String),
 
     Header(Header),
     Key(Key),
     Inlined(Inlined),
-    Group(Vec<Token>),
     Operation(Box<(Token, Token)>, Operator),
     Parameters(Vec<Token>),
-    Parameterized(String, Vec<Token>),
-    Constant(String),
-
-    Parameter(usize, Type),
+    Parameterized(Box<Token>, Vec<Token>),
+    // Constant(String),
     Operator(Operator),
     IfStatement(FlatVec<Token>),
     MatchStatement(FlatVec<Token>),
@@ -117,10 +115,10 @@ impl PartialEq for Token {
     }
 }
 
+pub const ALLOWED_IDENTIFIER_CHARACTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyz_";
 pub fn is_valid_identifier(ident: &str) -> bool {
-    const ALLOWED_CHARACTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyz_";
     for c in ident.bytes() {
-        if !ALLOWED_CHARACTERS.contains(&c) {
+        if !ALLOWED_IDENTIFIER_CHARACTERS.contains(&c) {
             return false;
         }
     }

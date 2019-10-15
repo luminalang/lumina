@@ -1,11 +1,16 @@
 use std::convert::TryFrom;
 use std::fmt;
 
+pub trait Typeable {
+    fn of_type(&self) -> Type;
+}
+
 #[derive(PartialEq, Debug, Clone, Hash, Eq)]
 pub enum Type {
     Nothing,
     Int,
     Float,
+    Bool,
     Generic(u8),
     List(Box<Type>),
     Struct(i32, i32),
@@ -52,6 +57,7 @@ impl fmt::Display for Type {
             Type::Nothing => f.write_str("nothing"),
             Type::Int => f.write_str("int"),
             Type::Float => f.write_str("float"),
+            Type::Bool => f.write_str("bool"),
             Type::Generic(gid) => write!(f, "{}", (gid + 97) as char),
             Type::List(inner) => write!(f, "[{}]", inner.to_string()),
             Type::Struct(fid, tid) => write!(f, "Struct({}:{})", fid, tid),

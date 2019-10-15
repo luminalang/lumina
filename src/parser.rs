@@ -7,7 +7,7 @@ use std::io::Read;
 use std::path::Path;
 
 mod tokenizer;
-pub use tokenizer::{is_valid_identifier, Header, Key, RawToken, Token, Tokenizer};
+pub use tokenizer::{is_valid_identifier, Header, Inlined, Key, RawToken, Token, Tokenizer};
 mod function;
 mod leafmod;
 pub use function::{BodySource, FunctionBuilder};
@@ -116,7 +116,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn tokenize_prelude(&mut self, path : &Path) {
+    fn tokenize_prelude(&mut self, path: &Path) {
         for entry in path.read_dir().expect("Couldn't read prelude directory.") {
             let file_path = entry.expect("Prelude file path doesn't exist.").path();
             if file_path.extension() == Some(std::ffi::OsStr::new("lf")) {
@@ -220,6 +220,18 @@ impl<'a> Parser<'a> {
         Ok(Type::Nothing)
     }
 
+    fn type_of(&self, t: &RawToken) -> Type {
+        match t {
+            RawToken::Inlined(inlined) => match inlined {
+                Inlined::Int(_) => Type::Int,
+                Inlined::Float(_) => Type::Float,
+                Inlined::Bool(_) => Type::Bool,
+                Inlined::Nothing => Type::Nothing,
+            },
+            _ => panic!("Cannot discover type of {:?}", t),
+        }
+    }
+
     fn parse_type_decl(
         &mut self,
         tokenizer: &mut Tokenizer,
@@ -246,6 +258,7 @@ impl<'a> Parser<'a> {
                 _ => panic!("ERROR_TODO: Unexpected thingy in field decl, {:?}", next),
             };
             let next = tokenizer.next().expect("ERROR_TODO");
+            /*
             if let RawToken::Identifier(type_name) = next.inner {
                 fields.push((
                     field_name.to_owned(),
@@ -256,6 +269,17 @@ impl<'a> Parser<'a> {
                     "ERROR_TODO: Invalid syntax in field decleration, got {:?}",
                     next
                 );
+            }
+            */
+            match next.inner {
+                RawToken::Identifier(type_name) => fields.push((
+                    field_name.to_owned(),
+                    Type::try_from(type_name.as_str()).unwrap(),
+                )),
+                _ => panic!(
+                    "ERROR_TODO: Invalid syntax in field decleration, got {:?}",
+                    next
+                ),
             }
         }
         Ok((type_name, fields))

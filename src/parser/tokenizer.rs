@@ -1,6 +1,9 @@
 mod token;
 use std::convert::TryFrom;
-pub use token::{is_valid_identifier, Header, Inlined, Key, Operator, RawToken, Token};
+pub use token::{
+    is_valid_identifier, Header, Inlined, Key, Operator, RawToken, Token,
+    ALLOWED_IDENTIFIER_CHARACTERS,
+};
 
 pub struct Tokenizer<'s> {
     source_code: &'s [u8],
@@ -8,14 +11,15 @@ pub struct Tokenizer<'s> {
     index: usize,
 }
 
-const BREAK_AT: &[u8] = b" ,()[]+*/\n#{}|=:";
-const IGNORES_SPACE: &[u8] = b",([+*/\n#{}|:";
+const BREAK_AT: &[u8] = b" ,()[]+*/\n#{}|=";
+const IGNORES_SPACE: &[u8] = b",([+*/\n#{}|";
 // &[(x, [y])] -> Only early-breaks on x if the next byte isn't any of y
 const MAYBE_IGNORES_SPACE: &[(u8, &[u8])] = &[
     (b'-', &[b'>']),
     (b'<', &[b'=', b'<']),
     (b'=', &[b'>']),
     (b'!', &[b'=']),
+    (b':', ALLOWED_IDENTIFIER_CHARACTERS),
 ];
 
 impl<'s> From<&'s [u8]> for Tokenizer<'s> {
@@ -159,9 +163,29 @@ impl<'s> super::function::BodySource for Tokenizer<'s> {
         // self.last_index = self.index;
         self.push_history(self.index);
         let raw = self.gather_to(BREAK_AT);
-        Token::try_from(raw)
+        let mut t = Token::try_from(raw)
             .ok()
-            .map(|t| t.with_source_index(self.index))
+            .map(|t| t.with_source_index(self.index))?;
+
+        // This is a little hacked together but the edge case is that `a:b` is an external call
+        // while `a: b` is a lambda/matchbranch/whatever.
+        if let RawToken::Identifier(ident) = &t.inner {
+            let mut spl = ident.split(':');
+            let first = spl.next().unwrap();
+            if let Some(second) = spl.next() {
+                if spl.next() != None {
+                    panic!("Got a third `:` split");
+                }
+                if second.is_empty() {
+                    self.regress(1);
+                    t.inner = RawToken::Identifier(first.to_owned());
+                    return Some(t);
+                }
+                t.inner = RawToken::ExternalIdentifier(first.to_owned(), second.to_owned());
+                return Some(t);
+            }
+        }
+        Some(t)
     }
     fn undo(&mut self) {
         self.index = self.pop_history();

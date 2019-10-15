@@ -188,67 +188,27 @@ pub trait BodySource {
             }
             RawToken::Identifier(ident) => {
                 if !is_valid_identifier(&ident) {
-                    panic!("ET: Invalid identifier");
+                    panic!("ET: Invalid identifier {:?}", &ident);
                 };
-                match mode {
-                    Mode::Neutral => {
-                        let want_params = self.walk(Mode::Parameters(Vec::new()))?;
-                        let source = token.source_index;
-                        let make_parameterized = |params: Vec<Token>| {
-                            if params.is_empty() {
-                                Token::new(RawToken::Constant(ident), source)
-                            } else {
-                                Token::new(RawToken::Parameterized(ident, params), source)
-                            }
-                        };
-                        match want_params {
-                            WalkResult::Value(v) => match v.inner {
-                                RawToken::Parameters(params) => {
-                                    self.handle_after(make_parameterized(params))
-                                }
-                                _ => panic!("Wanted parameters but got {:?}", v),
-                            },
-                            WalkResult::CloseParen(v) => match v.unwrap().inner {
-                                RawToken::Parameters(params) => {
-                                    Ok(WalkResult::CloseParen(Some(make_parameterized(params))))
-                                }
-                                _ => panic!("Wanted parameters but got {:?}", ()),
-                            },
-                            _ => panic!("Wanted parameters but got {:?}", want_params),
-                        }
-                    }
-                    Mode::Parameters(mut previous) => {
-                        let source = token.source_index;
-                        let this = Token::new(RawToken::Constant(ident), source);
-                        previous.push(this);
-                        self.walk(Mode::Parameters(previous))
-                    }
-                    Mode::Operator(left, op) => {
-                        self.undo();
-                        let source = left.source_index;
-                        let v = self.walk(Mode::Neutral)?;
-                        match v {
-                            WalkResult::Value(v) => match &v.inner {
-                                RawToken::Parameterized(_n, _p) => {
-                                    let operation = Token::new(
-                                        RawToken::Operation(Box::new((left, v)), op),
-                                        source,
-                                    );
-                                    self.handle_after(operation)
-                                }
-                                RawToken::Constant(_n) => {
-                                    let operation = Token::new(
-                                        RawToken::Operation(Box::new((left, v)), op),
-                                        source,
-                                    );
-                                    self.handle_after(operation)
-                                }
-                                _ => panic!(),
-                            },
-                            _ => panic!("{:?}", v),
-                        }
-                    }
-                }
+                self.handle_ident(
+                    mode,
+                    Token::new(RawToken::Identifier(ident), token.source_index),
+                )
+            }
+            RawToken::ExternalIdentifier(modident, funcident) => {
+                if !is_valid_identifier(&modident) {
+                    panic!("ET: Invalid module identifier {:?}", &modident);
+                };
+                if !is_valid_identifier(&funcident) {
+                    panic!("ET: Invalid func identifier {:?}", &funcident);
+                };
+                self.handle_ident(
+                    mode,
+                    Token::new(
+                        RawToken::ExternalIdentifier(modident, funcident),
+                        token.source_index,
+                    ),
+                )
             }
             RawToken::Key(Key::ListOpen) => {
                 let list = list::build(self)?;
@@ -339,6 +299,66 @@ pub trait BodySource {
             _ => {
                 self.undo();
                 Ok(WalkResult::Value(v))
+            }
+        }
+    }
+
+    fn handle_ident(&mut self, mode: Mode, token: Token) -> Result<WalkResult, ()> {
+        match mode {
+            Mode::Neutral => {
+                let want_params = self.walk(Mode::Parameters(Vec::new()))?;
+                let source = token.source_index;
+                let make_parameterized = |params: Vec<Token>| {
+                    if params.is_empty() {
+                        token
+                    } else {
+                        Token::new(RawToken::Parameterized(Box::new(token), params), source)
+                    }
+                };
+                match want_params {
+                    WalkResult::Value(v) => match v.inner {
+                        RawToken::Parameters(params) => {
+                            self.handle_after(make_parameterized(params))
+                        }
+                        _ => panic!("Wanted parameters but got {:?}", v),
+                    },
+                    WalkResult::CloseParen(v) => match v.unwrap().inner {
+                        RawToken::Parameters(params) => {
+                            Ok(WalkResult::CloseParen(Some(make_parameterized(params))))
+                        }
+                        _ => panic!("Wanted parameters but got {:?}", ()),
+                    },
+                    _ => panic!("Wanted parameters but got {:?}", want_params),
+                }
+            }
+            Mode::Parameters(mut previous) => {
+                let source = token.source_index;
+                // let this = Token::new(RawToken::Constant(ident), source);
+                previous.push(token);
+                self.walk(Mode::Parameters(previous))
+            }
+            Mode::Operator(left, op) => {
+                self.undo();
+                let source = left.source_index;
+                let v = self.walk(Mode::Neutral)?;
+                match v {
+                    WalkResult::Value(v) => match &v.inner {
+                        RawToken::Parameterized(_n, _p) => {
+                            let operation =
+                                Token::new(RawToken::Operation(Box::new((left, v)), op), source);
+                            self.handle_after(operation)
+                        }
+                        /*
+                        RawToken::Constant(_n) => {
+                            let operation =
+                                Token::new(RawToken::Operation(Box::new((left, v)), op), source);
+                            self.handle_after(operation)
+                        }
+                        */
+                        _ => panic!(),
+                    },
+                    _ => panic!("{:?}", v),
+                }
             }
         }
     }

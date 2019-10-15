@@ -4,7 +4,7 @@ pub use token::{is_valid_identifier, Header, Inlined, Key, Operator, RawToken, T
 
 pub struct Tokenizer<'s> {
     source_code: &'s [u8],
-    last_index: usize,
+    history: Vec<usize>,
     index: usize,
 }
 
@@ -22,13 +22,26 @@ impl<'s> From<&'s [u8]> for Tokenizer<'s> {
     fn from(source_code: &'s [u8]) -> Self {
         Self {
             source_code,
-            last_index: 0,
+            history: vec![0],
             index: 0,
         }
     }
 }
 
 impl<'s> Tokenizer<'s> {
+    pub fn push_history(&mut self, n: usize) {
+        // We don't need more than 3 in history, so lets reuse some allocations
+        if self.history.len() == 3 {
+            self.history[0] = self.history[1];
+            self.history[1] = self.history[2];
+            self.history[2] = n;
+        } else {
+            self.history.push(n);
+        }
+    }
+    pub fn pop_history(&mut self) -> usize {
+        self.history.pop().unwrap_or(0)
+    }
     pub fn index(&self) -> usize {
         self.index
     }
@@ -143,14 +156,15 @@ impl<'s> Tokenizer<'s> {
 
 impl<'s> super::function::BodySource for Tokenizer<'s> {
     fn next(&mut self) -> Option<Token> {
-        self.last_index = self.index;
+        // self.last_index = self.index;
+        self.push_history(self.index);
         let raw = self.gather_to(BREAK_AT);
         Token::try_from(raw)
             .ok()
             .map(|t| t.with_source_index(self.index))
     }
     fn undo(&mut self) {
-        self.index = self.last_index;
+        self.index = self.pop_history();
     }
 }
 

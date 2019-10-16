@@ -85,7 +85,7 @@ impl TryFrom<&[u8]> for Token {
 #[derive(Debug, PartialEq, Clone)]
 pub enum RawToken {
     Identifier(String),
-    ExternalIdentifier(String, String),
+    ExternalIdentifier(Vec<String>),
 
     Header(Header),
     Key(Key),
@@ -93,7 +93,7 @@ pub enum RawToken {
     Operation(Box<(Token, Token)>, Operator),
     Parameters(Vec<Token>),
     Parameterized(Box<Token>, Vec<Token>),
-    // Constant(String),
+
     Operator(Operator),
     IfStatement(FlatVec<Token>),
     MatchStatement(FlatVec<Token>),

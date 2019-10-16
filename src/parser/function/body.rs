@@ -195,19 +195,19 @@ pub trait BodySource {
                     Token::new(RawToken::Identifier(ident), token.source_index),
                 )
             }
-            RawToken::ExternalIdentifier(modident, funcident) => {
-                if !is_valid_identifier(&modident) {
-                    panic!("ET: Invalid module identifier {:?}", &modident);
+            RawToken::ExternalIdentifier(entries) => {
+                if entries.len() != 2 {
+                    panic!("ET: a:b:c is not allowed");
+                }
+                if !is_valid_identifier(&entries[0]) {
+                    panic!("ET: Invalid module identifier {:?}", &entries[0]);
                 };
-                if !is_valid_identifier(&funcident) {
-                    panic!("ET: Invalid func identifier {:?}", &funcident);
+                if !is_valid_identifier(&entries[1]) {
+                    panic!("ET: Invalid func identifier {:?}", &entries[1]);
                 };
                 self.handle_ident(
                     mode,
-                    Token::new(
-                        RawToken::ExternalIdentifier(modident, funcident),
-                        token.source_index,
-                    ),
+                    Token::new(RawToken::ExternalIdentifier(entries), token.source_index),
                 )
             }
             RawToken::Key(Key::ListOpen) => {
@@ -332,8 +332,6 @@ pub trait BodySource {
                 }
             }
             Mode::Parameters(mut previous) => {
-                let source = token.source_index;
-                // let this = Token::new(RawToken::Constant(ident), source);
                 previous.push(token);
                 self.walk(Mode::Parameters(previous))
             }
@@ -348,14 +346,12 @@ pub trait BodySource {
                                 Token::new(RawToken::Operation(Box::new((left, v)), op), source);
                             self.handle_after(operation)
                         }
-                        /*
-                        RawToken::Constant(_n) => {
+                        RawToken::Identifier(_n) => {
                             let operation =
                                 Token::new(RawToken::Operation(Box::new((left, v)), op), source);
                             self.handle_after(operation)
                         }
-                        */
-                        _ => panic!(),
+                        _ => panic!("{:?}", &v.inner),
                     },
                     _ => panic!("{:?}", v),
                 }

@@ -28,7 +28,7 @@ pub struct Parser<'a> {
 struct ParseModule {
     // TODO: I probably want to convert Vec<Type> into a numeric representation like `0425` to save
     // heap allocations just for id lookups
-    pub functions: HashMap<(String, Vec<Type>, Type), (FunctionBuilder, usize)>,
+    pub functions: HashMap<(String, Vec<Type>), (FunctionBuilder, usize)>,
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
     pub imports: HashMap<String, usize>,
@@ -43,17 +43,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn _get_function(
+    fn get_function(
         &self,
         fid: usize,
         name: &str,
         params: Vec<Type>,
-        returns: Type,
     ) -> Option<&(FunctionBuilder, usize)> {
         self.modules
             .get(fid)?
             .functions
-            .get(&(name.to_owned(), params, returns))
+            .get(&(name.to_owned(), params))
     }
     fn _get_type_id(&self, fid: usize, name: &str) -> Option<usize> {
         self.modules.get(fid)?.types.get(name).copied()
@@ -83,7 +82,6 @@ impl<'a> Parser<'a> {
                     .cloned()
                     .map(|(_flags, t)| t)
                     .collect(),
-                funcb.returns.clone(),
             ),
             (funcb, funcid),
         );
@@ -160,22 +158,15 @@ impl<'a> Parser<'a> {
                         self.new_type(fid, type_name, fields);
                     }
                     Header::Use => {
-                        let mut import: Vec<String> = Vec::new();
-                        while let Some(RawToken::Identifier(ident)) =
-                            tokenizer.next().map(|t| t.inner)
-                        {
-                            import.push(ident);
-                            match tokenizer.next().map(|t| t.inner) {
-                                Some(RawToken::Key(Key::Colon)) => continue,
-                                Some(RawToken::Header(_)) => {
-                                    tokenizer.undo();
-                                    break;
-                                }
-                                Some(RawToken::NewLine) => break,
-                                None => break,
-                                Some(other) => panic!("ET: Unexpected {:?}", other),
+                        let import = match tokenizer.next().map(|t| t.inner) {
+                            Some(RawToken::Identifier(single)) => vec![single],
+                            Some(RawToken::ExternalIdentifier(entries)) => entries,
+                            None => panic!("ET: Nothing after `use` keyword"),
+                            Some(other) => {
+                                panic!("ET: Unexpected thing after `use` keyword: {:?}", other)
                             }
-                        }
+                        };
+
                         let file_path = {
                             if module_path == crate::entrypoint() {
                                 leafmod::FileSource::try_from((
@@ -215,21 +206,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn type_check(&mut self, fid: usize, entry: &str) -> Result<Type, ()> {
-        TypeChecker::new(self);
-        Ok(Type::Nothing)
-    }
-
-    fn type_of(&self, t: &RawToken) -> Type {
-        match t {
-            RawToken::Inlined(inlined) => match inlined {
-                Inlined::Int(_) => Type::Int,
-                Inlined::Float(_) => Type::Float,
-                Inlined::Bool(_) => Type::Bool,
-                Inlined::Nothing => Type::Nothing,
-            },
-            _ => panic!("Cannot discover type of {:?}", t),
-        }
+    pub fn type_check(&mut self, fid: usize) -> Result<Type, ()> {
+        TypeChecker::new(self, fid, "main", Vec::new(), Type::Nothing).run()
     }
 
     fn parse_type_decl(

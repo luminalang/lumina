@@ -44,7 +44,7 @@ impl FunctionBuilder {
             // It has no parameters and returns Type::Nothing
             Some(RawToken::NewLine) => self,
             // It has return value but no parameters
-            Some(RawToken::Key(Key::ParenOpen)) => self.with_parameter_types(tokenizer)?,
+            Some(RawToken::Key(Key::ParenOpen)) => self.with_return(tokenizer)?,
             // It has parameters
             Some(RawToken::Identifier(ident)) => {
                 tokenizer.regress(ident.len());
@@ -104,7 +104,7 @@ impl FunctionBuilder {
         }
     }
 
-    fn get_parameter(&self, ident: &str) -> Option<usize> {
+    pub fn get_parameter(&self, ident: &str) -> Option<usize> {
         for (i, n) in self.parameter_names.iter().enumerate() {
             if n == ident {
                 return Some(i);

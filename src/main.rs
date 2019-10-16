@@ -1,3 +1,4 @@
+#![feature(box_patterns)]
 use std::fs::File;
 use std::io::Read;
 
@@ -39,7 +40,7 @@ fn main() {
     println!("{:#?}\n", parser);
 
     // Verify syntax and infer types
-    match parser.type_check(fid, "main") {
+    match parser.type_check(fid) {
         Err(e) => panic!("{:?}", e),
         Ok(_main_return) => {}
     };

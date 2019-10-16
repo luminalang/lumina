@@ -173,15 +173,14 @@ impl<'s> super::function::BodySource for Tokenizer<'s> {
             let mut spl = ident.split(':');
             let first = spl.next().unwrap();
             if let Some(second) = spl.next() {
-                if spl.next() != None {
-                    panic!("Got a third `:` split");
+                let mut identbuf = vec![first.to_owned(), second.to_owned()];
+                while let Some(additional) = spl.next() {
+                    identbuf.push(additional.to_owned());
                 }
-                if second.is_empty() {
-                    self.regress(1);
-                    t.inner = RawToken::Identifier(first.to_owned());
-                    return Some(t);
-                }
-                t.inner = RawToken::ExternalIdentifier(first.to_owned(), second.to_owned());
+
+                t.inner = RawToken::ExternalIdentifier(identbuf);
+                return Some(t);
+            } else {
                 return Some(t);
             }
         }

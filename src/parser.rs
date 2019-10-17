@@ -53,28 +53,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn get_function(
-        &self,
-        fid: usize,
-        name: &str,
-        params: Vec<Type>,
-    ) -> Option<&(FunctionBuilder, usize)> {
-        self.modules
-            .get(fid)?
-            .functions
-            .get(&(name.to_owned(), params))
-    }
-    fn get_operator(
-        &self,
-        fid: usize,
-        name: &str,
-        params: [Type; 2],
-    ) -> Option<&(OperatorBuilder, usize)> {
-        self.modules
-            .get(fid)?
-            .operators
-            .get(&(name.to_owned(), params))
-    }
     fn _get_type_id(&self, fid: usize, name: &str) -> Option<usize> {
         self.modules.get(fid)?.types.get(name).copied()
     }
@@ -276,19 +254,6 @@ impl<'a> Parser<'a> {
                 _ => panic!("ERROR_TODO: Unexpected thingy in field decl, {:?}", next),
             };
             let next = tokenizer.next().expect("ERROR_TODO");
-            /*
-            if let RawToken::Identifier(type_name) = next.inner {
-                fields.push((
-                    field_name.to_owned(),
-                    Type::try_from(type_name.as_str()).unwrap(),
-                ))
-            } else {
-                panic!(
-                    "ERROR_TODO: Invalid syntax in field decleration, got {:?}",
-                    next
-                );
-            }
-            */
             match next.inner {
                 RawToken::Identifier(type_name) => fields.push((
                     field_name.to_owned(),

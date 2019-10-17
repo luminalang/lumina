@@ -5,6 +5,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::rc::Rc;
 use termion::{color, color::Fg};
 
 mod tokenizer;
@@ -24,14 +25,16 @@ use body::BodySource;
 mod operator;
 pub use operator::OperatorBuilder;
 
+const PRELUDE_FID: usize = 0;
+
 pub struct Parser<'a> {
     pub module_ids: HashMap<FileSource, usize>,
-    modules: Vec<ParseModule>,
+    pub modules: Vec<ParseModule>,
     environment: &'a Environment,
 }
 
 #[derive(Default)]
-struct ParseModule {
+pub struct ParseModule {
     // TODO: I probably want to convert Vec<Type> into a numeric representation like `0425` to save
     // heap allocations just for id lookups
     pub functions: HashMap<(String, Vec<Type>), (FunctionBuilder, usize)>,
@@ -61,8 +64,22 @@ impl<'a> Parser<'a> {
             .functions
             .get(&(name.to_owned(), params))
     }
+    fn get_operator(
+        &self,
+        fid: usize,
+        name: &str,
+        params: [Type; 2],
+    ) -> Option<&(OperatorBuilder, usize)> {
+        self.modules
+            .get(fid)?
+            .operators
+            .get(&(name.to_owned(), params))
+    }
     fn _get_type_id(&self, fid: usize, name: &str) -> Option<usize> {
         self.modules.get(fid)?.types.get(name).copied()
+    }
+    pub fn prelude(&self) -> &ParseModule {
+        &self.modules[PRELUDE_FID]
     }
 
     fn new_module(&mut self, source: FileSource) -> usize {
@@ -163,7 +180,7 @@ impl<'a> Parser<'a> {
                         let mut funcb = FunctionBuilder::new().with_header(&mut tokenizer)?;
                         let body_entry = funcb.parse_body(&mut tokenizer)?;
 
-                        funcb.body = body_entry;
+                        funcb.body = Rc::new(body_entry);
 
                         self.new_function(fid, funcb);
                     }
@@ -171,7 +188,7 @@ impl<'a> Parser<'a> {
                         let mut opb = OperatorBuilder::new().with_header(&mut tokenizer)?;
                         let body_entry = opb.parse_body(&mut tokenizer)?;
 
-                        opb.body = body_entry;
+                        opb.body = Rc::new(body_entry);
 
                         self.new_operator(fid, opb);
                     }

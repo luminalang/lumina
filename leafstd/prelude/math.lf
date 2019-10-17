@@ -1,0 +1,11 @@
+operator + (int int int)
+    rust:p2:add left right
+
+operator - (int int int)
+    rust:p2:sub left right
+
+operator * (int int int)
+    rust:p2:mul left right
+
+operator / (int int int)
+    rust:p2:div left right

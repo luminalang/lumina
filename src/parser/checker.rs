@@ -1,5 +1,6 @@
-use super::{FunctionBuilder, Inlined, Parser, RawToken, Token, Type};
+use super::{FunctionBuilder, Inlined, Parser, RawToken, Token, Type, PRELUDE_FID};
 use crate::evaler::bridge;
+use std::rc::Rc;
 
 #[derive(Default, Clone)]
 struct Position {
@@ -11,6 +12,13 @@ pub struct TypeChecker<'f> {
     active: Position,
     parser: &'f Parser<'f>,
     infered_types: Vec<Type>,
+}
+
+pub trait Typeable {
+    fn get_parameter(&self, ident: &str) -> Option<usize>;
+    fn get_parameter_type(&self, pid: usize) -> &Type;
+    fn get_return(&self) -> &Type;
+    fn entry_point(&self) -> Rc<Token>;
 }
 
 impl<'f> TypeChecker<'f> {
@@ -34,31 +42,47 @@ impl<'f> TypeChecker<'f> {
     }
 
     pub fn run(&mut self) -> Result<Type, ()> {
-        let (func, _funcid) = self.parser.modules[self.active.module]
-            .functions
-            .get(&self.active.function)
-            .ok_or_else(|| panic!("ET: Function {:?} not found", self.active.function))?;
-        let got = self.type_check(&func.body)?;
-        if func.returns != got && func.returns != Type::Nothing {
-            panic!(
-                "ET: Return type mismatch. Wanted {} got {}",
-                func.returns, got
-            );
+        let func = self.func()?;
+        let returns = func.get_return().clone();
+        let entry = func.entry_point();
+        let got = self.type_check(&entry)?;
+        if returns != got && returns != Type::Nothing {
+            panic!("ET: Return type mismatch. Wanted {} got {}", returns, got);
         }
         Ok(got)
     }
 
     #[inline]
-    fn func(&self) -> &FunctionBuilder {
-        &self
-            .parser
-            .get_function(
-                self.active.module,
-                &self.active.function.0,
-                self.active.function.1.clone(),
-            )
-            .unwrap()
-            .0
+    fn func(&self) -> Result<Box<&dyn Typeable>, ()> {
+        let self_mod = &self.parser.modules[self.active.module];
+
+        if super::is_valid_identifier(&self.active.function.0) {
+            // Function
+            if let Some((func, _funcid)) = self_mod.functions.get(&self.active.function) {
+                return Ok(Box::new(func));
+            } else if let Some((func, _funcid)) =
+                self.parser.prelude().functions.get(&self.active.function)
+            {
+                return Ok(Box::new(func));
+            }
+            panic!("Function {:?} not found", self.active.function);
+        } else {
+            let key = &(
+                // TODO: Allocation can be avoided
+                self.active.function.0.clone(),
+                [
+                    self.active.function.1[0].clone(),
+                    self.active.function.1[1].clone(),
+                ],
+            );
+            // Operator
+            if let Some((opb, _opid)) = self_mod.operators.get(key) {
+                return Ok(Box::new(opb));
+            } else if let Some((opb, _opid)) = self.parser.prelude().operators.get(key) {
+                return Ok(Box::new(opb));
+            }
+            panic!("Operator {:?} not found", self.active.function);
+        }
     }
 
     fn type_check(&mut self, t: &Token) -> Result<Type, ()> {
@@ -96,9 +120,17 @@ impl<'f> TypeChecker<'f> {
                     _ => panic!("{:?} cannot take parameters", entity),
                 }
             }
+            RawToken::Operation(box (left, right), op) => {
+                let left_t = self.type_check(left)?;
+                let right_t = self.type_check(right)?;
+                let mut new_pos = self.active.clone();
+                new_pos.function = (op.identifier.clone(), vec![left_t, right_t]);
+                self.fork(new_pos).run()?
+            }
             RawToken::Identifier(constant_ident) => {
-                if let Some(param_id) = self.func().get_parameter(constant_ident) {
-                    self.func().parameter_types[param_id].1.clone()
+                let func = self.func()?;
+                if let Some(param_id) = func.get_parameter(constant_ident) {
+                    func.get_parameter_type(param_id).clone()
                 } else {
                     self.fork(Position {
                         module: self.active.module,

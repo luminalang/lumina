@@ -1,5 +1,6 @@
 use super::body;
 use super::body::BodySource;
+use super::checker::Typeable;
 use super::flags::Flag;
 use super::Key;
 use super::RawToken;
@@ -8,6 +9,7 @@ use super::Tokenizer;
 use super::Type;
 use std::convert::TryFrom;
 use std::fmt;
+use std::rc::Rc;
 
 #[derive(Default)]
 pub struct FunctionBuilder {
@@ -15,7 +17,7 @@ pub struct FunctionBuilder {
     pub parameter_names: Vec<String>,
     pub parameter_types: Vec<(Flag, Type)>,
     pub returns: Type,
-    pub body: Token,
+    pub body: Rc<Token>,
     pub wheres: Vec<(String, Token)>,
 }
 
@@ -26,7 +28,7 @@ impl FunctionBuilder {
             parameter_names: Vec::new(),
             parameter_types: Vec::new(),
             returns: Type::default(),
-            body: Token::new(RawToken::NewLine, 0),
+            body: Rc::new(Token::new(RawToken::NewLine, 0)),
             wheres: Vec::new(),
         }
     }
@@ -103,15 +105,6 @@ impl FunctionBuilder {
         }
     }
 
-    pub fn get_parameter(&self, ident: &str) -> Option<usize> {
-        for (i, n) in self.parameter_names.iter().enumerate() {
-            if n == ident {
-                return Some(i);
-            }
-        }
-        None
-    }
-
     pub fn parse_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
         let entry = self.parse_body_tokens(tokenizer)?;
         self.parse_body_wheres(tokenizer)?;
@@ -141,6 +134,26 @@ impl FunctionBuilder {
                 Some(v) => panic!("ET: Unexpected {:?}", v),
             }
         }
+    }
+}
+
+impl Typeable for FunctionBuilder {
+    fn get_parameter(&self, ident: &str) -> Option<usize> {
+        for (i, n) in self.parameter_names.iter().enumerate() {
+            if n == ident {
+                return Some(i);
+            }
+        }
+        None
+    }
+    fn get_parameter_type(&self, pid: usize) -> &Type {
+        &self.parameter_types[pid].1
+    }
+    fn get_return(&self) -> &Type {
+        &self.returns
+    }
+    fn entry_point(&self) -> Rc<Token> {
+        self.body.clone()
     }
 }
 

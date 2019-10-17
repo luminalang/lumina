@@ -1,5 +1,6 @@
 use super::body;
 use super::body::BodySource;
+use super::checker::Typeable;
 use super::flags::Flag;
 use super::tokenizer::Operator;
 use super::Key;
@@ -9,13 +10,14 @@ use super::Tokenizer;
 use super::Type;
 use std::convert::TryFrom;
 use std::fmt;
+use std::rc::Rc;
 
 #[derive(Default)]
 pub struct OperatorBuilder {
     pub name: Operator,
     pub parameter_types: [Type; 2],
     pub returns: Type,
-    pub body: Token,
+    pub body: Rc<Token>,
     pub wheres: Vec<(String, Token)>,
 }
 
@@ -25,7 +27,7 @@ impl OperatorBuilder {
             name: Operator::default(),
             parameter_types: <[Type; 2]>::default(),
             returns: Type::Nothing,
-            body: Token::new(RawToken::NewLine, 0),
+            body: Rc::new(Token::new(RawToken::NewLine, 0)),
             wheres: Vec::new(),
         }
     }
@@ -107,6 +109,24 @@ impl OperatorBuilder {
                 Some(v) => panic!("ET: Unexpected {:?}", v),
             }
         }
+    }
+}
+impl Typeable for OperatorBuilder {
+    fn get_parameter(&self, ident: &str) -> Option<usize> {
+        match ident {
+            "left" => Some(0),
+            "right" => Some(1),
+            _ => None,
+        }
+    }
+    fn get_parameter_type(&self, pid: usize) -> &Type {
+        &self.parameter_types[pid]
+    }
+    fn get_return(&self) -> &Type {
+        &self.returns
+    }
+    fn entry_point(&self) -> Rc<Token> {
+        self.body.clone()
     }
 }
 

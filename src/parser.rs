@@ -5,12 +5,14 @@ use std::fmt;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use termion::{color, color::Fg};
 
 mod tokenizer;
 pub use tokenizer::{is_valid_identifier, Header, Inlined, Key, RawToken, Token, Tokenizer};
 mod function;
 mod leafmod;
-pub use function::{BodySource, FunctionBuilder};
+pub use function::FunctionBuilder;
+
 pub use leafmod::FileSource;
 mod r#type;
 pub use r#type::Type;
@@ -18,6 +20,9 @@ mod checker;
 pub mod flags;
 use checker::TypeChecker;
 pub mod body;
+use body::BodySource;
+mod operator;
+pub use operator::OperatorBuilder;
 
 pub struct Parser<'a> {
     pub module_ids: HashMap<FileSource, usize>,
@@ -30,6 +35,7 @@ struct ParseModule {
     // TODO: I probably want to convert Vec<Type> into a numeric representation like `0425` to save
     // heap allocations just for id lookups
     pub functions: HashMap<(String, Vec<Type>), (FunctionBuilder, usize)>,
+    pub operators: HashMap<(String, [Type; 2]), (OperatorBuilder, usize)>,
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
     pub imports: HashMap<String, usize>,
@@ -87,6 +93,15 @@ impl<'a> Parser<'a> {
             (funcb, funcid),
         );
         funcid
+    }
+    fn new_operator(&mut self, fid: usize, opb: OperatorBuilder) -> usize {
+        let module = &mut self.modules[fid];
+        let opid = module.operators.len();
+        module.operators.insert(
+            (opb.name.identifier.clone(), opb.parameter_types.clone()),
+            (opb, opid),
+        );
+        opid
     }
     fn new_type(&mut self, fid: usize, name: String, fields: Vec<(String, Type)>) -> usize {
         let module = &mut self.modules[fid];
@@ -147,11 +162,21 @@ impl<'a> Parser<'a> {
                     Header::Function => {
                         let mut funcb = FunctionBuilder::new().with_header(&mut tokenizer)?;
 
+                        // TODO: Rename to parse_func
                         let body_entry = funcb.parse_func(&mut tokenizer)?;
 
+                        // TODO: Make Vec<T> into T
                         funcb.push(body_entry);
 
                         self.new_function(fid, funcb);
+                    }
+                    Header::Operator => {
+                        let mut opb = OperatorBuilder::new().with_header(&mut tokenizer)?;
+                        let body_entry = opb.parse_body(&mut tokenizer)?;
+
+                        opb.body = body_entry;
+
+                        self.new_operator(fid, opb);
                     }
                     Header::Type => {
                         let (type_name, fields) = self.parse_type_decl(&mut tokenizer)?;
@@ -270,9 +295,18 @@ impl fmt::Debug for Parser<'_> {
         let s = self
             .module_ids
             .iter()
-            .map(|(mod_name, fid)| format!("#{} {}\n{:?}", fid, mod_name, &self.modules[*fid]))
+            .map(|(mod_name, fid)| {
+                format!(
+                    "{}#{} {} {}\n{:?}",
+                    Fg(color::Green),
+                    fid,
+                    mod_name,
+                    Fg(color::Reset),
+                    &self.modules[*fid]
+                )
+            })
             .collect::<Vec<String>>()
-            .join("\n ---\n");
+            .join("\n ---\n\n");
         f.write_str(&s)
     }
 }
@@ -281,7 +315,7 @@ impl fmt::Debug for ParseModule {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "imports:\n {}\ntypes:\n {}\nfunctions:\n{}",
+            "IMPORTS:\n {}\nTYPES:\n {}\nFUNCTIONS:\n{}\nOPERATORS:\n{}",
             self.imports
                 .iter()
                 .map(|(name, fid)| format!(" {} -> {}", name, fid))
@@ -303,20 +337,14 @@ impl fmt::Debug for ParseModule {
                 .join("\n"),
             self.functions
                 .values()
-                .map(|(funcb, funcid)| format!(
-                    "  #{} {} ({:?} -> {:?})\n{:#?}",
-                    funcid,
-                    funcb.name,
-                    funcb
-                        .parameter_types
-                        .iter()
-                        .map(|(_flag, t)| t)
-                        .collect::<Vec<&Type>>(),
-                    funcb.returns,
-                    funcb.body,
-                ))
+                .map(|(funcb, funcid)| format!("  #{} {:#?}", funcid, funcb,))
                 .collect::<Vec<String>>()
                 .join("\n"),
+            self.operators
+                .values()
+                .map(|(opb, opid)| format!("  #{} {:?}", opid, opb))
+                .collect::<Vec<String>>()
+                .join("\n")
         )
     }
 }

@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug, Default, Hash)]
 pub struct Operator {
     pub identifier: String,
 }

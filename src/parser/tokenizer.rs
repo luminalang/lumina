@@ -158,7 +158,7 @@ impl<'s> Tokenizer<'s> {
     }
 }
 
-impl<'s> super::function::BodySource for Tokenizer<'s> {
+impl<'s> super::body::BodySource for Tokenizer<'s> {
     fn next(&mut self) -> Option<Token> {
         // self.last_index = self.index;
         self.push_history(self.index);
@@ -190,13 +190,3 @@ impl<'s> super::function::BodySource for Tokenizer<'s> {
         self.index = self.pop_history();
     }
 }
-
-/*
-impl Iterator for super::function::BodySource {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        super::function::BodySource::next()
-    }
-}
-*/

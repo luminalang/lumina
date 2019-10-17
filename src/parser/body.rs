@@ -4,8 +4,10 @@ use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken, Tok
 
 mod first;
 mod r#if;
+pub use r#if::IfExpr;
 mod list;
 mod r#match;
+pub use r#match::MatchExpr;
 pub mod r#where;
 
 #[derive(PartialEq, Debug)]
@@ -254,8 +256,8 @@ pub trait BodySource {
                 }
             }
             RawToken::Key(Key::If) => {
-                let ifstm = r#if::build(self)?;
-                let v = Token::new(RawToken::IfStatement(ifstm), token.source_index);
+                let ifexpr = r#if::build(self)?;
+                let v = Token::new(RawToken::IfExpression(ifexpr), token.source_index);
                 match mode {
                     Mode::Neutral => self.handle_after(v),
                     Mode::Parameters(mut previous) => {

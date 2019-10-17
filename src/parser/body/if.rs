@@ -1,39 +1,45 @@
 use super::{BodySource, Mode, SimpleSource, WalkResult};
-use crate::datatypes::FlatVec;
 use crate::parser::tokenizer::{Key, RawToken, Token};
 
-pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<FlatVec<Token>, ()> {
-    let mut buf = FlatVec::new();
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct IfExpr {
+    pub branches: Vec<(Token, Token)>,
+    pub else_branch: Box<Token>,
+}
+
+pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<IfExpr, ()> {
+    let mut expr = IfExpr::default();
 
     loop {
         let raw_cond = gather_cond(source)?;
-        let token = match SimpleSource::new(&raw_cond).walk(Mode::Neutral) {
+        let condition = match SimpleSource::new(&raw_cond).walk(Mode::Neutral) {
             Ok(WalkResult::Value(v)) => v,
             Ok(was) => panic!("ET: ?, {:?}", was),
             Err(e) => return Err(e),
         };
-        buf.push_x(token);
 
         let (brk, raw_eval) = gather_eval(source)?;
-        let token = match SimpleSource::new(&raw_eval).walk(Mode::Neutral) {
+        let evaluation = match SimpleSource::new(&raw_eval).walk(Mode::Neutral) {
             Ok(WalkResult::Value(v)) => v,
             Ok(was) => panic!("ET: ?, {:?}", was),
             Err(e) => return Err(e),
         };
-        buf.push_y(token);
+        expr.branches.push((condition, evaluation));
+
         match brk {
             Else => {
                 let (brk, raw_eval) = gather_eval(source)?;
-                let token = match SimpleSource::new(&raw_eval).walk(Mode::Neutral) {
+                let else_evaluation = match SimpleSource::new(&raw_eval).walk(Mode::Neutral) {
                     Ok(WalkResult::Value(v)) => v,
                     Ok(was) => panic!("ET: ?, {:?}", was),
                     Err(e) => return Err(e),
                 };
-                buf.seal(token);
+                expr.else_branch = Box::new(else_evaluation);
+
                 match brk {
                     Else => panic!("ET: Multiple `else` in a row"),
                     Elif => panic!("ET: Elif after `else`"),
-                    EOF => return Ok(buf),
+                    EOF => return Ok(expr),
                 }
             }
             Elif => (),

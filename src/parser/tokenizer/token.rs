@@ -1,4 +1,4 @@
-use crate::datatypes::FlatVec;
+use crate::parser::body::{IfExpr, MatchExpr};
 use crate::parser::{flags, Type};
 use std::convert::TryFrom;
 use std::fmt;
@@ -95,8 +95,8 @@ pub enum RawToken {
     Parameterized(Box<Token>, Vec<Token>),
 
     Operator(Operator),
-    IfStatement(FlatVec<Token>),
-    MatchStatement(FlatVec<Token>),
+    IfExpression(IfExpr),
+    MatchExpression(MatchExpr),
     FirstStatement(Vec<Token>),
     List(Vec<Token>),
     RustCall(u16, Type),

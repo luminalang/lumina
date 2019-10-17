@@ -161,12 +161,9 @@ impl<'a> Parser<'a> {
                 RawToken::Header(h) => match h {
                     Header::Function => {
                         let mut funcb = FunctionBuilder::new().with_header(&mut tokenizer)?;
+                        let body_entry = funcb.parse_body(&mut tokenizer)?;
 
-                        // TODO: Rename to parse_func
-                        let body_entry = funcb.parse_func(&mut tokenizer)?;
-
-                        // TODO: Make Vec<T> into T
-                        funcb.push(body_entry);
+                        funcb.body = body_entry;
 
                         self.new_function(fid, funcb);
                     }
@@ -233,7 +230,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn type_check(&mut self, fid: usize) -> Result<Type, ()> {
-        TypeChecker::new(self, fid, "main", Vec::new(), Type::Nothing).run()
+        TypeChecker::new(self, fid, "main", vec![]).run()
     }
 
     fn parse_type_decl(

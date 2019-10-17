@@ -15,7 +15,7 @@ pub struct FunctionBuilder {
     pub parameter_names: Vec<String>,
     pub parameter_types: Vec<(Flag, Type)>,
     pub returns: Type,
-    pub body: Vec<Token>,
+    pub body: Token,
     pub wheres: Vec<(String, Token)>,
 }
 
@@ -26,7 +26,7 @@ impl FunctionBuilder {
             parameter_names: Vec::new(),
             parameter_types: Vec::new(),
             returns: Type::default(),
-            body: Vec::new(),
+            body: Token::new(RawToken::NewLine, 0),
             wheres: Vec::new(),
         }
     }
@@ -112,20 +112,13 @@ impl FunctionBuilder {
         None
     }
 
-    pub fn _reserve(&mut self, additional: usize) {
-        self.body.reserve(additional)
-    }
-    pub fn push(&mut self, t: Token) {
-        self.body.push(t);
-    }
-
-    pub fn parse_func(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
-        let entry = self.parse_func_body(tokenizer)?;
-        self.parse_func_wheres(tokenizer)?;
+    pub fn parse_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
+        let entry = self.parse_body_tokens(tokenizer)?;
+        self.parse_body_wheres(tokenizer)?;
         Ok(entry)
     }
 
-    pub fn parse_func_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
+    pub fn parse_body_tokens(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
         let entry = tokenizer.walk(body::Mode::Neutral)?;
         match entry {
             body::WalkResult::Value(v) => Ok(v),
@@ -133,7 +126,7 @@ impl FunctionBuilder {
         }
     }
 
-    pub fn parse_func_wheres(&mut self, tokenizer: &mut Tokenizer) -> Result<(), ()> {
+    pub fn parse_body_wheres(&mut self, tokenizer: &mut Tokenizer) -> Result<(), ()> {
         loop {
             let next = tokenizer.next();
             match next.map(|t| t.inner) {

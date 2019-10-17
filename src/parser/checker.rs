@@ -14,13 +14,7 @@ pub struct TypeChecker<'f> {
 }
 
 impl<'f> TypeChecker<'f> {
-    pub fn new(
-        parser: &'f Parser,
-        fmodule: usize,
-        fname: &str,
-        fparams: Vec<Type>,
-        freturn: Type,
-    ) -> Self {
+    pub fn new(parser: &'f Parser, fmodule: usize, fname: &str, fparams: Vec<Type>) -> Self {
         Self {
             parser,
             active: Position {
@@ -44,7 +38,7 @@ impl<'f> TypeChecker<'f> {
             .functions
             .get(&self.active.function)
             .ok_or_else(|| panic!("ET: Function {:?} not found", self.active.function))?;
-        let got = self.type_check(&func.body[0])?;
+        let got = self.type_check(&func.body)?;
         if func.returns != got && func.returns != Type::Nothing {
             panic!(
                 "ET: Return type mismatch. Wanted {} got {}",

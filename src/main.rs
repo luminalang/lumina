@@ -11,6 +11,7 @@ use parser::Parser;
 mod env;
 use env::Environment;
 use parser::FileSource;
+pub mod evaler;
 
 pub mod datatypes;
 

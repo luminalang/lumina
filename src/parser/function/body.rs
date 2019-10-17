@@ -1,4 +1,5 @@
 pub use super::FunctionBuilder;
+use crate::evaler::bridge;
 use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken, Token};
 
 mod first;
@@ -196,19 +197,25 @@ pub trait BodySource {
                 )
             }
             RawToken::ExternalIdentifier(entries) => {
-                if entries.len() != 2 {
-                    panic!("ET: a:b:c is not allowed");
-                }
                 if !is_valid_identifier(&entries[0]) {
                     panic!("ET: Invalid module identifier {:?}", &entries[0]);
                 };
                 if !is_valid_identifier(&entries[1]) {
                     panic!("ET: Invalid func identifier {:?}", &entries[1]);
                 };
-                self.handle_ident(
-                    mode,
-                    Token::new(RawToken::ExternalIdentifier(entries), token.source_index),
-                )
+                let t =
+                    if let Some((bridged_id, bridged_type)) = bridge::try_rust_builtin(&entries)? {
+                        Token::new(
+                            RawToken::RustCall(bridged_id, bridged_type),
+                            token.source_index,
+                        )
+                    } else {
+                        if entries.len() != 2 {
+                            panic!("ET: a:b:c is not allowed");
+                        }
+                        Token::new(RawToken::ExternalIdentifier(entries), token.source_index)
+                    };
+                self.handle_ident(mode, t)
             }
             RawToken::Key(Key::ListOpen) => {
                 let list = list::build(self)?;

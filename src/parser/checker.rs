@@ -1,4 +1,5 @@
-use crate::parser::{FunctionBuilder, Inlined, Parser, RawToken, Token, Type};
+use super::{FunctionBuilder, Inlined, Parser, RawToken, Token, Type};
+use crate::evaler::bridge;
 
 #[derive(Default, Clone)]
 struct Position {
@@ -97,6 +98,7 @@ impl<'f> TypeChecker<'f> {
                         };
                         self.fork(new_pos).run()?
                     }
+                    RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
                     _ => panic!("{:?} cannot take parameters", entity),
                 }
             }

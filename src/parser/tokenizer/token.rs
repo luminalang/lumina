@@ -1,5 +1,5 @@
 use crate::datatypes::FlatVec;
-use crate::parser::flags;
+use crate::parser::{flags, Type};
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -99,6 +99,7 @@ pub enum RawToken {
     MatchStatement(FlatVec<Token>),
     FirstStatement(Vec<Token>),
     List(Vec<Token>),
+    RustCall(u16, Type),
 
     NewLine,
 }
@@ -115,12 +116,13 @@ impl PartialEq for Token {
     }
 }
 
-pub const ALLOWED_IDENTIFIER_CHARACTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyz_";
+pub const ALLOWED_IDENTIFIER_CHARACTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyz1234567890_";
 pub fn is_valid_identifier(ident: &str) -> bool {
     for c in ident.bytes() {
         if !ALLOWED_IDENTIFIER_CHARACTERS.contains(&c) {
             return false;
         }
     }
-    true
+    let trimmed = ident.trim();
+    trimmed.parse::<i64>().is_err()
 }

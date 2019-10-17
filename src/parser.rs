@@ -17,6 +17,7 @@ pub use r#type::Type;
 mod checker;
 pub mod flags;
 use checker::TypeChecker;
+pub mod body;
 
 pub struct Parser<'a> {
     pub module_ids: HashMap<FileSource, usize>,

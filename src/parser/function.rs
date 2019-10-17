@@ -1,3 +1,5 @@
+pub use super::body;
+pub use super::body::BodySource;
 use super::flags::Flag;
 use super::Key;
 use super::RawToken;
@@ -6,9 +8,6 @@ use super::Tokenizer;
 use super::Type;
 use std::convert::TryFrom;
 use std::fmt;
-
-mod body;
-pub use body::BodySource;
 
 #[derive(Default)]
 pub struct FunctionBuilder {

@@ -12,7 +12,7 @@ pub use inlined::Inlined;
 mod operator;
 pub use operator::Operator;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Token {
     pub source_index: usize,
     flags: flags::Flag,
@@ -37,12 +37,6 @@ impl Token {
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}: {:#?}", self.source_index, self.inner)
-    }
-}
-impl Default for Token {
-    // I just don't want to accidentally Token::default instead of RawToken::default
-    fn default() -> Self {
-        panic!("Attempted to default a token")
     }
 }
 

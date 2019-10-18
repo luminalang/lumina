@@ -139,6 +139,16 @@ impl<'f> TypeChecker<'f> {
                     .run()?
                 }
             }
+            RawToken::List(entries) => {
+                let expect_type = self.type_check(&entries[0])?;
+                for entry in entries[1..].iter() {
+                    let t = self.type_check(entry)?;
+                    if t != expect_type {
+                        panic!("ET: Entries in list have different types");
+                    }
+                }
+                expect_type
+            }
             RawToken::IfExpression(ifexpr) => {
                 let mut expect_type = None;
                 for (cond, eval) in ifexpr.branches.iter() {

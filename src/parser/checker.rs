@@ -139,6 +139,12 @@ impl<'f> TypeChecker<'f> {
                     .run()?
                 }
             }
+            RawToken::FirstStatement(entries) => {
+                for entry in entries[0..entries.len() - 1].iter() {
+                    self.type_check(entry)?;
+                }
+                self.type_check(entries.last().unwrap())?
+            }
             RawToken::List(entries) => {
                 let expect_type = self.type_check(&entries[0])?;
                 for entry in entries[1..].iter() {

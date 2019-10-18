@@ -139,6 +139,39 @@ impl<'f> TypeChecker<'f> {
                     .run()?
                 }
             }
+            RawToken::IfExpression(ifexpr) => {
+                let mut expect_type = None;
+                for (cond, eval) in ifexpr.branches.iter() {
+                    let cv = self.type_check(cond)?;
+                    if cv != Type::Bool {
+                        panic!(
+                            "ET: Condition must result in true or false, but I got {:?}",
+                            cv
+                        );
+                    }
+                    let ev = self.type_check(eval)?;
+                    if let Some(expected) = &expect_type {
+                        if ev != *expected {
+                            panic!(
+                                "ET: Branches have different types. Wanted {} got {}",
+                                expected, ev
+                            );
+                        }
+                    } else {
+                        expect_type = Some(ev);
+                    }
+                }
+                let ev = self.type_check(&ifexpr.else_branch)?;
+                if let Some(expected) = &expect_type {
+                    if ev != *expected {
+                        panic!(
+                            "ET: Branches have different types. Wanted {} got {}",
+                            expected, ev
+                        );
+                    }
+                }
+                expect_type.unwrap()
+            }
             _ => panic!("Cannot discover type of {:?}", t),
         };
         Ok(r#type)

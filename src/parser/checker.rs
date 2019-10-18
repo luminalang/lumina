@@ -120,6 +120,7 @@ impl<'f> TypeChecker<'f> {
                     _ => panic!("{:?} cannot take parameters", entity),
                 }
             }
+            RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
             RawToken::Operation(box (left, right), op) => {
                 let left_t = self.type_check(left)?;
                 let right_t = self.type_check(right)?;

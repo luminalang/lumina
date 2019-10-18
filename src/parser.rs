@@ -275,14 +275,18 @@ impl fmt::Debug for Parser<'_> {
             .module_ids
             .iter()
             .map(|(mod_name, fid)| {
-                format!(
-                    "{}#{} {} {}\n{:?}",
-                    Fg(color::Green),
-                    fid,
-                    mod_name,
-                    Fg(color::Reset),
-                    &self.modules[*fid]
-                )
+                if *fid == PRELUDE_FID {
+                    String::new()
+                } else {
+                    format!(
+                        "{}#{} {} {}\n{:?}",
+                        Fg(color::Green),
+                        fid,
+                        mod_name,
+                        Fg(color::Reset),
+                        &self.modules[*fid]
+                    )
+                }
             })
             .collect::<Vec<String>>()
             .join("\n ---\n\n");

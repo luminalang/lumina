@@ -173,6 +173,14 @@ impl<'s> super::body::BodySource for Tokenizer<'s> {
             let mut spl = ident.split(':');
             let first = spl.next().unwrap();
             if let Some(second) = spl.next() {
+                if second.is_empty() {
+                    // edge-case for `valid_ident: unrelated_code`
+                    self.regress(1);
+                    return Some(Token::new(
+                        RawToken::Identifier(ident[0..ident.len() - 1].to_owned()),
+                        t.source_index,
+                    ));
+                }
                 let mut identbuf = vec![first.to_owned(), second.to_owned()];
                 while let Some(additional) = spl.next() {
                     identbuf.push(additional.to_owned());

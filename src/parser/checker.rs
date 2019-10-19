@@ -1,4 +1,4 @@
-use super::{FunctionBuilder, Inlined, Parser, RawToken, Token, Type, PRELUDE_FID};
+use super::{Inlined, Parser, RawToken, Token, Type};
 use crate::evaler::bridge;
 use std::rc::Rc;
 
@@ -11,7 +11,6 @@ struct Position {
 pub struct TypeChecker<'f> {
     active: Position,
     parser: &'f Parser<'f>,
-    infered_types: Vec<Type>,
 }
 
 pub trait Typeable {
@@ -29,7 +28,6 @@ impl<'f> TypeChecker<'f> {
                 module: fmodule,
                 function: (fname.to_owned(), fparams),
             },
-            infered_types: Vec::new(),
         }
     }
 
@@ -37,7 +35,6 @@ impl<'f> TypeChecker<'f> {
         Self {
             active: position,
             parser: self.parser,
-            infered_types: Vec::new(),
         }
     }
 

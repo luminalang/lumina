@@ -182,7 +182,7 @@ impl<'s> super::body::BodySource for Tokenizer<'s> {
                     ));
                 }
                 let mut identbuf = vec![first.to_owned(), second.to_owned()];
-                while let Some(additional) = spl.next() {
+                for additional in spl {
                     identbuf.push(additional.to_owned());
                 }
 

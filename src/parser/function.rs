@@ -1,12 +1,7 @@
-use super::body;
-use super::body::BodySource;
-use super::checker::Typeable;
-use super::flags::Flag;
-use super::Key;
-use super::RawToken;
-use super::Token;
-use super::Tokenizer;
-use super::Type;
+use super::{
+    body, body::BodySource, checker::Typeable, flags::Flag, Key, ParseError, ParseFault, RawToken,
+    Token, Tokenizer, Type,
+};
 use std::convert::TryFrom;
 use std::fmt;
 use std::rc::Rc;
@@ -33,105 +28,226 @@ impl FunctionBuilder {
         }
     }
 
-    pub fn with_header(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ()> {
-        let first = tokenizer.next();
-        let name = match first.map(|a| a.inner) {
-            Some(RawToken::Identifier(name)) => name,
-            _ => panic!("ET: Missing function name"),
+    pub fn with_header(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+        let first = match tokenizer.next() {
+            None => {
+                return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
+                    "function name".into(),
+                )])
+                .as_err(0)
+                .into()
+            }
+            Some(t) => t,
+        };
+        let name = match first.inner {
+            RawToken::Identifier(name) => name,
+            _ => {
+                return ParseFault::GotButExpected(
+                    first.inner,
+                    vec![RawToken::Identifier("function name".into())],
+                )
+                .as_err(first.source_index)
+                .into()
+            }
         };
         self.name = name;
 
-        let finished = match tokenizer.next().map(|t| t.inner) {
+        let finished = match tokenizer.next().map(|t| (t.inner, t.source_index)) {
             // It has no parameters and returns Type::Nothing
-            Some(RawToken::NewLine) => self,
+            Some((RawToken::NewLine, _)) => self,
             // It has return value but no parameters
-            Some(RawToken::Key(Key::ParenOpen)) => self.with_return(tokenizer)?,
+            Some((RawToken::Key(Key::ParenOpen), source)) => self
+                .with_return(tokenizer)
+                .map_err(|e| e.fallback(source))?,
             // It has parameters
-            Some(RawToken::Identifier(ident)) => {
+            Some((RawToken::Identifier(ident), source)) => {
                 tokenizer.regress(ident.len());
-                self.with_parameter_names(tokenizer)?
-                    .with_parameter_types(tokenizer)?
+                self.with_parameter_names(tokenizer)
+                    .map_err(|e| e.fallback(source))?
+                    .with_parameter_types(tokenizer)
+                    .map_err(|e| e.fallback(source))?
             }
-            Some(RawToken::Operator(op)) => {
-                panic!(
-                    "ERROR_TODO: {:?} is not a valid parameter name",
-                    op.identifier
-                );
+            Some((RawToken::Operator(op), source)) => {
+                return ParseFault::InvalidParameterName(op.identifier)
+                    .as_err(source)
+                    .into();
             }
-            _ => panic!("ERROR_TODO: Unexpected thing after function name"),
+            Some((rt, source)) => {
+                return ParseFault::GotButExpected(
+                    rt,
+                    vec![
+                        RawToken::Key(Key::ParenOpen),
+                        RawToken::Identifier("parameter name".into()),
+                    ],
+                )
+                .as_err(source)
+                .into()
+            }
+            None => {
+                return ParseFault::EndedWhileExpecting(vec![
+                    RawToken::Key(Key::ParenOpen),
+                    RawToken::Identifier("parameter name".into()),
+                ])
+                .as_err(0)
+                .into()
+            }
         };
         Ok(finished)
     }
 
-    fn with_parameter_names(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ()> {
+    fn with_parameter_names(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
         loop {
-            let next = tokenizer.next();
-            match next.map(|t| t.inner) {
-                Some(RawToken::Identifier(name)) => self.parameter_names.push(name),
-                Some(RawToken::Key(Key::ParenOpen)) => return Ok(self),
-                Some(n) => panic!("ERROR_TODO: Unexpected thing in header: {:?}", n),
-                None => panic!("ERROR_TODO: File ended"),
-            }
-        }
-    }
-    fn with_parameter_types(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ()> {
-        loop {
-            let next = tokenizer.next();
-            match next.map(|t| t.inner) {
-                Some(RawToken::Identifier(name)) => self
-                    .parameter_types
-                    .push((Flag::default(), Type::try_from(name.as_str())?)),
-                Some(RawToken::Key(Key::ParenClose)) => return Ok(self),
-                Some(RawToken::Key(Key::Arrow)) => return self.with_return(tokenizer),
-                None => panic!("ERROR_TODO: File ended"),
-                Some(n) => panic!("ERROR_TODO: Unexpected thing in header: {:?}", n),
-            }
-        }
-    }
-
-    fn with_return(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ()> {
-        let next = tokenizer.next();
-        match next.map(|t| t.inner) {
-            Some(RawToken::Identifier(name)) => {
-                self.returns = Type::try_from(name.as_str())?;
-                match tokenizer.next().map(|t| t.inner) {
-                    Some(RawToken::Key(Key::ParenClose)) => Ok(self),
-                    Some(s) => panic!("ERROR_TODO: Expected ), got {:?}", s),
-                    None => panic!("Umatched ("),
+            let next = match tokenizer.next() {
+                Some(t) => t,
+                None => {
+                    return ParseFault::EndedWhileExpecting(vec![
+                        RawToken::Key(Key::ParenOpen),
+                        RawToken::Identifier("parameter name".into()),
+                    ])
+                    .as_err(tokenizer.index() - 1)
+                    .into()
+                }
+            };
+            match next.inner {
+                RawToken::Identifier(name) => self.parameter_names.push(name),
+                RawToken::Key(Key::ParenOpen) => return Ok(self),
+                _ => {
+                    return ParseFault::GotButExpected(
+                        next.inner,
+                        vec![
+                            RawToken::Identifier("parameter name".into()),
+                            RawToken::Key(Key::ParenOpen),
+                        ],
+                    )
+                    .as_err(next.source_index)
+                    .into()
                 }
             }
-            Some(s) => panic!("ERROR_TODO: Did not expect to get an {:?} here", s),
-            None => panic!("ERROR_TODO: File ended"),
+        }
+    }
+    fn with_parameter_types(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+        let expecting = |s: &FunctionBuilder| {
+            if s.parameter_types.is_empty() {
+                vec![RawToken::Identifier("parameter type".into())]
+            } else {
+                vec![
+                    RawToken::Identifier("parameter type".into()),
+                    RawToken::Key(Key::Arrow),
+                ]
+            }
+        };
+        loop {
+            let (next_inner, next_source_index) = match tokenizer.next() {
+                Some(t) => (t.inner, t.source_index),
+                None => {
+                    return ParseFault::EndedWhileExpecting(expecting(&self))
+                        .as_err(tokenizer.index() - 1)
+                        .into();
+                }
+            };
+            match next_inner {
+                RawToken::Identifier(name) => self.parameter_types.push((
+                    Flag::default(),
+                    Type::try_from(name.as_str()).map_err(|e| e.as_err(next_source_index))?,
+                )),
+                RawToken::Key(Key::ParenClose) => return Ok(self),
+                RawToken::Key(Key::Arrow) => return self.with_return(tokenizer),
+                _ => {
+                    return ParseFault::GotButExpected(next_inner, expecting(&self))
+                        .as_err(next_source_index)
+                        .into()
+                }
+            }
         }
     }
 
-    pub fn parse_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
+    fn with_return(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+        let (next_inner, next_source_index) = match tokenizer.next() {
+            Some(t) => (t.inner, t.source_index),
+            None => {
+                return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
+                    "return type".into(),
+                )])
+                .as_err(tokenizer.index() - 1)
+                .into()
+            }
+        };
+        match next_inner {
+            RawToken::Identifier(name) => {
+                self.returns =
+                    Type::try_from(name.as_str()).map_err(|e| e.as_err(next_source_index))?;
+                let after = match tokenizer.next() {
+                    None => {
+                        return ParseFault::EndedWhileExpecting(vec![RawToken::Key(
+                            Key::ParenClose,
+                        )])
+                        .as_err(next_source_index)
+                        .into()
+                    }
+                    Some(t) => t,
+                };
+                match after.inner {
+                    RawToken::Key(Key::ParenClose) => Ok(self),
+                    _ => ParseFault::GotButExpected(
+                        after.inner,
+                        vec![RawToken::Key(Key::ParenClose)],
+                    )
+                    .as_err(after.source_index)
+                    .into(),
+                }
+            }
+            _ => ParseFault::GotButExpected(
+                next_inner,
+                vec![RawToken::Identifier("return type".into())],
+            )
+            .as_err(next_source_index)
+            .into(),
+        }
+    }
+
+    pub fn parse_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ParseError> {
         let entry = self.parse_body_tokens(tokenizer)?;
         self.parse_body_wheres(tokenizer)?;
         Ok(entry)
     }
 
-    pub fn parse_body_tokens(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
+    pub fn parse_body_tokens(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ParseError> {
         let entry = tokenizer.walk(body::Mode::Neutral)?;
         match entry {
             body::WalkResult::Value(v) => Ok(v),
-            _ => panic!("{:?}", entry),
+            _ => panic!("Body ended without value: {:?}", entry),
         }
     }
 
-    pub fn parse_body_wheres(&mut self, tokenizer: &mut Tokenizer) -> Result<(), ()> {
+    pub fn parse_body_wheres(&mut self, tokenizer: &mut Tokenizer) -> Result<(), ParseError> {
         loop {
-            let next = tokenizer.next();
-            match next.map(|t| t.inner) {
-                Some(RawToken::Key(Key::Where)) => {
-                    let (name, t) = body::r#where::build(tokenizer)?;
-                    self.wheres.push((name, t));
-                }
-                None | Some(RawToken::Header(_)) => {
+            let next = match tokenizer.next() {
+                Some(t) => t,
+                None => {
                     tokenizer.undo();
                     return Ok(());
                 }
-                Some(v) => panic!("ET: Unexpected {:?}", v),
+            };
+            match next.inner {
+                RawToken::Key(Key::Where) => {
+                    let (name, t) = body::r#where::build(tokenizer)?;
+                    self.wheres.push((name, t));
+                }
+                RawToken::Header(_) => {
+                    tokenizer.undo();
+                    return Ok(());
+                }
+                _ => {
+                    return ParseFault::GotButExpected(
+                        next.inner,
+                        vec![
+                            RawToken::Key(Key::Where),
+                            RawToken::Header(super::Header::Function),
+                        ],
+                    )
+                    .as_err(next.source_index)
+                    .into()
+                }
             }
         }
     }

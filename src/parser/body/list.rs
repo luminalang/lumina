@@ -1,20 +1,20 @@
-use super::{BodySource, Mode, SimpleSource, WalkResult};
+use super::{BodySource, Mode, ParseError, ParseFault, SimpleSource, WalkResult};
 use crate::parser::tokenizer::{Key, RawToken, Token};
 
-pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, ()> {
+pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, ParseError> {
     let mut entries: Vec<Token> = Vec::new();
     'list: loop {
         let mut raw_tokens: Vec<Token> = Vec::new();
         loop {
             let next = source.next();
             match next {
-                None => panic!("Missing `]`"),
+                None => return ParseFault::ListMissingClose.as_err(0).into(),
                 Some(t) => match t.inner {
                     RawToken::Key(Key::Comma) => {
                         let entry = SimpleSource::new(&raw_tokens).walk(Mode::Neutral)?;
                         match entry {
                             WalkResult::Value(v) => entries.push(v),
-                            _ => unimplemented!(),
+                            _ => panic!("{:?}", entry),
                         }
                         continue 'list;
                     }
@@ -22,12 +22,12 @@ pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, ()> {
                         let entry = SimpleSource::new(&raw_tokens).walk(Mode::Neutral)?;
                         match entry {
                             WalkResult::Value(v) => entries.push(v),
-                            _ => unimplemented!(),
+                            _ => panic!("{:?}", entry),
                         }
                         break 'list;
                     }
                     RawToken::Header(_) | RawToken::Key(Key::Where) => {
-                        panic!("Unexpected {:?}", t);
+                        return ParseFault::ListMissingClose.as_err(0).into()
                     }
                     _ => raw_tokens.push(t),
                 },

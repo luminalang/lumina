@@ -1,6 +1,7 @@
 pub use super::FunctionBuilder;
 use crate::evaler::bridge;
 use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken, Token};
+use crate::parser::{IdentSource, ParseError, ParseFault};
 
 mod first;
 mod r#if;
@@ -50,11 +51,11 @@ pub trait BodySource {
     fn next(&mut self) -> Option<Token>;
     fn undo(&mut self);
 
-    fn walk(&mut self, mode: Mode) -> Result<WalkResult, ()> {
+    fn walk(&mut self, mode: Mode) -> Result<WalkResult, ParseError> {
         let token = match self.next() {
             Some(t) => {
                 if t.inner == RawToken::NewLine {
-                    return self.walk(mode);
+                    return self.walk(mode).map_err(|e| e.fallback(t.source_index));
                 } else {
                     t
                 }
@@ -64,6 +65,11 @@ pub trait BodySource {
                     Mode::Parameters(v) => {
                         Ok(WalkResult::Value(Token::new(RawToken::Parameters(v), 0)))
                     }
+                    Mode::Operator(left, op) => {
+                        ParseFault::EndedMissingRightSideOperator(left.inner, op)
+                            .as_err(0)
+                            .into()
+                    }
                     _ => Ok(WalkResult::EOF),
                 }
             }
@@ -71,7 +77,11 @@ pub trait BodySource {
 
         match token.inner {
             RawToken::Header(_) | RawToken::Key(Key::Where) => match mode {
-                Mode::Operator(_v, _op) => panic!("ET: No right side of operator"),
+                Mode::Operator(left, op) => {
+                    ParseFault::MissingRightSideOperator(Box::new((left.inner, op, token.inner)))
+                        .as_err(token.source_index)
+                        .into()
+                }
                 Mode::Parameters(previous) => {
                     self.undo();
                     Ok(WalkResult::Value(Token::new(
@@ -85,9 +95,11 @@ pub trait BodySource {
                 }
             },
             RawToken::Key(Key::Pipe) => match mode {
-                Mode::Neutral => panic!("ET: Pipe into void"),
+                Mode::Neutral => ParseFault::PipeIntoVoid.as_err(token.source_index).into(),
                 Mode::Parameters(mut previous) => {
-                    let v = self.walk(Mode::Neutral)?;
+                    let v = self
+                        .walk(Mode::Neutral)
+                        .map_err(|e| e.fallback(token.source_index))?;
                     let source = match v {
                         WalkResult::Value(t) => {
                             previous.push(t);
@@ -97,7 +109,9 @@ pub trait BodySource {
                             previous.get(0).map(|a| a.source_index).unwrap_or_else(|| 0)
                         }
                         WalkResult::CloseParen(t) => {
-                            panic!("ET: Unexpected `]` with last being {:?}", t)
+                            return ParseFault::Unexpected(RawToken::Key(Key::ParenClose))
+                                .as_err(previous.last().unwrap().source_index)
+                                .into();
                         }
                     };
                     Ok(WalkResult::Value(Token::new(
@@ -111,30 +125,53 @@ pub trait BodySource {
                         Token::new(RawToken::Operation(Box::new((left, right)), op), source)
                     };
 
-                    match self.walk(Mode::Neutral)? {
+                    match self
+                        .walk(Mode::Neutral)
+                        .map_err(|e| e.fallback(token.source_index))?
+                    {
                         WalkResult::Value(t) => {
                             let operation = operation(left, op, t);
                             self.handle_after(operation)
                         }
                         WalkResult::CloseParen(t) => {
-                            // panic!("ET: Unexpected `)` with last being {:?}", t)
-                            let t = t.expect("No right side of operator");
+                            let t = match t {
+                                Some(t) => t,
+                                None => {
+                                    return ParseFault::MissingRightSideOperator(Box::new((
+                                        left.inner,
+                                        op,
+                                        RawToken::Key(Key::ParenClose),
+                                    )))
+                                    .as_err(token.source_index)
+                                    .into()
+                                }
+                            };
                             let operation = operation(left, op, t);
                             Ok(WalkResult::CloseParen(Some(operation)))
                         }
-                        WalkResult::EOF => panic!("ET: No right side of operator"),
+                        WalkResult::EOF => ParseFault::MissingRightSideOperator(Box::new((
+                            left.inner,
+                            op,
+                            RawToken::Key(Key::ParenClose),
+                        )))
+                        .as_err(token.source_index)
+                        .into(),
                     }
                 }
             },
             RawToken::Key(Key::ParenOpen) => match mode {
                 Mode::Neutral => {
-                    let v = self.walk(Mode::Neutral)?;
+                    let v = self
+                        .walk(Mode::Neutral)
+                        .map_err(|e| e.fallback(token.source_index))?;
                     match v {
                         WalkResult::CloseParen(Some(v)) => self.handle_after(v),
                         WalkResult::CloseParen(None) => {
-                            panic!("ET: Empty parenthesis are not allowed (for unit value use `_`)")
+                            ParseFault::EmptyParen.as_err(token.source_index).into()
                         }
-                        _ => panic!("ET: Wanted `)`, got {:?}", v),
+                        _ => ParseFault::Unmatched(Key::ParenClose)
+                            .as_err(token.source_index)
+                            .into(),
                     }
                 }
                 Mode::Parameters(mut previous) => {
@@ -145,9 +182,11 @@ pub trait BodySource {
                             self.walk(Mode::Parameters(previous))
                         }
                         WalkResult::CloseParen(None) => {
-                            panic!("ET: Empty parenthesis are not allowed (for unit value use `_`)")
+                            ParseFault::EmptyParen.as_err(token.source_index).into()
                         }
-                        _ => panic!("ET: Wanted `)`, got {:?}", v),
+                        _ => ParseFault::Unmatched(Key::ParenClose)
+                            .as_err(previous.last().unwrap().source_index)
+                            .into(),
                     }
                 }
                 Mode::Operator(left, op) => {
@@ -165,7 +204,13 @@ pub trait BodySource {
                             let operation = operation(left, op, t.unwrap());
                             self.handle_after(operation)
                         }
-                        WalkResult::EOF => panic!("No right side of operator"),
+                        WalkResult::EOF => ParseFault::MissingRightSideOperator(Box::new((
+                            left.inner,
+                            op,
+                            RawToken::NewLine,
+                        )))
+                        .as_err(token.source_index)
+                        .into(),
                     }
                 }
             },
@@ -191,7 +236,9 @@ pub trait BodySource {
             }
             RawToken::Identifier(ident) => {
                 if !is_valid_identifier(&ident) {
-                    panic!("ET: Invalid identifier {:?}", &ident);
+                    return ParseFault::InvalidIdentifier(ident, IdentSource::Ident)
+                        .as_err(token.source_index)
+                        .into();
                 };
                 self.handle_ident(
                     mode,
@@ -200,27 +247,35 @@ pub trait BodySource {
             }
             RawToken::ExternalIdentifier(entries) => {
                 if !is_valid_identifier(&entries[0]) {
-                    panic!("ET: Invalid module identifier {:?}", &entries[0]);
+                    return ParseFault::InvalidIdentifier(entries[0].clone(), IdentSource::Module)
+                        .as_err(token.source_index)
+                        .into();
                 };
                 if !is_valid_identifier(&entries[1]) {
-                    panic!("ET: Invalid func identifier {:?}", &entries[1]);
+                    return ParseFault::InvalidIdentifier(entries[1].clone(), IdentSource::Ident)
+                        .as_err(token.source_index)
+                        .into();
                 };
-                let t =
-                    if let Some((bridged_id, bridged_type)) = bridge::try_rust_builtin(&entries)? {
-                        Token::new(
-                            RawToken::RustCall(bridged_id, bridged_type),
-                            token.source_index,
-                        )
-                    } else {
-                        if entries.len() != 2 {
-                            panic!("ET: a:b:c is not allowed");
-                        }
-                        Token::new(RawToken::ExternalIdentifier(entries), token.source_index)
-                    };
+                let source_index = token.source_index;
+                let t = if let Some((bridged_id, bridged_type)) =
+                    bridge::try_rust_builtin(&entries).map_err(|e| e.as_err(source_index))?
+                {
+                    Token::new(
+                        RawToken::RustCall(bridged_id, bridged_type),
+                        token.source_index,
+                    )
+                } else {
+                    if entries.len() != 2 {
+                        return ParseFault::InvalidPath(entries)
+                            .as_err(token.source_index)
+                            .into();
+                    }
+                    Token::new(RawToken::ExternalIdentifier(entries), token.source_index)
+                };
                 self.handle_ident(mode, t)
             }
             RawToken::Key(Key::ListOpen) => {
-                let list = list::build(self)?;
+                let list = list::build(self).map_err(|e| e.fallback(token.source_index))?;
                 let v = Token::new(RawToken::List(list), token.source_index);
                 match mode {
                     Mode::Neutral => self.handle_after(v),
@@ -238,7 +293,7 @@ pub trait BodySource {
                 }
             }
             RawToken::Key(Key::First) => {
-                let firststm = first::build(self)?;
+                let firststm = first::build(self).map_err(|e| e.fallback(token.source_index))?;
                 let v = Token::new(RawToken::FirstStatement(firststm), token.source_index);
                 match mode {
                     Mode::Neutral => self.handle_after(v),
@@ -256,7 +311,7 @@ pub trait BodySource {
                 }
             }
             RawToken::Key(Key::If) => {
-                let ifexpr = r#if::build(self)?;
+                let ifexpr = r#if::build(self).map_err(|e| e.fallback(token.source_index))?;
                 let v = Token::new(RawToken::IfExpression(ifexpr), token.source_index);
                 match mode {
                     Mode::Neutral => self.handle_after(v),
@@ -278,8 +333,10 @@ pub trait BodySource {
                     let t = Token::new(RawToken::Parameters(previous), token.source_index);
                     Ok(WalkResult::CloseParen(Some(t)))
                 }
-                Mode::Operator(_left, _op) => {
-                    panic!("Unexpected `)`, missing right side of operator")
+                Mode::Operator(left, op) => {
+                    ParseFault::MissingRightSideOperator(Box::new((left.inner, op, token.inner)))
+                        .as_err(token.source_index)
+                        .into()
                 }
                 Mode::Neutral => Ok(WalkResult::CloseParen(None)),
             },
@@ -291,11 +348,11 @@ pub trait BodySource {
                 }
                 _ => unimplemented!(), // possible?
             },
-            _ => panic!("ET: Unexpected {:?}; MODE:{:?}", token, mode),
+            _ => panic!("Unexpected {:?}; MODE:{:?}", token, mode),
         }
     }
 
-    fn handle_after(&mut self, v: Token) -> Result<WalkResult, ()> {
+    fn handle_after(&mut self, v: Token) -> Result<WalkResult, ParseError> {
         let next = self.next();
         match next.map(|t| t.inner) {
             None => {
@@ -312,7 +369,7 @@ pub trait BodySource {
         }
     }
 
-    fn handle_ident(&mut self, mode: Mode, token: Token) -> Result<WalkResult, ()> {
+    fn handle_ident(&mut self, mode: Mode, token: Token) -> Result<WalkResult, ParseError> {
         match mode {
             Mode::Neutral => {
                 let want_params = self.walk(Mode::Parameters(Vec::new()))?;
@@ -329,15 +386,15 @@ pub trait BodySource {
                         RawToken::Parameters(params) => {
                             self.handle_after(make_parameterized(params))
                         }
-                        _ => panic!("Wanted parameters but got {:?}", v),
+                        _ => panic!("Wanted parameters but got {:?}", v), // TODO: Should this be an ET?
                     },
                     WalkResult::CloseParen(v) => match v.unwrap().inner {
                         RawToken::Parameters(params) => {
                             Ok(WalkResult::CloseParen(Some(make_parameterized(params))))
                         }
-                        _ => panic!("Wanted parameters but got {:?}", ()),
+                        _ => panic!("Wanted parameters but got {:?}", ()), // TODO: Should this be an ET?
                     },
-                    _ => panic!("Wanted parameters but got {:?}", want_params),
+                    _ => panic!("Wanted parameters but got {:?}", want_params), // TODO: Should this be an ET?
                 }
             }
             Mode::Parameters(mut previous) => {
@@ -360,9 +417,9 @@ pub trait BodySource {
                                 Token::new(RawToken::Operation(Box::new((left, v)), op), source);
                             self.handle_after(operation)
                         }
-                        _ => panic!("{:?}", &v.inner),
+                        _ => panic!("{:?}", &v.inner), // TODO: Should this be an ET?
                     },
-                    _ => panic!("{:?}", v),
+                    _ => panic!("{:?}", v), // TODO: Should this be an ET?
                 }
             }
         }

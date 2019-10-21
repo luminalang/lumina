@@ -1,3 +1,4 @@
+use super::ParseFault;
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -24,12 +25,12 @@ impl std::default::Default for Type {
 }
 
 impl TryFrom<&str> for Type {
-    type Error = ();
+    type Error = ParseFault;
 
     fn try_from(source: &str) -> Result<Type, Self::Error> {
         if source.bytes().next() == Some(b'[') {
             if source.len() < 3 {
-                return Err(());
+                return Err(ParseFault::EmptyListType);
             }
             let inner = source[1..source.len() - 2].trim();
             return Ok(Type::List(Box::new(Type::try_from(inner)?)));
@@ -45,7 +46,8 @@ impl TryFrom<&str> for Type {
             "float" => Type::Float,
             "nothing" => Type::Nothing,
             "_" => Type::Nothing,
-            _ => return Err(()),
+            // TODO: Custom types need to be passed as okay!
+            _ => return Err(ParseFault::NotValidType(source.into())),
         };
         Ok(r)
     }

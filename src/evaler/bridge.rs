@@ -1,15 +1,14 @@
-use crate::parser::Type;
+use crate::parser::{ParseFault, Type};
 
-pub fn try_rust_builtin(entries: &[String]) -> Result<Option<(u16, Type)>, ()> {
+pub fn try_rust_builtin(entries: &[String]) -> Result<Option<(u16, Type)>, ParseFault> {
     if &entries[0] == "rust" {
         if entries.len() != 3 {
-            panic!("ET: Wanted 3 entries in identifier for rust builtin call");
+            return Err(ParseFault::BridgedWrongPathLen(entries.to_vec()));
         }
         let mut iter = entries[1].bytes();
-        if iter.next().unwrap() != b'p' {
-            panic!(
-                "ET: You need to specify parameter amount for rust builtin functions `rust:p2:add`"
-            );
+        let c = iter.next().unwrap();
+        if c != b'p' {
+            return Err(ParseFault::BridgedFunctionNoMode(c));
         }
         Ok(Some(get_funcid(
             &entries[2],
@@ -20,28 +19,20 @@ pub fn try_rust_builtin(entries: &[String]) -> Result<Option<(u16, Type)>, ()> {
     }
 }
 
-pub fn get_funcid(ident: &str, params: u16) -> Result<(u16, Type), ()> {
+pub fn get_funcid(ident: &str, params: u16) -> Result<(u16, Type), ParseFault> {
     let id = match params {
         2 => match ident {
             "add" => (0, Type::Int),
             "sub" => (1, Type::Int),
             "mul" => (2, Type::Int),
             "div" => (3, Type::Int),
-            _ => panic!(
-                "No rust-bridged function taking {} arguments named {}",
-                params, ident
-            ),
+            _ => return Err(ParseFault::BridgedFunctionNotFound(ident.into(), params)),
         },
-        _ => panic!("No rust-bridged function takes {} parameters", params),
+        _ => return Err(ParseFault::BridgedFunctionNotFound(ident.into(), params)),
     };
     Ok(id)
 }
 
-pub fn get_func_one(id: usize) -> impl FnOnce(u8) -> u8 {
-    |n| n
-}
-
-#[rustfmt::skip]
 pub fn get_func_two(id: usize) -> fn(u8, u8) -> u8 {
     match id {
         0 => |x, y| x + y,

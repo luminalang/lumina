@@ -1,13 +1,7 @@
-use super::body;
-use super::body::BodySource;
-use super::checker::Typeable;
-use super::flags::Flag;
-use super::tokenizer::Operator;
-use super::Key;
-use super::RawToken;
-use super::Token;
-use super::Tokenizer;
-use super::Type;
+use super::{
+    body, body::BodySource, checker::Typeable, tokenizer::Operator, Header, Key, ParseError,
+    ParseFault, RawToken, Token, Tokenizer, Type,
+};
 use std::convert::TryFrom;
 use std::fmt;
 use std::rc::Rc;
@@ -32,47 +26,86 @@ impl OperatorBuilder {
         }
     }
 
-    // operator + (int int int)
-    pub fn with_header(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ()> {
-        let first = tokenizer.next();
-        match first.map(|a| a.inner) {
-            Some(RawToken::Operator(op)) => self.name = op,
-            Some(other) => panic!("ET: Wanted identifier got {:?}", other),
-            None => panic!("ET: Missing identifier after `operator` keyword"),
+    pub fn with_header(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+        let first = match tokenizer.next() {
+            None => return ParseFault::OpNoIdent.as_err(0).into(),
+            Some(t) => t,
+        };
+        match first.inner {
+            RawToken::Operator(op) => self.name = op,
+            _ => {
+                return ParseFault::OpWantedIdent(first.inner)
+                    .as_err(first.source_index)
+                    .into()
+            }
         };
         self.with_types(tokenizer)
     }
 
-    fn with_types(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ()> {
-        match tokenizer.next().map(|t| t.inner) {
-            Some(RawToken::Key(Key::ParenOpen)) => {}
-            Some(other) => panic!("ET: Expected parenopen got {:?}", other),
-            None => panic!("ET: Expected parenopen but got nothing"),
+    fn with_types(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+        let t = match tokenizer.next() {
+            None => {
+                return ParseFault::EndedWhileExpecting(vec![RawToken::Key(Key::ParenOpen)])
+                    .as_err(0)
+                    .into()
+            }
+            Some(t) => t,
+        };
+        match t.inner {
+            RawToken::Key(Key::ParenOpen) => {}
+            _ => {
+                return ParseFault::GotButExpected(t.inner, vec![RawToken::Key(Key::ParenOpen)])
+                    .as_err(t.source_index)
+                    .into()
+            }
         }
-        let mut next_ident = || -> Result<Type, ()> {
+        let mut next_ident = || -> Result<(Type, usize), ParseError> {
             let next = match tokenizer.next() {
                 None => {
-                    panic!("ET: Expected type for the left argument of operator but file ended")
+                    return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
+                        "type expected to the left side of the operator".into(),
+                    )])
+                    .as_err(0)
+                    .into();
                 }
                 Some(t) => t,
             };
+            let source_index = next.source_index;
             if let RawToken::Identifier(ident) = next.inner {
-                Type::try_from(ident.as_str()).map_err(|_| ())
+                Ok((
+                    Type::try_from(ident.as_str()).map_err(|e| e.as_err(source_index))?,
+                    next.source_index,
+                ))
             } else {
-                panic!(
-                    "Expected type identifier for the left argument of operator but got {:?}",
-                    next
-                );
+                ParseFault::GotButExpected(
+                    next.inner,
+                    vec![RawToken::Identifier(
+                        "type expected to the left side of the operator".into(),
+                    )],
+                )
+                .as_err(next.source_index)
+                .into()
             }
         };
 
-        let left = next_ident()?;
-        let returns = next_ident()?;
-        let right = next_ident()?;
-        match tokenizer.next().map(|t| t.inner) {
-            Some(RawToken::Key(Key::ParenClose)) => {}
-            Some(other) => panic!("ET: Expected parenclose got {:?}", other),
-            None => panic!("ET: Expected parenclose but got nothing"),
+        let (left, _) = next_ident()?;
+        let (returns, _) = next_ident()?;
+        let (right, right_source_index) = next_ident()?;
+        let t = match tokenizer.next() {
+            Some(t) => t,
+            None => {
+                return ParseFault::EndedWhileExpecting(vec![RawToken::Key(Key::ParenClose)])
+                    .as_err(right_source_index)
+                    .into()
+            }
+        };
+        match t.inner {
+            RawToken::Key(Key::ParenClose) => {}
+            _ => {
+                return ParseFault::GotButExpected(t.inner, vec![RawToken::Key(Key::ParenClose)])
+                    .as_err(right_source_index)
+                    .into()
+            }
         }
 
         self.parameter_types = [left, right];
@@ -80,13 +113,13 @@ impl OperatorBuilder {
         Ok(self)
     }
 
-    pub fn parse_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
+    pub fn parse_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ParseError> {
         let entry = self.parse_body_tokens(tokenizer)?;
         self.parse_body_wheres(tokenizer)?;
         Ok(entry)
     }
 
-    fn parse_body_tokens(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ()> {
+    fn parse_body_tokens(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ParseError> {
         let entry = tokenizer.walk(body::Mode::Neutral)?;
         match entry {
             body::WalkResult::Value(v) => Ok(v),
@@ -94,19 +127,35 @@ impl OperatorBuilder {
         }
     }
 
-    fn parse_body_wheres(&mut self, tokenizer: &mut Tokenizer) -> Result<(), ()> {
+    fn parse_body_wheres(&mut self, tokenizer: &mut Tokenizer) -> Result<(), ParseError> {
         loop {
-            let next = tokenizer.next();
-            match next.map(|t| t.inner) {
-                Some(RawToken::Key(Key::Where)) => {
-                    let (name, t) = body::r#where::build(tokenizer)?;
-                    self.wheres.push((name, t));
-                }
-                None | Some(RawToken::Header(_)) => {
+            let next = match tokenizer.next() {
+                None => {
                     tokenizer.undo();
                     return Ok(());
                 }
-                Some(v) => panic!("ET: Unexpected {:?}", v),
+                Some(t) => t,
+            };
+            match next.inner {
+                RawToken::Key(Key::Where) => {
+                    let (name, t) = body::r#where::build(tokenizer)?;
+                    self.wheres.push((name, t));
+                }
+                RawToken::Header(_) => {
+                    tokenizer.undo();
+                    return Ok(());
+                }
+                _ => {
+                    return ParseFault::GotButExpected(
+                        next.inner,
+                        vec![
+                            RawToken::Header(Header::Function),
+                            RawToken::Key(Key::Where),
+                        ],
+                    )
+                    .as_err(next.source_index)
+                    .into()
+                }
             }
         }
     }

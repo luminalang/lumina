@@ -1,16 +1,43 @@
-use super::{BodySource, Mode, WalkResult};
+use super::{BodySource, Mode, ParseError, ParseFault, WalkResult};
 use crate::parser::tokenizer::{Key, RawToken, Token};
 
-pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<(String, Token), ()> {
-    let identifier = match source.next().map(|t| t.inner) {
-        Some(RawToken::Identifier(ident)) => ident,
-        Some(other) => panic!("Unexpected {:?}, wanted identifier", other),
-        None => panic!("ET: Wanted where statement identifier"),
+pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<(String, Token), ParseError> {
+    let t = match source.next() {
+        None => {
+            return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
+                "where statement identifier".into(),
+            )])
+            .as_err(0)
+            .into()
+        }
+        Some(t) => t,
     };
-    match source.next().map(|t| t.inner) {
-        Some(RawToken::Key(Key::Colon)) => {}
-        Some(other) => panic!("Unexpected {:?}, wanted identifier", other),
-        None => panic!("ET: Wanted where statement identifier"),
+    let identifier = match t.inner {
+        RawToken::Identifier(ident) => ident,
+        _ => {
+            return ParseFault::GotButExpected(
+                t.inner,
+                vec![RawToken::Identifier("where statement identifier".into())],
+            )
+            .as_err(t.source_index)
+            .into()
+        }
+    };
+    let t = match source.next() {
+        None => {
+            return ParseFault::EndedWhileExpecting(vec![RawToken::Key(Key::Colon)])
+                .as_err(0)
+                .into()
+        }
+        Some(t) => t,
+    };
+    match t.inner {
+        RawToken::Key(Key::Colon) => {}
+        _ => {
+            return ParseFault::GotButExpected(t.inner, vec![RawToken::Key(Key::Colon)])
+                .as_err(t.source_index)
+                .into()
+        }
     };
     let v = source.walk(Mode::Neutral)?;
     match v {

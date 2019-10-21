@@ -24,6 +24,8 @@ pub mod body;
 use body::BodySource;
 mod operator;
 pub use operator::OperatorBuilder;
+mod error;
+pub use error::*;
 
 const PRELUDE_FID: usize = 0;
 
@@ -142,21 +144,26 @@ impl<'a> Parser<'a> {
     }
 
     // We only have to return Functions because custom types only need to be indexed
-    pub fn tokenize(&mut self, module_path: FileSource, source_code: &[u8]) -> Result<usize, ()> {
+    pub fn tokenize(
+        &mut self,
+        module_path: FileSource,
+        source_code: &[u8],
+    ) -> Result<usize, ParseError> {
         let fid = self.new_module(module_path.clone());
 
         let mut tokenizer = Tokenizer::from(source_code);
-        // let mut function_buf: Vec<FunctionBuilder> = Vec::new();
         loop {
-            let token = match tokenizer.next() {
-                Some(t) => t,
+            let (token_inner, source_index) = match tokenizer.next() {
+                Some(t) => (t.inner, t.source_index),
                 None => return Ok(fid),
             };
-            match token.inner {
+            match token_inner {
                 RawToken::Header(h) => match h {
                     Header::Function => {
                         let mut funcb = FunctionBuilder::new().with_header(&mut tokenizer)?;
-                        let body_entry = funcb.parse_body(&mut tokenizer)?;
+                        let body_entry = funcb
+                            .parse_body(&mut tokenizer)
+                            .map_err(|e| e.fallback(source_index))?;
 
                         funcb.body = Rc::new(body_entry);
 
@@ -164,7 +171,9 @@ impl<'a> Parser<'a> {
                     }
                     Header::Operator => {
                         let mut opb = OperatorBuilder::new().with_header(&mut tokenizer)?;
-                        let body_entry = opb.parse_body(&mut tokenizer)?;
+                        let body_entry = opb
+                            .parse_body(&mut tokenizer)
+                            .map_err(|e| e.fallback(source_index))?;
 
                         opb.body = Rc::new(body_entry);
 
@@ -179,7 +188,13 @@ impl<'a> Parser<'a> {
                         let import = match tokenizer.next().map(|t| t.inner) {
                             Some(RawToken::Identifier(single)) => vec![single],
                             Some(RawToken::ExternalIdentifier(entries)) => entries,
-                            None => panic!("ET: Nothing after `use` keyword"),
+                            None => {
+                                return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
+                                    "identifier".into(),
+                                )])
+                                .as_err(tokenizer.index() - 1)
+                                .into()
+                            }
                             Some(other) => {
                                 panic!("ET: Unexpected thing after `use` keyword: {:?}", other)
                             }
@@ -204,13 +219,19 @@ impl<'a> Parser<'a> {
                                 }
                                 new_module_path
                             }
-                        }; // ET
+                        };
 
                         let mut source_code = Vec::with_capacity(20);
-                        File::open(file_path.to_pathbuf(self.environment))
-                            .unwrap() // ET
+                        let pathbuf = file_path.to_pathbuf(self.environment);
+                        File::open(pathbuf.clone())
+                            .map_err(|e| {
+                                ParseFault::ModuleLoadFailed(pathbuf.clone(), e.kind())
+                                    .as_err(source_index)
+                            })?
                             .read_to_end(&mut source_code)
-                            .unwrap(); // ET
+                            .map_err(|e| {
+                                ParseFault::ModuleLoadFailed(pathbuf, e.kind()).as_err(source_index)
+                            })?;
 
                         let usefid = self.tokenize(file_path.clone(), &source_code)?;
                         self.modules[fid]
@@ -219,7 +240,16 @@ impl<'a> Parser<'a> {
                     }
                 },
                 RawToken::NewLine => continue,
-                _ => panic!("ERROR_TODO: Unexpected {:?}, wanted header", token),
+                _ => {
+                    return ParseError::new(
+                        source_index,
+                        ParseFault::GotButExpected(
+                            RawToken::Header(Header::Function),
+                            vec![token_inner],
+                        ),
+                    )
+                    .into()
+                }
             }
         }
     }
@@ -231,8 +261,17 @@ impl<'a> Parser<'a> {
     fn parse_type_decl(
         &mut self,
         tokenizer: &mut Tokenizer,
-    ) -> Result<(String, Vec<(String, Type)>), ()> {
-        let first = tokenizer.next().expect("ERROR_TODO");
+    ) -> Result<(String, Vec<(String, Type)>), ParseError> {
+        let first = match tokenizer.next() {
+            None => {
+                return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
+                    "custom type name".into(),
+                )])
+                .as_err(0)
+                .into()
+            }
+            Some(t) => t,
+        };
         let type_name = match first.inner {
             RawToken::Identifier(name) => name,
             _ => panic!("ERROR_TODO: Wanted type name, got {:?}", first),

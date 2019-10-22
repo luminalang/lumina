@@ -60,8 +60,8 @@ impl<'f> TypeChecker<'f> {
             match self_mod.functions.get(fname) {
                 // No functions with this name exists in that scope
                 None => {
-                    if let Ok(position) =
-                        Self::locate_func_from(parser, super::PRELUDE_FID, fname, fparams.clone())
+                    if let Some(position) =
+                        Self::try_locate_from_prelude(parser, fname, false, &fparams)
                     {
                         Ok(position)
                     } else {
@@ -73,12 +73,9 @@ impl<'f> TypeChecker<'f> {
                 Some(variants) => match variants.get(&fparams) {
                     // Function name exists but no variant of that function takes these parameters
                     None => {
-                        if let Ok(position) = Self::locate_func_from(
-                            parser,
-                            super::PRELUDE_FID,
-                            fname,
-                            fparams.clone(),
-                        ) {
+                        if let Some(position) =
+                            Self::try_locate_from_prelude(parser, fname, false, &fparams)
+                        {
                             Ok(position)
                         } else {
                             Err(ParseFault::FunctionVariantNotFound(
@@ -165,7 +162,7 @@ impl<'f> TypeChecker<'f> {
     }
 
     pub fn run(&mut self) -> Result<Type, ParseError> {
-        // let func = self.func().map_err(|e| e.as_err(0))?;
+        // let func = self.func().map_err(|e| e.to_err(0))?;
         // let returns = func.get_return().clone();
         let entry = self.active.function.entry_point();
         let got = self.type_check(&entry)?;
@@ -173,7 +170,7 @@ impl<'f> TypeChecker<'f> {
         self.active
             .function
             .check_return(&got)
-            .map_err(|e| e.as_err(0))?;
+            .map_err(|e| e.to_err(0))?;
 
         Ok(got)
     }
@@ -193,11 +190,9 @@ impl<'f> TypeChecker<'f> {
                 }
                 match &entity.inner {
                     RawToken::Identifier(ident) => {
-                        let mut new_pos = self.active.clone();
-                        // new_pos.function = (String::from(ident), param_types);
-                        new_pos = self
+                        let new_pos = self
                             .locate_func(self.active.module, ident, param_types)
-                            .map_err(|e| e.as_err(t.source_index))?;
+                            .map_err(|e| e.to_err(t.source_index))?;
                         self.fork(new_pos).run()?
                     }
                     RawToken::ExternalIdentifier(entries) => {
@@ -214,7 +209,7 @@ impl<'f> TypeChecker<'f> {
                         */
                         let new_pos = self
                             .locate_func(new_fid, &entries[1], param_types)
-                            .map_err(|e| e.as_err(t.source_index))?;
+                            .map_err(|e| e.to_err(t.source_index))?;
                         self.fork(new_pos).run()?
                     }
                     RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
@@ -225,11 +220,9 @@ impl<'f> TypeChecker<'f> {
             RawToken::Operation(box (left, right), op) => {
                 let left_t = self.type_check(left)?;
                 let right_t = self.type_check(right)?;
-                let mut new_pos = self.active.clone();
-                // new_pos.function = (op.identifier.clone(), vec![left_t, right_t]);
-                new_pos = self
+                let new_pos = self
                     .locate_func(self.active.module, &op.identifier, vec![left_t, right_t])
-                    .map_err(|e| e.as_err(t.source_index))?;
+                    .map_err(|e| e.to_err(t.source_index))?;
                 self.fork(new_pos).run()?
             }
             RawToken::Identifier(constant_ident) => {
@@ -239,7 +232,7 @@ impl<'f> TypeChecker<'f> {
                 } else {
                     let new_pos = self
                         .locate_func(self.active.module, constant_ident, vec![])
-                        .map_err(|e| e.as_err(t.source_index))?;
+                        .map_err(|e| e.to_err(t.source_index))?;
                     self.fork(new_pos).run()?
                 }
             }

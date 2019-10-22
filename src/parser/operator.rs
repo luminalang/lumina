@@ -28,14 +28,14 @@ impl OperatorBuilder {
 
     pub fn with_header(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
         let first = match tokenizer.next() {
-            None => return ParseFault::OpNoIdent.as_err(0).into(),
+            None => return ParseFault::OpNoIdent.to_err(0).into(),
             Some(t) => t,
         };
         match first.inner {
             RawToken::Operator(op) => self.name = op,
             _ => {
                 return ParseFault::OpWantedIdent(first.inner)
-                    .as_err(first.source_index)
+                    .to_err(first.source_index)
                     .into()
             }
         };
@@ -46,7 +46,7 @@ impl OperatorBuilder {
         let t = match tokenizer.next() {
             None => {
                 return ParseFault::EndedWhileExpecting(vec![RawToken::Key(Key::ParenOpen)])
-                    .as_err(0)
+                    .to_err(0)
                     .into()
             }
             Some(t) => t,
@@ -55,7 +55,7 @@ impl OperatorBuilder {
             RawToken::Key(Key::ParenOpen) => {}
             _ => {
                 return ParseFault::GotButExpected(t.inner, vec![RawToken::Key(Key::ParenOpen)])
-                    .as_err(t.source_index)
+                    .to_err(t.source_index)
                     .into()
             }
         }
@@ -65,7 +65,7 @@ impl OperatorBuilder {
                     return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
                         "type expected to the left side of the operator".into(),
                     )])
-                    .as_err(0)
+                    .to_err(0)
                     .into();
                 }
                 Some(t) => t,
@@ -73,7 +73,7 @@ impl OperatorBuilder {
             let source_index = next.source_index;
             if let RawToken::Identifier(ident) = next.inner {
                 Ok((
-                    Type::try_from(ident.as_str()).map_err(|e| e.as_err(source_index))?,
+                    Type::try_from(ident.as_str()).map_err(|e| e.to_err(source_index))?,
                     next.source_index,
                 ))
             } else {
@@ -83,7 +83,7 @@ impl OperatorBuilder {
                         "type expected to the left side of the operator".into(),
                     )],
                 )
-                .as_err(next.source_index)
+                .to_err(next.source_index)
                 .into()
             }
         };
@@ -95,7 +95,7 @@ impl OperatorBuilder {
             Some(t) => t,
             None => {
                 return ParseFault::EndedWhileExpecting(vec![RawToken::Key(Key::ParenClose)])
-                    .as_err(right_source_index)
+                    .to_err(right_source_index)
                     .into()
             }
         };
@@ -103,7 +103,7 @@ impl OperatorBuilder {
             RawToken::Key(Key::ParenClose) => {}
             _ => {
                 return ParseFault::GotButExpected(t.inner, vec![RawToken::Key(Key::ParenClose)])
-                    .as_err(right_source_index)
+                    .to_err(right_source_index)
                     .into()
             }
         }
@@ -153,7 +153,7 @@ impl OperatorBuilder {
                             RawToken::Key(Key::Where),
                         ],
                     )
-                    .as_err(next.source_index)
+                    .to_err(next.source_index)
                     .into()
                 }
             }

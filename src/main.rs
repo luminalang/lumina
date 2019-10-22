@@ -42,7 +42,7 @@ fn main() {
 
     // Verify syntax and infer types
     match parser.type_check(fid) {
-        Err(e) => panic!("{:?}", e),
+        Err(e) => println!("{}", e.with_source_code(source_code, file_path)),
         Ok(_main_return) => {}
     };
 

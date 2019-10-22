@@ -22,7 +22,7 @@ pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, Parse
                     return Ok(segments);
                 } else {
                     return Err(
-                        ParseFault::FirstStmNoThen.as_err(segments.last().unwrap().source_index)
+                        ParseFault::FirstStmNoThen.to_err(segments.last().unwrap().source_index)
                     );
                 }
             }

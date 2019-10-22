@@ -8,7 +8,7 @@ pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, Parse
         loop {
             let next = source.next();
             match next {
-                None => return ParseFault::ListMissingClose.as_err(0).into(),
+                None => return ParseFault::ListMissingClose.to_err(0).into(),
                 Some(t) => match t.inner {
                     RawToken::Key(Key::Comma) => {
                         let entry = SimpleSource::new(&raw_tokens).walk(Mode::Neutral)?;
@@ -27,7 +27,7 @@ pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, Parse
                         break 'list;
                     }
                     RawToken::Header(_) | RawToken::Key(Key::Where) => {
-                        return ParseFault::ListMissingClose.as_err(0).into()
+                        return ParseFault::ListMissingClose.to_err(0).into()
                     }
                     _ => raw_tokens.push(t),
                 },

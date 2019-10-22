@@ -67,7 +67,7 @@ pub trait BodySource {
                     }
                     Mode::Operator(left, op) => {
                         ParseFault::EndedMissingRightSideOperator(left.inner, op)
-                            .as_err(0)
+                            .to_err(0)
                             .into()
                     }
                     _ => Ok(WalkResult::EOF),
@@ -79,7 +79,7 @@ pub trait BodySource {
             RawToken::Header(_) | RawToken::Key(Key::Where) => match mode {
                 Mode::Operator(left, op) => {
                     ParseFault::MissingRightSideOperator(Box::new((left.inner, op, token.inner)))
-                        .as_err(token.source_index)
+                        .to_err(token.source_index)
                         .into()
                 }
                 Mode::Parameters(previous) => {
@@ -95,7 +95,7 @@ pub trait BodySource {
                 }
             },
             RawToken::Key(Key::Pipe) => match mode {
-                Mode::Neutral => ParseFault::PipeIntoVoid.as_err(token.source_index).into(),
+                Mode::Neutral => ParseFault::PipeIntoVoid.to_err(token.source_index).into(),
                 Mode::Parameters(mut previous) => {
                     let v = self
                         .walk(Mode::Neutral)
@@ -110,7 +110,7 @@ pub trait BodySource {
                         }
                         WalkResult::CloseParen(t) => {
                             return ParseFault::Unexpected(RawToken::Key(Key::ParenClose))
-                                .as_err(previous.last().unwrap().source_index)
+                                .to_err(previous.last().unwrap().source_index)
                                 .into();
                         }
                     };
@@ -142,7 +142,7 @@ pub trait BodySource {
                                         op,
                                         RawToken::Key(Key::ParenClose),
                                     )))
-                                    .as_err(token.source_index)
+                                    .to_err(token.source_index)
                                     .into()
                                 }
                             };
@@ -154,7 +154,7 @@ pub trait BodySource {
                             op,
                             RawToken::Key(Key::ParenClose),
                         )))
-                        .as_err(token.source_index)
+                        .to_err(token.source_index)
                         .into(),
                     }
                 }
@@ -167,10 +167,10 @@ pub trait BodySource {
                     match v {
                         WalkResult::CloseParen(Some(v)) => self.handle_after(v),
                         WalkResult::CloseParen(None) => {
-                            ParseFault::EmptyParen.as_err(token.source_index).into()
+                            ParseFault::EmptyParen.to_err(token.source_index).into()
                         }
                         _ => ParseFault::Unmatched(Key::ParenClose)
-                            .as_err(token.source_index)
+                            .to_err(token.source_index)
                             .into(),
                     }
                 }
@@ -182,10 +182,10 @@ pub trait BodySource {
                             self.walk(Mode::Parameters(previous))
                         }
                         WalkResult::CloseParen(None) => {
-                            ParseFault::EmptyParen.as_err(token.source_index).into()
+                            ParseFault::EmptyParen.to_err(token.source_index).into()
                         }
                         _ => ParseFault::Unmatched(Key::ParenClose)
-                            .as_err(previous.last().unwrap().source_index)
+                            .to_err(previous.last().unwrap().source_index)
                             .into(),
                     }
                 }
@@ -209,7 +209,7 @@ pub trait BodySource {
                             op,
                             RawToken::NewLine,
                         )))
-                        .as_err(token.source_index)
+                        .to_err(token.source_index)
                         .into(),
                     }
                 }
@@ -237,7 +237,7 @@ pub trait BodySource {
             RawToken::Identifier(ident) => {
                 if !is_valid_identifier(&ident) {
                     return ParseFault::InvalidIdentifier(ident, IdentSource::Ident)
-                        .as_err(token.source_index)
+                        .to_err(token.source_index)
                         .into();
                 };
                 self.handle_ident(
@@ -248,17 +248,17 @@ pub trait BodySource {
             RawToken::ExternalIdentifier(entries) => {
                 if !is_valid_identifier(&entries[0]) {
                     return ParseFault::InvalidIdentifier(entries[0].clone(), IdentSource::Module)
-                        .as_err(token.source_index)
+                        .to_err(token.source_index)
                         .into();
                 };
                 if !is_valid_identifier(&entries[1]) {
                     return ParseFault::InvalidIdentifier(entries[1].clone(), IdentSource::Ident)
-                        .as_err(token.source_index)
+                        .to_err(token.source_index)
                         .into();
                 };
                 let source_index = token.source_index;
                 let t = if let Some((bridged_id, bridged_type)) =
-                    bridge::try_rust_builtin(&entries).map_err(|e| e.as_err(source_index))?
+                    bridge::try_rust_builtin(&entries).map_err(|e| e.to_err(source_index))?
                 {
                     Token::new(
                         RawToken::RustCall(bridged_id, bridged_type),
@@ -267,7 +267,7 @@ pub trait BodySource {
                 } else {
                     if entries.len() != 2 {
                         return ParseFault::InvalidPath(entries)
-                            .as_err(token.source_index)
+                            .to_err(token.source_index)
                             .into();
                     }
                     Token::new(RawToken::ExternalIdentifier(entries), token.source_index)
@@ -335,7 +335,7 @@ pub trait BodySource {
                 }
                 Mode::Operator(left, op) => {
                     ParseFault::MissingRightSideOperator(Box::new((left.inner, op, token.inner)))
-                        .as_err(token.source_index)
+                        .to_err(token.source_index)
                         .into()
                 }
                 Mode::Neutral => Ok(WalkResult::CloseParen(None)),

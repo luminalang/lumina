@@ -215,7 +215,7 @@ impl<'a> Parser<'a> {
                                 return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
                                     "identifier".into(),
                                 )])
-                                .as_err(tokenizer.index() - 1)
+                                .to_err(tokenizer.index() - 1)
                                 .into()
                             }
                             Some(other) => {
@@ -249,14 +249,17 @@ impl<'a> Parser<'a> {
                         File::open(pathbuf.clone())
                             .map_err(|e| {
                                 ParseFault::ModuleLoadFailed(pathbuf.clone(), e.kind())
-                                    .as_err(source_index)
+                                    .to_err(source_index)
                             })?
                             .read_to_end(&mut source_code)
                             .map_err(|e| {
-                                ParseFault::ModuleLoadFailed(pathbuf, e.kind()).as_err(source_index)
+                                ParseFault::ModuleLoadFailed(pathbuf, e.kind()).to_err(source_index)
                             })?;
 
-                        let usefid = self.tokenize(file_path.clone(), &source_code)?;
+                        let usefid = match self.tokenize(file_path.clone(), &source_code) {
+                            Err(e) => return Err(e.with_source_code(source_code, file_path)),
+                            Ok(fid) => fid,
+                        };
                         self.modules[fid]
                             .imports
                             .insert(import.last().unwrap().clone(), usefid);
@@ -279,7 +282,7 @@ impl<'a> Parser<'a> {
 
     pub fn type_check(&mut self, fid: usize) -> Result<Type, ParseError> {
         TypeChecker::new(self, fid, "main", vec![])
-            .map_err(|e| e.as_err(0))?
+            .map_err(|e| e.to_err(0))?
             .run()
     }
 
@@ -292,7 +295,7 @@ impl<'a> Parser<'a> {
                 return ParseFault::EndedWhileExpecting(vec![RawToken::Identifier(
                     "custom type name".into(),
                 )])
-                .as_err(0)
+                .to_err(0)
                 .into()
             }
             Some(t) => t,

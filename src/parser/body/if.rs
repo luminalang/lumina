@@ -44,7 +44,7 @@ pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<IfExpr, ParseErro
                 }
             }
             Elif => (),
-            EOF => return ParseFault::IfMissingElse.as_err(0).into(),
+            EOF => return ParseFault::IfMissingElse.to_err(0).into(),
         }
     }
 }
@@ -65,10 +65,10 @@ fn gather_cond<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, Par
     loop {
         let next = source.next();
         match next {
-            None => return ParseFault::IfMissingThen.as_err(0).into(),
+            None => return ParseFault::IfMissingThen.to_err(0).into(),
             Some(t) => match t.inner {
                 RawToken::Header(_) | RawToken::Key(Key::Where) => {
-                    return ParseFault::IfMissingThen.as_err(0).into()
+                    return ParseFault::IfMissingThen.to_err(0).into()
                 }
                 RawToken::NewLine => {}
                 RawToken::Key(Key::If) => {
@@ -85,7 +85,7 @@ fn gather_cond<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, Par
                 RawToken::Key(Key::Else) => {
                     if nested == 0 {
                         return ParseFault::Unexpected(RawToken::Key(Key::Else))
-                            .as_err(t.source_index)
+                            .to_err(t.source_index)
                             .into();
                     } else {
                         nested -= 1;

@@ -1,88 +1,184 @@
-use super::{Inlined, Parser, RawToken, Token, Type};
+use super::{Inlined, ParseError, ParseFault, Parser, RawToken, Token, Type};
 use crate::evaler::bridge;
 use std::rc::Rc;
 
-#[derive(Default, Clone)]
-struct Position {
+#[derive(Clone)]
+struct Position<'f> {
     module: usize,
-    function: (String, Vec<Type>),
+    function: Box<&'f dyn Typeable>,
+    funcid: usize,
 }
 
 pub struct TypeChecker<'f> {
-    active: Position,
+    active: Position<'f>,
     parser: &'f Parser<'f>,
 }
 
 pub trait Typeable {
     fn get_parameter(&self, ident: &str) -> Option<usize>;
     fn get_parameter_type(&self, pid: usize) -> &Type;
-    fn get_return(&self) -> &Type;
+    fn check_return(&self, got: &Type) -> Result<(), ParseFault>;
     fn entry_point(&self) -> Rc<Token>;
 }
 
 impl<'f> TypeChecker<'f> {
-    pub fn new(parser: &'f Parser, fmodule: usize, fname: &str, fparams: Vec<Type>) -> Self {
-        Self {
+    pub fn new(
+        parser: &'f Parser,
+        fmodule: usize,
+        fname: &str,
+        fparams: Vec<Type>,
+    ) -> Result<Self, ParseFault> {
+        let position = Self::locate_func_from(parser, fmodule, fname, fparams)?;
+
+        Ok(Self {
             parser,
-            active: Position {
-                module: fmodule,
-                function: (fname.to_owned(), fparams),
-            },
+            active: position,
+        })
+    }
+
+    fn locate_func(
+        &self,
+        fmodule: usize,
+        fname: &str,
+        fparams: Vec<Type>,
+    ) -> Result<Position<'f>, ParseFault> {
+        Self::locate_func_from(self.parser, fmodule, fname, fparams)
+    }
+
+    fn locate_func_from(
+        parser: &'f Parser,
+        fmodule: usize,
+        fname: &str,
+        fparams: Vec<Type>,
+    ) -> Result<Position<'f>, ParseFault> {
+        let self_mod = &parser.modules[fmodule];
+
+        if super::is_valid_identifier(fname) {
+            // Function
+
+            // Find function name
+            match self_mod.functions.get(fname) {
+                // No functions with this name exists in that scope
+                None => {
+                    if let Ok(position) =
+                        Self::locate_func_from(parser, super::PRELUDE_FID, fname, fparams.clone())
+                    {
+                        Ok(position)
+                    } else {
+                        Err(ParseFault::FunctionNotFound(fname.to_owned(), fmodule))
+                    }
+                }
+
+                // Find function variants (which function takes these exact types?)
+                Some(variants) => match variants.get(&fparams) {
+                    // Function name exists but no variant of that function takes these parameters
+                    None => {
+                        if let Ok(position) = Self::locate_func_from(
+                            parser,
+                            super::PRELUDE_FID,
+                            fname,
+                            fparams.clone(),
+                        ) {
+                            Ok(position)
+                        } else {
+                            Err(ParseFault::FunctionVariantNotFound(
+                                fname.to_owned(),
+                                fparams.clone(),
+                                (*variants).clone(), // TODO: Borrow technically possible, this is quite a hefty heap copy here
+                                                     // Actually, I can just steal it now can't I?
+                            ))
+                        }
+                    }
+
+                    // Found!
+                    Some(func) => Ok(Position {
+                        function: Box::new(&func.0),
+                        module: fmodule,
+                        funcid: func.1,
+                    }),
+                },
+            }
+        } else {
+            // Operator
+
+            let key = &[fparams[0].clone(), fparams[1].clone()];
+
+            // Find operator name
+            match self_mod.operators.get(fname) {
+                // No operators with this name exists in that scope
+                None => match Self::try_locate_from_prelude(parser, fname, true, &fparams) {
+                    Some(position) => Ok(position),
+                    None => Err(ParseFault::OperatorNotFound(fname.to_owned(), fmodule)),
+                },
+
+                Some(variants) => match variants.get(key) {
+                    // Operator name exists but no variant of that operator takes these parameters
+                    None => match Self::try_locate_from_prelude(parser, fname, true, &fparams) {
+                        Some(position) => Ok(position),
+                        None => Err(ParseFault::OperatorVariantNotFound(
+                            fname.to_owned(),
+                            key.clone(),
+                            (*variants).clone(),
+                        )),
+                    },
+
+                    // Found!
+                    Some(op) => Ok(Position {
+                        function: Box::new(&op.0),
+                        module: fmodule,
+                        funcid: op.1,
+                    }),
+                },
+            }
         }
     }
 
-    fn fork(&mut self, position: Position) -> Self {
+    fn try_locate_from_prelude(
+        parser: &'f Parser,
+        fname: &str,
+        op: bool,
+        fparams: &[Type],
+    ) -> Option<Position<'f>> {
+        let prelude = &parser.modules[super::PRELUDE_FID];
+        if op {
+            let (op, opid) = prelude.operators.get(fname)?.get(fparams)?;
+            Some(Position {
+                module: super::PRELUDE_FID,
+                function: Box::new(op),
+                funcid: *opid,
+            })
+        } else {
+            let (func, funcid) = prelude.functions.get(fname)?.get(fparams)?;
+            Some(Position {
+                module: super::PRELUDE_FID,
+                function: Box::new(func),
+                funcid: *funcid,
+            })
+        }
+    }
+
+    fn fork(&mut self, position: Position<'f>) -> Self {
         Self {
             active: position,
             parser: self.parser,
         }
     }
 
-    pub fn run(&mut self) -> Result<Type, ()> {
-        let func = self.func()?;
-        let returns = func.get_return().clone();
-        let entry = func.entry_point();
+    pub fn run(&mut self) -> Result<Type, ParseError> {
+        // let func = self.func().map_err(|e| e.as_err(0))?;
+        // let returns = func.get_return().clone();
+        let entry = self.active.function.entry_point();
         let got = self.type_check(&entry)?;
-        if returns != got && returns != Type::Nothing {
-            panic!("ET: Return type mismatch. Wanted {} got {}", returns, got);
-        }
+
+        self.active
+            .function
+            .check_return(&got)
+            .map_err(|e| e.as_err(0))?;
+
         Ok(got)
     }
 
-    #[inline]
-    fn func(&self) -> Result<Box<&dyn Typeable>, ()> {
-        let self_mod = &self.parser.modules[self.active.module];
-
-        if super::is_valid_identifier(&self.active.function.0) {
-            // Function
-            if let Some((func, _funcid)) = self_mod.functions.get(&self.active.function) {
-                return Ok(Box::new(func));
-            } else if let Some((func, _funcid)) =
-                self.parser.prelude().functions.get(&self.active.function)
-            {
-                return Ok(Box::new(func));
-            }
-            panic!("Function {:?} not found", self.active.function);
-        } else {
-            let key = &(
-                // TODO: Allocation can be avoided
-                self.active.function.0.clone(),
-                [
-                    self.active.function.1[0].clone(),
-                    self.active.function.1[1].clone(),
-                ],
-            );
-            // Operator
-            if let Some((opb, _opid)) = self_mod.operators.get(key) {
-                return Ok(Box::new(opb));
-            } else if let Some((opb, _opid)) = self.parser.prelude().operators.get(key) {
-                return Ok(Box::new(opb));
-            }
-            panic!("Operator {:?} not found", self.active.function);
-        }
-    }
-
-    fn type_check(&mut self, t: &Token) -> Result<Type, ()> {
+    fn type_check(&mut self, t: &Token) -> Result<Type, ParseError> {
         let r#type = match &t.inner {
             RawToken::Inlined(inlined) => match inlined {
                 Inlined::Int(_) => Type::Int,
@@ -98,7 +194,10 @@ impl<'f> TypeChecker<'f> {
                 match &entity.inner {
                     RawToken::Identifier(ident) => {
                         let mut new_pos = self.active.clone();
-                        new_pos.function = (String::from(ident), param_types);
+                        // new_pos.function = (String::from(ident), param_types);
+                        new_pos = self
+                            .locate_func(self.active.module, ident, param_types)
+                            .map_err(|e| e.as_err(t.source_index))?;
                         self.fork(new_pos).run()?
                     }
                     RawToken::ExternalIdentifier(entries) => {
@@ -107,10 +206,15 @@ impl<'f> TypeChecker<'f> {
                             .get(&entries[0])
                             .copied()
                             .ok_or_else(|| panic!("ET: Import {} not found", entries[0]))?;
+                        /*
                         let new_pos = Position {
                             module: new_fid,
                             function: (entries[1].clone(), param_types),
                         };
+                        */
+                        let new_pos = self
+                            .locate_func(new_fid, &entries[1], param_types)
+                            .map_err(|e| e.as_err(t.source_index))?;
                         self.fork(new_pos).run()?
                     }
                     RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
@@ -122,19 +226,21 @@ impl<'f> TypeChecker<'f> {
                 let left_t = self.type_check(left)?;
                 let right_t = self.type_check(right)?;
                 let mut new_pos = self.active.clone();
-                new_pos.function = (op.identifier.clone(), vec![left_t, right_t]);
+                // new_pos.function = (op.identifier.clone(), vec![left_t, right_t]);
+                new_pos = self
+                    .locate_func(self.active.module, &op.identifier, vec![left_t, right_t])
+                    .map_err(|e| e.as_err(t.source_index))?;
                 self.fork(new_pos).run()?
             }
             RawToken::Identifier(constant_ident) => {
-                let func = self.func()?;
+                let func = &self.active.function;
                 if let Some(param_id) = func.get_parameter(constant_ident) {
                     func.get_parameter_type(param_id).clone()
                 } else {
-                    self.fork(Position {
-                        module: self.active.module,
-                        function: (constant_ident.clone(), vec![]),
-                    })
-                    .run()?
+                    let new_pos = self
+                        .locate_func(self.active.module, constant_ident, vec![])
+                        .map_err(|e| e.as_err(t.source_index))?;
+                    self.fork(new_pos).run()?
                 }
             }
             RawToken::FirstStatement(entries) => {

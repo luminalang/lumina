@@ -6,7 +6,7 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::rc::Rc;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct OperatorBuilder {
     pub name: Operator,
     pub parameter_types: [Type; 2],
@@ -171,8 +171,11 @@ impl Typeable for OperatorBuilder {
     fn get_parameter_type(&self, pid: usize) -> &Type {
         &self.parameter_types[pid]
     }
-    fn get_return(&self) -> &Type {
-        &self.returns
+    fn check_return(&self, got: &Type) -> Result<(), ParseFault> {
+        if *got != self.returns && self.returns != Type::Nothing {
+            return Err(ParseFault::OpTypeReturnMismatch(self.clone(), got.clone()));
+        }
+        Ok(())
     }
     fn entry_point(&self) -> Rc<Token> {
         self.body.clone()

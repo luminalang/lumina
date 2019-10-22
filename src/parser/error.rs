@@ -1,4 +1,5 @@
-use super::{tokenizer::Operator, Key, RawToken};
+use super::{tokenizer::Operator, FunctionBuilder, Key, OperatorBuilder, RawToken, Type};
+use std::collections::HashMap;
 use std::convert::Into;
 use std::io;
 use std::path::PathBuf;
@@ -58,6 +59,20 @@ pub enum ParseFault {
     InvalidParameterName(String),
     PipeIntoVoid,
     EmptyListType,
+    FnTypeReturnMismatch(FunctionBuilder, Type),
+    OpTypeReturnMismatch(OperatorBuilder, Type),
+    FunctionNotFound(String, usize),
+    OperatorNotFound(String, usize),
+    FunctionVariantNotFound(
+        String,
+        Vec<Type>,
+        HashMap<Vec<Type>, (FunctionBuilder, usize)>,
+    ),
+    OperatorVariantNotFound(
+        String,
+        [Type; 2],
+        HashMap<[Type; 2], (OperatorBuilder, usize)>,
+    ),
     Internal,
 }
 

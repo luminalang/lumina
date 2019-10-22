@@ -1,16 +1,16 @@
 use super::{
-    body, body::BodySource, checker::Typeable, flags::Flag, Key, ParseError, ParseFault, RawToken,
-    Token, Tokenizer, Type,
+    body, body::BodySource, checker::Typeable, Key, ParseError, ParseFault, RawToken, Token,
+    Tokenizer, Type,
 };
 use std::convert::TryFrom;
 use std::fmt;
 use std::rc::Rc;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct FunctionBuilder {
     pub name: String,
     pub parameter_names: Vec<String>,
-    pub parameter_types: Vec<(Flag, Type)>,
+    pub parameter_types: Vec<Type>,
     pub returns: Type,
     pub body: Rc<Token>,
     pub wheres: Vec<(String, Token)>,
@@ -146,10 +146,9 @@ impl FunctionBuilder {
                 }
             };
             match next_inner {
-                RawToken::Identifier(name) => self.parameter_types.push((
-                    Flag::default(),
-                    Type::try_from(name.as_str()).map_err(|e| e.as_err(next_source_index))?,
-                )),
+                RawToken::Identifier(name) => self
+                    .parameter_types
+                    .push(Type::try_from(name.as_str()).map_err(|e| e.as_err(next_source_index))?),
                 RawToken::Key(Key::ParenClose) => return Ok(self),
                 RawToken::Key(Key::Arrow) => return self.with_return(tokenizer),
                 _ => {
@@ -263,10 +262,13 @@ impl Typeable for FunctionBuilder {
         None
     }
     fn get_parameter_type(&self, pid: usize) -> &Type {
-        &self.parameter_types[pid].1
+        &self.parameter_types[pid]
     }
-    fn get_return(&self) -> &Type {
-        &self.returns
+    fn check_return(&self, got: &Type) -> Result<(), ParseFault> {
+        if *got != self.returns && self.returns != Type::Nothing {
+            return Err(ParseFault::FnTypeReturnMismatch(self.clone(), got.clone()));
+        }
+        Ok(())
     }
     fn entry_point(&self) -> Rc<Token> {
         self.body.clone()
@@ -278,7 +280,7 @@ impl fmt::Debug for FunctionBuilder {
         let types = self
             .parameter_types
             .iter()
-            .map(|(_flags, t)| t.to_string())
+            .map(|t| t.to_string())
             .collect::<Vec<String>>();
         let annotation = if types.is_empty() {
             format!("{}", self.returns)

@@ -37,13 +37,30 @@ pub struct Parser<'a> {
 
 #[derive(Default)]
 pub struct ParseModule {
-    // TODO: I probably want to convert Vec<Type> into a numeric representation like `0425` to save
-    // heap allocations just for id lookups
-    pub functions: HashMap<(String, Vec<Type>), (FunctionBuilder, usize)>,
-    pub operators: HashMap<(String, [Type; 2]), (OperatorBuilder, usize)>,
+    //                     identifer       parameters
+    pub functions: HashMap<String, HashMap<Vec<Type>, (FunctionBuilder, usize)>>,
+    // With a nested hashmap here we can no longer rely on it's .len method to generate new
+    // funcid's
+    function_count: usize,
+    operator_count: usize,
+    pub operators: HashMap<String, HashMap<[Type; 2], (OperatorBuilder, usize)>>,
+
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
     pub imports: HashMap<String, usize>,
+}
+
+impl ParseModule {
+    fn next_funcid(&mut self) -> usize {
+        let id = self.function_count;
+        self.function_count += 1;
+        id
+    }
+    fn next_operid(&mut self) -> usize {
+        let id = self.operator_count;
+        self.function_count += 1;
+        id
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -57,9 +74,6 @@ impl<'a> Parser<'a> {
 
     fn _get_type_id(&self, fid: usize, name: &str) -> Option<usize> {
         self.modules.get(fid)?.types.get(name).copied()
-    }
-    pub fn prelude(&self) -> &ParseModule {
-        &self.modules[PRELUDE_FID]
     }
 
     fn new_module(&mut self, source: FileSource) -> usize {
@@ -76,29 +90,38 @@ impl<'a> Parser<'a> {
     }
     fn new_function(&mut self, fid: usize, funcb: FunctionBuilder) -> usize {
         let module = &mut self.modules[fid];
-        let funcid = module.functions.len();
-        module.functions.insert(
-            (
-                funcb.name.clone(),
-                funcb
-                    .parameter_types
-                    .iter()
-                    .cloned()
-                    .map(|(_flags, t)| t)
-                    .collect(),
-            ),
-            (funcb, funcid),
-        );
+        let funcid = module.next_funcid();
+        match module.functions.get_mut(&funcb.name) {
+            Some(existing) => {
+                existing.insert(funcb.parameter_types.clone(), (funcb, funcid));
+                funcid
+            }
+            None => {
+                let mut hashmap = HashMap::with_capacity(1);
+                let name = funcb.name.clone();
+                hashmap.insert(funcb.parameter_types.clone(), (funcb, funcid));
+                module.functions.insert(name, hashmap);
+                funcid
+            }
+        };
         funcid
     }
     fn new_operator(&mut self, fid: usize, opb: OperatorBuilder) -> usize {
         let module = &mut self.modules[fid];
-        let opid = module.operators.len();
-        module.operators.insert(
-            (opb.name.identifier.clone(), opb.parameter_types.clone()),
-            (opb, opid),
-        );
-        opid
+        let opid = module.next_operid();
+        match module.operators.get_mut(&opb.name.identifier) {
+            Some(existing) => {
+                existing.insert(opb.parameter_types.clone(), (opb, opid));
+                opid
+            }
+            None => {
+                let mut hashmap = HashMap::with_capacity(1);
+                let name = opb.name.identifier.clone();
+                hashmap.insert(opb.parameter_types.clone(), (opb, opid));
+                module.operators.insert(name, hashmap);
+                opid
+            }
+        }
     }
     fn new_type(&mut self, fid: usize, name: String, fields: Vec<(String, Type)>) -> usize {
         let module = &mut self.modules[fid];
@@ -254,8 +277,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn type_check(&mut self, fid: usize) -> Result<Type, ()> {
-        TypeChecker::new(self, fid, "main", vec![]).run()
+    pub fn type_check(&mut self, fid: usize) -> Result<Type, ParseError> {
+        TypeChecker::new(self, fid, "main", vec![])
+            .map_err(|e| e.as_err(0))?
+            .run()
     }
 
     fn parse_type_decl(
@@ -314,18 +339,18 @@ impl fmt::Debug for Parser<'_> {
             .module_ids
             .iter()
             .map(|(mod_name, fid)| {
-                if *fid == PRELUDE_FID {
-                    String::new()
-                } else {
-                    format!(
-                        "{}#{} {} {}\n{:?}",
-                        Fg(color::Green),
-                        fid,
-                        mod_name,
-                        Fg(color::Reset),
-                        &self.modules[*fid]
-                    )
-                }
+                //if *fid == PRELUDE_FID {
+                //    String::new()
+                // } else {
+                format!(
+                    "{}#{} {} {}\n{:?}",
+                    Fg(color::Green),
+                    fid,
+                    mod_name,
+                    Fg(color::Reset),
+                    &self.modules[*fid]
+                )
+                // }
             })
             .collect::<Vec<String>>()
             .join("\n ---\n\n");
@@ -359,12 +384,20 @@ impl fmt::Debug for ParseModule {
                 .join("\n"),
             self.functions
                 .values()
-                .map(|(funcb, funcid)| format!("  #{} {:#?}", funcid, funcb,))
+                .map(|same_name| same_name
+                    .values()
+                    .map(|(funcb, funcid)| format!("  #{} {:?}", funcid, funcb))
+                    .collect::<Vec<String>>()
+                    .join("\n"))
                 .collect::<Vec<String>>()
                 .join("\n"),
             self.operators
                 .values()
-                .map(|(opb, opid)| format!("  #{} {:?}", opid, opb))
+                .map(|same_name| same_name
+                    .values()
+                    .map(|(opb, opid)| format!("  #{} {:?}", opid, opb))
+                    .collect::<Vec<String>>()
+                    .join("\n"))
                 .collect::<Vec<String>>()
                 .join("\n")
         )

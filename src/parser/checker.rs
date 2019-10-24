@@ -11,7 +11,7 @@ struct Position<'f> {
 
 pub struct TypeChecker<'f> {
     active: Position<'f>,
-    parser: &'f Parser<'f>,
+    parser: &'f Parser,
 }
 
 pub trait Typeable {
@@ -81,8 +81,7 @@ impl<'f> TypeChecker<'f> {
                             Err(ParseFault::FunctionVariantNotFound(
                                 fname.to_owned(),
                                 fparams.clone(),
-                                (*variants).clone(), // TODO: Borrow technically possible, this is quite a hefty heap copy here
-                                                     // Actually, I can just steal it now can't I?
+                                fmodule,
                             ))
                         }
                     }
@@ -115,7 +114,7 @@ impl<'f> TypeChecker<'f> {
                         None => Err(ParseFault::OperatorVariantNotFound(
                             fname.to_owned(),
                             key.clone(),
-                            (*variants).clone(),
+                            fmodule,
                         )),
                     },
 
@@ -192,7 +191,8 @@ impl<'f> TypeChecker<'f> {
                     RawToken::Identifier(ident) => {
                         let new_pos = self
                             .locate_func(self.active.module, ident, param_types)
-                            .map_err(|e| e.to_err(t.source_index))?;
+                            .map_err(|e| e.to_err(entity.source_index))?;
+
                         self.fork(new_pos).run()?
                     }
                     RawToken::ExternalIdentifier(entries) => {
@@ -201,12 +201,6 @@ impl<'f> TypeChecker<'f> {
                             .get(&entries[0])
                             .copied()
                             .ok_or_else(|| panic!("ET: Import {} not found", entries[0]))?;
-                        /*
-                        let new_pos = Position {
-                            module: new_fid,
-                            function: (entries[1].clone(), param_types),
-                        };
-                        */
                         let new_pos = self
                             .locate_func(new_fid, &entries[1], param_types)
                             .map_err(|e| e.to_err(t.source_index))?;

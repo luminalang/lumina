@@ -29,13 +29,13 @@ pub use error::*;
 
 const PRELUDE_FID: usize = 0;
 
-pub struct Parser<'a> {
+pub struct Parser {
     pub module_ids: HashMap<FileSource, usize>,
     pub modules: Vec<ParseModule>,
-    environment: &'a Environment,
+    environment: Rc<Environment>,
 }
 
-#[derive(Default)]
+// #[derive(Default)]
 pub struct ParseModule {
     //                     identifer       parameters
     pub functions: HashMap<String, HashMap<Vec<Type>, (FunctionBuilder, usize)>>,
@@ -48,9 +48,24 @@ pub struct ParseModule {
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
     pub imports: HashMap<String, usize>,
+
+    pub module_path: FileSource,
 }
 
 impl ParseModule {
+    pub fn new(module_path: FileSource) -> Self {
+        Self {
+            functions: HashMap::new(),
+            function_count: 0,
+            operator_count: 0,
+            operators: HashMap::new(),
+            types: HashMap::new(),
+            type_fields: Vec::new(),
+            imports: HashMap::new(),
+            module_path,
+        }
+    }
+
     fn next_funcid(&mut self) -> usize {
         let id = self.function_count;
         self.function_count += 1;
@@ -63,8 +78,8 @@ impl ParseModule {
     }
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(environment: &'a Environment) -> Self {
+impl Parser {
+    pub fn new(environment: Rc<Environment>) -> Self {
         Self {
             module_ids: HashMap::new(),
             modules: Vec::new(),
@@ -82,8 +97,8 @@ impl<'a> Parser<'a> {
             None => {
                 let fid = self.module_ids.len();
                 assert_eq!(fid, self.modules.len());
-                self.module_ids.insert(source, fid);
-                self.modules.push(ParseModule::default());
+                self.module_ids.insert(source.clone(), fid);
+                self.modules.push(ParseModule::new(source));
                 fid
             }
         }
@@ -231,7 +246,7 @@ impl<'a> Parser<'a> {
                                         .map(|s| &**s)
                                         .collect::<Vec<&str>>()
                                         .as_slice(),
-                                    self.environment,
+                                    &*self.environment,
                                 ))
                                 .unwrap()
                             } else {
@@ -245,7 +260,7 @@ impl<'a> Parser<'a> {
                         };
 
                         let mut source_code = Vec::with_capacity(20);
-                        let pathbuf = file_path.to_pathbuf(self.environment);
+                        let pathbuf = file_path.to_pathbuf(&self.environment);
                         File::open(pathbuf.clone())
                             .map_err(|e| {
                                 ParseFault::ModuleLoadFailed(pathbuf.clone(), e.kind())
@@ -336,7 +351,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-impl fmt::Debug for Parser<'_> {
+impl fmt::Debug for Parser {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = self
             .module_ids

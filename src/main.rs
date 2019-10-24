@@ -1,6 +1,7 @@
 #![feature(box_patterns)]
 use std::fs::File;
 use std::io::Read;
+use std::rc::Rc;
 
 pub fn entrypoint() -> FileSource {
     FileSource::Project(vec!["main".to_owned()])
@@ -17,13 +18,13 @@ pub mod datatypes;
 
 fn main() {
     let environment = match Environment::discover() {
-        Ok(env) => env,
+        Ok(env) => Rc::new(env),
         Err(e) => {
             eprintln!("{}", e);
             return;
         }
     };
-    let mut parser = Parser::new(&environment);
+    let mut parser = Parser::new(environment.clone());
     parser.read_prelude_source();
 
     let mut source_code = Vec::with_capacity(20);
@@ -42,7 +43,11 @@ fn main() {
 
     // Verify syntax and infer types
     match parser.type_check(fid) {
-        Err(e) => println!("{}", e.with_source_code(source_code, file_path)),
+        Err(e) => println!(
+            "{}",
+            e.with_source_code(source_code, file_path)
+                .with_parser(parser)
+        ),
         Ok(_main_return) => {}
     };
 

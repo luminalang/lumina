@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::fmt;
 
 #[derive(PartialEq, Clone, Debug, Default, Hash, Eq)]
 pub struct Operator {
@@ -28,5 +29,11 @@ impl TryFrom<&[u8]> for Operator {
             identifier: String::from_utf8(s.to_vec()).unwrap(),
         };
         Ok(valid)
+    }
+}
+
+impl fmt::Display for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.identifier)
     }
 }

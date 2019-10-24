@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Header {
@@ -30,6 +31,17 @@ impl Header {
             Header::Operator => "operator",
             Header::Type => "type",
             Header::Use => "use",
+        }
+    }
+}
+
+impl fmt::Display for Header {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Header::Function => f.write_str("fn"),
+            Header::Operator => f.write_str("operator"),
+            Header::Type => f.write_str("type"),
+            Header::Use => f.write_str("use"),
         }
     }
 }

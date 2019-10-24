@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Inlined {
@@ -6,7 +7,6 @@ pub enum Inlined {
     Float(f32),
     Bool(bool),
     Nothing,
-    // String(Vec<u8>),
 }
 
 impl TryFrom<&[u8]> for Inlined {
@@ -33,5 +33,16 @@ impl TryFrom<&[u8]> for Inlined {
             unimplemented!("byte literals");
         }
         Err(())
+    }
+}
+
+impl fmt::Display for Inlined {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Inlined::Int(n) => write!(f, "{}", n),
+            Inlined::Float(n) => write!(f, "{}", n),
+            Inlined::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
+            Inlined::Nothing => f.write_str("_"),
+        }
     }
 }

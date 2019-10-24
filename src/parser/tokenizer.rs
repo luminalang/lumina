@@ -102,6 +102,21 @@ impl<'s> Tokenizer<'s> {
         }
     }
 
+    fn prettified_index(&self) -> usize {
+        let mut offset = 0;
+        loop {
+            let c = match self.source_code.get(self.index + offset) {
+                None => return self.index + offset - 1,
+                Some(c) => *c,
+            };
+            if c == b' ' || c == b'\n' {
+                offset += 1;
+            } else {
+                return self.index + offset;
+            }
+        }
+    }
+
     fn gather_to(&mut self, stoppers: &'s [u8]) -> &'s [u8] {
         let origin = self.index;
         let c = match self.source_code.get(self.index) {
@@ -162,10 +177,12 @@ impl<'s> super::body::BodySource for Tokenizer<'s> {
     fn next(&mut self) -> Option<Token> {
         // self.last_index = self.index;
         self.push_history(self.index);
+        let source_index = self.prettified_index();
+
         let raw = self.gather_to(BREAK_AT);
         let mut t = Token::try_from(raw)
             .ok()
-            .map(|t| t.with_source_index(self.index))?;
+            .map(|t| t.with_source_index(source_index))?;
 
         // This is a little hacked together but the edge case is that `a:b` is an external call
         // while `a: b` is a lambda/matchbranch/whatever.
@@ -178,7 +195,7 @@ impl<'s> super::body::BodySource for Tokenizer<'s> {
                     self.regress(1);
                     return Some(Token::new(
                         RawToken::Identifier(ident[0..ident.len() - 1].to_owned()),
-                        t.source_index,
+                        source_index,
                     ));
                 }
                 let mut identbuf = vec![first.to_owned(), second.to_owned()];

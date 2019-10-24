@@ -1,5 +1,5 @@
 use super::{
-    tokenizer::Operator, FileSource, FunctionBuilder, Key, OperatorBuilder, RawToken, Type,
+    tokenizer::Operator, FileSource, FunctionBuilder, Key, OperatorBuilder, Parser, RawToken, Type,
 };
 use std::collections::HashMap;
 use std::convert::Into;
@@ -7,6 +7,8 @@ use std::fmt;
 use std::io;
 use std::ops::Add;
 use std::path::PathBuf;
+use termion::color;
+use termion::color::Fg;
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -14,6 +16,7 @@ pub struct ParseError {
     pub variant: ParseFault,
     pub source_code: Option<Vec<u8>>,
     pub module_name: Option<FileSource>,
+    pub parser: Option<Parser>,
 }
 
 impl ParseError {
@@ -23,6 +26,7 @@ impl ParseError {
             variant: err,
             source_code: None,
             module_name: None,
+            parser: None,
         }
     }
 
@@ -38,9 +42,14 @@ impl ParseError {
         self.module_name = Some(source_name);
         self
     }
+
+    pub fn with_parser(mut self, parser: Parser) -> Self {
+        self.parser = Some(parser);
+        self
+    }
 }
 
-impl<T> Into<Result<T, ParseError>> for ParseError {
+impl<'a, T> Into<Result<T, ParseError>> for ParseError {
     fn into(self) -> Result<T, ParseError> {
         Err(self)
     }
@@ -77,16 +86,8 @@ pub enum ParseFault {
     OpTypeReturnMismatch(OperatorBuilder, Type),
     FunctionNotFound(String, usize),
     OperatorNotFound(String, usize),
-    FunctionVariantNotFound(
-        String,
-        Vec<Type>,
-        HashMap<Vec<Type>, (FunctionBuilder, usize)>,
-    ),
-    OperatorVariantNotFound(
-        String,
-        [Type; 2],
-        HashMap<[Type; 2], (OperatorBuilder, usize)>,
-    ),
+    FunctionVariantNotFound(String, Vec<Type>, usize),
+    OperatorVariantNotFound(String, [Type; 2], usize),
     Internal,
 }
 
@@ -97,40 +98,184 @@ pub enum IdentSource {
     Ident,
 }
 
-impl ParseFault {
+impl<'a> ParseFault {
     pub fn to_err(self, i: usize) -> ParseError {
         ParseError::new(i, self)
     }
 }
 
-impl fmt::Display for ParseFault {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "TODO: show error")
-    }
-}
-
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let source = self.source_code.as_ref().unwrap();
-        let (raw_line, arrow) = locate_line(source, self.source_index);
+        let parser = self
+            .parser
+            .as_ref()
+            .expect("Parser not appended to error in final scope");
+        let source = self
+            .source_code
+            .as_ref()
+            .expect("Source code not appended to error in final scope");
+        let (raw_line, arrow, line_number) = locate_line(source, self.source_index);
         let line = String::from_utf8(raw_line.to_vec()).unwrap();
-        let module_path = self.module_name.as_ref().unwrap();
+        let module_path = self
+            .module_name
+            .as_ref()
+            .expect("Module name not appended to error in final scope");
 
+        // TODO: Line number
         write!(
             f,
-            "{}: {}\n{}\n{}",
-            module_path,
-            self.variant,
-            line.trim(),
+            "{}leaf{} {}{}\n{}\n{}\n",
+            color::Green.fg_str(),
+            color::Reset.fg_str(),
+            module_path
+                .to_pathbuf(&parser.environment)
+                .to_string_lossy(),
+            color::Green
+                .fg_str()
+                .to_owned()
+                .add(":")
+                .add(color::Reset.fg_str()),
+            line,
             std::iter::repeat(' ')
-                .take(if arrow == 0 { 0 } else { arrow - 1 })
+                .take(arrow)
                 .collect::<String>()
-                .add("^")
-        )
+                .add(color::Red.fg_str())
+                .add("^^")
+                .add(color::Reset.fg_str())
+        )?;
+
+        use ParseFault::*;
+        match &self.variant {
+            EndedWhileExpecting(expected) => match expected.len() {
+                0 => panic!("None expected"),
+                1 => write!(f, "I was expecting {} but the file ended here", expected[0]),
+                2 => write!(
+                    f,
+                    "I was expecting {} or {} but the file ended here",
+                    expected[0], expected[1]
+                ),
+                3 => write!(
+                    f,
+                    "I was expecting {} or {} or {} but the file ended here",
+                    expected[0], expected[1], expected[2]
+                ),
+                _ => write!(
+                    f,
+                    "The file ended but I was expecting any of: \n{}",
+                    expected
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<String>>()
+                        .join("\n  ")
+                ),
+            },
+            GotButExpected(got, expected) => match expected.len() {
+                0 => panic!("None expected"),
+                1 => write!(f, "I was expecting {} but got {}", expected[0], got),
+                2 => write!(
+                    f,
+                    "I was expecting {} or {} but got {}",
+                    expected[0], expected[1], got
+                ),
+                _ => write!(
+                    f,
+                    "Got {} but I was expecting any of: \n{}",
+                    got,
+                    expected
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<String>>()
+                        .join("\n  ")
+                ),
+            },
+            FunctionNotFound(ident, fid) => {
+                let module = &parser.modules[*fid];
+                write!(
+                    f,
+                    "Function `{}` not found in {} (or prelude)",
+                    ident, module.module_path
+                )
+            }
+            FunctionVariantNotFound(ident, params, fid) => {
+                let module = &parser.modules[*fid];
+                let variants = &module.functions[ident];
+                match variants.len() {
+                    1 => {
+                        let (wanted_params, (wfuncb, _)) = variants.iter().next().unwrap();
+                        let mut mismatches = Vec::with_capacity(2);
+                        for (i, param) in wanted_params.iter().enumerate() {
+                            let got = match params.get(i) {
+                                None => break, // TODO: What if `got` has less parmater then `wanted`?
+                                Some(t) => t,
+                            };
+                            if param != got {
+                                mismatches.push(i);
+                            }
+                        }
+                        if mismatches.len() == 1 {
+                            let i = mismatches[0];
+                            write!(
+                                f,
+                                "Type mismatch. Wanted `{}` but got `{}`\n {}\n {}",
+                                wanted_params[i],
+                                params[i],
+                                format_function_header(ident, &params),
+                                format_function_header(&wfuncb.name, &wanted_params),
+                            )
+                        } else {
+                            write!(f, "No function named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
+                                ident,
+                                format_function_header(ident, &params),
+                                format_function_header(&wfuncb.name, &wanted_params),
+                                )
+                        }
+                    }
+                    _ => {
+                        write!(f, "No function named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
+                            ident,
+                            format_function_header(ident, &params),
+                            variants.values().map(|(fb, _)| format_function_header(&fb.name, &fb.parameter_types)).collect::<Vec<String>>().join("\n  ")
+                            )
+                    },
+                }
+            }
+            ModuleLoadNotFound(entries) => write!(
+                f,
+                "Module `{}` not found in project folder or leafpath",
+                entries.join(":")
+            ),
+            _ => panic!("TODO: Display error {:?}", self.variant),
+        }
     }
 }
 
-fn locate_line(source: &[u8], index: usize) -> (&[u8], usize) {
+fn format_function_header(fname: &str, fparams: &[Type]) -> String {
+    format!(
+        "{}fn{} {} ({}{}{} -> ...)",
+        color::Yellow.fg_str(),
+        color::Reset.fg_str(),
+        fname,
+        color::Green.fg_str(),
+        fparams
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<String>>()
+            .join(" "),
+        color::Reset.fg_str(),
+    )
+}
+
+fn locate_line(source: &[u8], index: usize) -> (&[u8], usize, usize) {
+    let mut line_number = 1;
+    for (i, c) in source.iter().enumerate() {
+        if i == index {
+            break;
+        }
+        if *c == b'\n' {
+            line_number += 1;
+        }
+    }
+
     let mut i = index;
     let start_i = loop {
         let c = source[i];
@@ -151,5 +296,5 @@ fn locate_line(source: &[u8], index: usize) -> (&[u8], usize) {
         }
         i += 1;
     };
-    (&source[start_i..end_i], index - start_i)
+    (&source[start_i..end_i], index - start_i, line_number)
 }

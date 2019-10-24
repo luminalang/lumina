@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Key {
@@ -88,5 +89,11 @@ impl Key {
             Key::PrimitiveExit => "exit",
             Key::PrimitiveUnimplemented => "unimplemented",
         }
+    }
+}
+
+impl fmt::Display for Key {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }

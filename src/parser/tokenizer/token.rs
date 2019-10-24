@@ -98,6 +98,21 @@ pub enum RawToken {
     NewLine,
 }
 
+impl fmt::Display for RawToken {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use RawToken::*;
+        match self {
+            Identifier(ident) => f.write_str(ident),
+            ExternalIdentifier(entries) => f.write_str(&entries.join(":")),
+            Header(h) => h.fmt(f),
+            Key(key) => key.fmt(f),
+            Inlined(inlined) => inlined.fmt(f),
+            Operation(_, op) => write!(f, "... {} ...", op.to_string()),
+            _ => panic!("TODO: Format {:?}", self),
+        }
+    }
+}
+
 impl Default for RawToken {
     fn default() -> Self {
         RawToken::NewLine

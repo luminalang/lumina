@@ -59,32 +59,36 @@ impl<'f> TypeChecker<'f> {
             // Find function name
             match self_mod.functions.get(fname) {
                 // No functions with this name exists in that scope
-                None => {
-                    if let Some(position) =
-                        Self::try_locate_from_prelude(parser, fname, false, &fparams)
-                    {
-                        Ok(position)
-                    } else {
-                        Err(ParseFault::FunctionNotFound(fname.to_owned(), fmodule))
+                None => match Self::try_locate_from_prelude(parser, fname, false, &fparams) {
+                    // But it does exist in prelude
+                    Ok(position) => Ok(position),
+                    Err(had_variants) => {
+                        if had_variants {
+                            Err(ParseFault::FunctionVariantNotFound(
+                                fname.to_owned(),
+                                fparams.clone(),
+                                super::PRELUDE_FID,
+                            ))
+                        } else {
+                            Err(ParseFault::FunctionNotFound(
+                                fname.to_owned(),
+                                super::PRELUDE_FID,
+                            ))
+                        }
                     }
-                }
+                },
 
                 // Find function variants (which function takes these exact types?)
                 Some(variants) => match variants.get(&fparams) {
                     // Function name exists but no variant of that function takes these parameters
-                    None => {
-                        if let Some(position) =
-                            Self::try_locate_from_prelude(parser, fname, false, &fparams)
-                        {
-                            Ok(position)
-                        } else {
-                            Err(ParseFault::FunctionVariantNotFound(
-                                fname.to_owned(),
-                                fparams.clone(),
-                                fmodule,
-                            ))
-                        }
-                    }
+                    None => match Self::try_locate_from_prelude(parser, fname, false, &fparams) {
+                        Ok(position) => Ok(position),
+                        Err(_had_variants) => Err(ParseFault::FunctionVariantNotFound(
+                            fname.to_owned(),
+                            fparams.clone(),
+                            fmodule,
+                        )),
+                    },
 
                     // Found!
                     Some(func) => Ok(Position {
@@ -103,15 +107,25 @@ impl<'f> TypeChecker<'f> {
             match self_mod.operators.get(fname) {
                 // No operators with this name exists in that scope
                 None => match Self::try_locate_from_prelude(parser, fname, true, &fparams) {
-                    Some(position) => Ok(position),
-                    None => Err(ParseFault::OperatorNotFound(fname.to_owned(), fmodule)),
+                    Ok(position) => Ok(position),
+                    Err(had_variants) => {
+                        if had_variants {
+                            Err(ParseFault::OperatorVariantNotFound(
+                                fname.to_owned(),
+                                [fparams[0].clone(), fparams[1].clone()],
+                                super::PRELUDE_FID,
+                            ))
+                        } else {
+                            Err(ParseFault::OperatorNotFound(fname.to_owned(), fmodule))
+                        }
+                    }
                 },
 
                 Some(variants) => match variants.get(key) {
                     // Operator name exists but no variant of that operator takes these parameters
                     None => match Self::try_locate_from_prelude(parser, fname, true, &fparams) {
-                        Some(position) => Ok(position),
-                        None => Err(ParseFault::OperatorVariantNotFound(
+                        Ok(position) => Ok(position),
+                        Err(_had_variants) => Err(ParseFault::OperatorVariantNotFound(
                             fname.to_owned(),
                             key.clone(),
                             fmodule,
@@ -134,18 +148,28 @@ impl<'f> TypeChecker<'f> {
         fname: &str,
         op: bool,
         fparams: &[Type],
-    ) -> Option<Position<'f>> {
+    ) -> Result<Position<'f>, bool> {
         let prelude = &parser.modules[super::PRELUDE_FID];
         if op {
-            let (op, opid) = prelude.operators.get(fname)?.get(fparams)?;
-            Some(Position {
+            let (op, opid) = prelude
+                .operators
+                .get(fname)
+                .ok_or(false)?
+                .get(fparams)
+                .ok_or(true)?;
+            Ok(Position {
                 module: super::PRELUDE_FID,
                 function: Box::new(op),
                 funcid: *opid,
             })
         } else {
-            let (func, funcid) = prelude.functions.get(fname)?.get(fparams)?;
-            Some(Position {
+            let (func, funcid) = prelude
+                .functions
+                .get(fname)
+                .ok_or(false)?
+                .get(fparams)
+                .ok_or(true)?;
+            Ok(Position {
                 module: super::PRELUDE_FID,
                 function: Box::new(func),
                 funcid: *funcid,

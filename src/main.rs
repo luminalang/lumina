@@ -37,17 +37,27 @@ fn main() {
     // Construct a raw token representation of the code
     let fid = match parser.tokenize(file_path.clone(), &source_code) {
         Ok(functions) => functions,
-        Err(e) => panic!("{:?}", e),
+        Err(e) => {
+            println!(
+                "{}",
+                e.with_source_code(source_code, file_path)
+                    .with_parser(parser)
+            );
+            return;
+        }
     };
     println!("{:#?}\n", parser);
 
     // Verify syntax and infer types
     match parser.type_check(fid) {
-        Err(e) => println!(
-            "{}",
-            e.with_source_code(source_code, file_path)
-                .with_parser(parser)
-        ),
+        Err(e) => {
+            println!(
+                "{}",
+                e.with_source_code(source_code, file_path)
+                    .with_parser(parser)
+            );
+            return;
+        }
         Ok(_main_return) => {}
     };
 

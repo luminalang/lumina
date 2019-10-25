@@ -340,14 +340,21 @@ pub trait BodySource {
                 }
                 Mode::Neutral => Ok(WalkResult::CloseParen(None)),
             },
-            RawToken::Operator(_) => match mode {
-                Mode::Parameters(previous) => {
-                    self.undo();
-                    let t = Token::new(RawToken::Parameters(previous), token.source_index);
-                    Ok(WalkResult::Value(t))
+            RawToken::Operator(op) => {
+                match mode {
+                    Mode::Parameters(previous) => {
+                        self.undo();
+                        let t = Token::new(RawToken::Parameters(previous), token.source_index);
+                        Ok(WalkResult::Value(t))
+                    }
+                    Mode::Operator(left, old_op) => ParseFault::MissingRightSideOperator(Box::new(
+                        (left.inner, old_op, RawToken::Operator(op)),
+                    ))
+                    .to_err(token.source_index)
+                    .into(),
+                    _ => unimplemented!(), // possible?
                 }
-                _ => unimplemented!(), // possible?
-            },
+            }
             _ => panic!("Unexpected {:?}; MODE:{:?}", token, mode),
         }
     }

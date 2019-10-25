@@ -121,27 +121,23 @@ impl fmt::Display for ParseError {
             .as_ref()
             .expect("Module name not appended to error in final scope");
 
-        // TODO: Line number
         write!(
             f,
-            "{}leaf{} {}{}\n{}\n{}\n",
-            color::Green.fg_str(),
-            color::Reset.fg_str(),
+            "{g}leaf{n} {}{g}:{n}\n {y}{}{n} | {}\n{}\n",
             module_path
                 .to_pathbuf(&parser.environment)
                 .to_string_lossy(),
-            color::Green
-                .fg_str()
-                .to_owned()
-                .add(":")
-                .add(color::Reset.fg_str()),
+            line_number,
             line,
             std::iter::repeat(' ')
-                .take(arrow)
+                .take(arrow + 3 + line_number.to_string().len())
                 .collect::<String>()
                 .add(color::Red.fg_str())
-                .add("^^")
-                .add(color::Reset.fg_str())
+                .add("-^-")
+                .add(color::Reset.fg_str()),
+            y = color::Yellow.fg_str(),
+            g = color::Green.fg_str(),
+            n = color::Reset.fg_str(),
         )?;
 
         use ParseFault::*;
@@ -196,6 +192,14 @@ impl fmt::Display for ParseError {
                     ident, module.module_path
                 )
             }
+            OperatorNotFound(ident, fid) => {
+                let module = &parser.modules[*fid];
+                write!(
+                    f,
+                    "Operator `{}` not found in {} (or prelude)",
+                    ident, module.module_path
+                )
+            }
             FunctionVariantNotFound(ident, params, fid) => {
                 let module = &parser.modules[*fid];
                 let variants = &module.functions[ident];
@@ -239,11 +243,67 @@ impl fmt::Display for ParseError {
                     },
                 }
             }
+            OperatorVariantNotFound(ident, params, fid) => {
+                let module = &parser.modules[*fid];
+                let variants = &module.operators[ident];
+                match variants.len() {
+                    1 => {
+                        let (wanted_params, (wfuncb, _)) = variants.iter().next().unwrap();
+                        let mut mismatches = Vec::with_capacity(2);
+                        for (i, param) in wanted_params.iter().enumerate() {
+                            let got = match params.get(i) {
+                                None => break, // TODO: What if `got` has less parmater then `wanted`?
+                                Some(t) => t,
+                            };
+                            if param != got {
+                                mismatches.push(i);
+                            }
+                        }
+                        if mismatches.len() == 1 {
+                            let i = mismatches[0];
+                            write!(
+                                f,
+                                "Type mismatch. Wanted `{}` but got `{}`\n {}\n {}",
+                                wanted_params[i],
+                                params[i],
+                                format_operator_header(ident, &params[0], &params[1]),
+                                format_operator_header(&wfuncb.name.identifier, &wanted_params[0], &wanted_params[1]),
+                            )
+                        } else {
+                            write!(f, "No operator named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
+                                ident,
+                                    format_operator_header(ident, &params[0], &params[1]),
+                                    format_operator_header(&wfuncb.name.identifier, &wanted_params[0], &wanted_params[1]),
+                                )
+                        }
+                    }
+                    _ => {
+                        write!(f, "No operator named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
+                            ident,
+                            format_operator_header(ident, &params[0], &params[1]),
+                            variants.values().map(|(fb, _)| format_operator_header(&fb.name.identifier, &fb.parameter_types[0], &fb.parameter_types[1])).collect::<Vec<String>>().join("\n  ")
+                            )
+                    },
+                }
+            }
             ModuleLoadNotFound(entries) => write!(
                 f,
                 "Module `{}` not found in project folder or leafpath",
                 entries.join(":")
             ),
+            ModuleLoadFailed(path, err) => write!(
+                f,
+                "Found but unable to read {}: {:?}",
+                path.to_string_lossy(),
+                err,
+            ),
+            NotValidType(ident) => write!(f, "`{}` is not a valid type identifier", ident),
+            MissingRightSideOperator(box (_left, op, right)) => write!(
+                f,
+                "Missing the right value for the operator `{}`, instead got this `{}`",
+                op, right
+            ),
+            EndedMissingRightSideOperator(_left, op) => write!(f, "The function ended but I was still looking for the right side value for the operator `{}`", op),
             _ => panic!("TODO: Display error {:?}", self.variant),
         }
     }
@@ -264,6 +324,18 @@ fn format_function_header(fname: &str, fparams: &[Type]) -> String {
         color::Reset.fg_str(),
     )
 }
+fn format_operator_header(opname: &str, left: &Type, right: &Type) -> String {
+    format!(
+        "{}operator{} {} ({}{} ... {}{})",
+        color::Yellow.fg_str(),
+        color::Reset.fg_str(),
+        opname,
+        color::Green.fg_str(),
+        left,
+        right,
+        color::Reset.fg_str(),
+    )
+}
 
 fn locate_line(source: &[u8], index: usize) -> (&[u8], usize, usize) {
     let mut line_number = 1;
@@ -276,7 +348,13 @@ fn locate_line(source: &[u8], index: usize) -> (&[u8], usize, usize) {
         }
     }
 
-    let mut i = index;
+    // Pretty dirty hack but if the error is on the actual newline character itself we want to
+    // technically search for the start of the previous line
+    let mut i = if source[index] == b'\n' {
+        index - 1
+    } else {
+        index
+    };
     let start_i = loop {
         let c = source[i];
         if c == b'\n' || i == 0 {

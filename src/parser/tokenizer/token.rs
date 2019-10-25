@@ -107,7 +107,8 @@ impl fmt::Display for RawToken {
             Header(h) => h.fmt(f),
             Key(key) => key.fmt(f),
             Inlined(inlined) => inlined.fmt(f),
-            Operation(_, op) => write!(f, "... {} ...", op.to_string()),
+            Operation(_, op) => write!(f, "... {} ...", op),
+            Operator(op) => write!(f, "{}", op),
             _ => panic!("TODO: Format {:?}", self),
         }
     }

@@ -70,10 +70,7 @@ impl<'f> TypeChecker<'f> {
                                 super::PRELUDE_FID,
                             ))
                         } else {
-                            Err(ParseFault::FunctionNotFound(
-                                fname.to_owned(),
-                                super::PRELUDE_FID,
-                            ))
+                            Err(ParseFault::FunctionNotFound(fname.to_owned(), fmodule))
                         }
                     }
                 },
@@ -193,7 +190,7 @@ impl<'f> TypeChecker<'f> {
         self.active
             .function
             .check_return(&got)
-            .map_err(|e| e.to_err(0))?;
+            .map_err(|e| e.to_err(entry.source_index))?;
 
         Ok(got)
     }

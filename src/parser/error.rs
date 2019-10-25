@@ -1,14 +1,12 @@
 use super::{
     tokenizer::Operator, FileSource, FunctionBuilder, Key, OperatorBuilder, Parser, RawToken, Type,
 };
-use std::collections::HashMap;
 use std::convert::Into;
 use std::fmt;
 use std::io;
 use std::ops::Add;
 use std::path::PathBuf;
 use termion::color;
-use termion::color::Fg;
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -114,34 +112,42 @@ impl fmt::Display for ParseError {
             .source_code
             .as_ref()
             .expect("Source code not appended to error in final scope");
-        let (raw_line, arrow, line_number) = locate_line(source, self.source_index);
-        let line = String::from_utf8(raw_line.to_vec()).unwrap();
-        let module_path = self
-            .module_name
-            .as_ref()
-            .expect("Module name not appended to error in final scope");
+        if self.source_index != 0 {
+            let (raw_line, arrow, line_number) = locate_line(source, self.source_index);
+            let line = String::from_utf8(raw_line.to_vec()).unwrap();
+            let module_path = self
+                .module_name
+                .as_ref()
+                .expect("Module name not appended to error in final scope");
 
-        write!(
-            f,
-            "{g}leaf{n} {}{g}:{n}\n {y}{}{n} | {}\n{}\n",
-            module_path
-                .to_pathbuf(&parser.environment)
-                .to_string_lossy(),
-            line_number,
-            line,
-            std::iter::repeat(' ')
-                .take(arrow + 3 + line_number.to_string().len())
-                .collect::<String>()
-                .add(color::Red.fg_str())
-                .add("-^-")
-                .add(color::Reset.fg_str()),
-            y = color::Yellow.fg_str(),
-            g = color::Green.fg_str(),
-            n = color::Reset.fg_str(),
-        )?;
+            write!(
+                f,
+                "{g}leaf{n} {}{g}:{n}\n {y}{}{n} | {}\n{}\n",
+                module_path
+                    .to_pathbuf(&parser.environment)
+                    .to_string_lossy(),
+                line_number,
+                line,
+                std::iter::repeat(' ')
+                    .take(arrow + 3 + line_number.to_string().len())
+                    .collect::<String>()
+                    .add(color::Red.fg_str())
+                    .add("-^-")
+                    .add(color::Reset.fg_str()),
+                y = color::Yellow.fg_str(),
+                g = color::Green.fg_str(),
+                n = color::Reset.fg_str(),
+            )?;
+        }
 
         use ParseFault::*;
         match &self.variant {
+            InvalidPath(entries) => write!(f, "`{}` is not a valid module path", entries.join(":")),
+            BridgedWrongPathLen(entries) => write!(f, "`{}` wrong length of path", entries.join(":")),
+            BridgedFunctionNotFound(ident, param_amount) => write!(f, "No bridged function named `{}` takes {} parameters", ident, param_amount),
+            BridgedFunctionNoMode(c) => write!(f, "Bridged path mode doesn't exist, got `{}`", c),
+            Unexpected(t) => write!(f, "Unexpected {}", t),
+            Unmatched(k) => write!(f, "Unmatched {}", k),
             EndedWhileExpecting(expected) => match expected.len() {
                 0 => panic!("None expected"),
                 1 => write!(f, "I was expecting {} but the file ended here", expected[0]),
@@ -304,10 +310,43 @@ impl fmt::Display for ParseError {
                 op, right
             ),
             EndedMissingRightSideOperator(_left, op) => write!(f, "The function ended but I was still looking for the right side value for the operator `{}`", op),
-            _ => panic!("TODO: Display error {:?}", self.variant),
+            InvalidIdentifier(ident, identsource) => {
+                write!(f, "`{}` is not a valid identifier", ident)?;
+                match identsource {
+                    IdentSource::Module => write!(f, "for a module name"),
+                    IdentSource::FunctionDeclName => write!(f, "for a function"),
+                    IdentSource::Ident => Ok(()),
+                }
+            },
+            FirstStmNoThen => {
+                write!(f, "This first statement doesn't have a `then` branch. I was looking for something ressembling\n first ...\n then  ...")
+            },
+            EmptyParen => write!(f, "Empty parenthesis aren't allowed. For unit value use the type `nothing` and value `_`"),
+            IfMissingThen => write!(f, "This if expression doesn't have a `then` branch, I was looking for something ressembling\n if ...\n  then ...\n  else ..."),
+            IfMissingElse => write!(f, "This if expression doesn't have an `else` branch, I was looking for something ressembling\n if ...\n  then ...\n  else ..."),
+            IfDoubleElse => write!(f, "This if expression has two `else` branches, how would I know which one to use?"),
+            ListMissingClose => write!(f, "This list open is missing a matching `]` to close it"),
+            OpNoIdent => write!(f, "You need to provide an identifier for this operator"),
+            OpWantedIdent(a) => write!(f, "Wanted identifier for the operator but got `{}`", a),
+            InvalidParameterName(name) => write!(f, "`{}` is not a valid identifier for a parmater", name),
+            PipeIntoVoid => write!(f, "This pipe doesn't lead to anywhere, perhaps you need to remove it?"),
+            EmptyListType => write!(f, "I know that this is a list but you need to say what type the contents of the list will be\n such as [a] or [int]"),
+            FnTypeReturnMismatch(funcb, got) => write!(f, "This function returns the wrong value. Acording to its type signature it should return `{}`\n  {}\nbut instead it returns `{}`",
+                funcb.returns,
+                format_function_header(&funcb.name, &funcb.parameter_types),
+                got,
+            ),
+            OpTypeReturnMismatch(opb, got) => write!(f, "This operator returns the wrong value. Acording to its type signature it should return `{}`\n  {}\nbut instead it returns `{}`",
+                opb.returns,
+                format_operator_header(&opb.name.identifier, &opb.parameter_types[0], &opb.parameter_types[1]),
+                got,
+            ),
+            Internal => write!(f, "Internal leaf error"),
         }
     }
 }
+
+// TODO: Display return type in special cases, guess I'll add an `returns: Option<Type>`
 
 fn format_function_header(fname: &str, fparams: &[Type]) -> String {
     format!(

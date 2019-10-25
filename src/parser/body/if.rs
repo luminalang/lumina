@@ -38,7 +38,8 @@ pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<IfExpr, ParseErro
 
                 match brk {
                     // I think the body walker will just catch these instead
-                    Else => panic!("Two `else` in a row uncaught by body parse"),
+                    // update: didn't catch the else branch, guess I'll handle them here
+                    Else => return ParseFault::IfDoubleElse.to_err(0).into(),
                     Elif => panic!("Elif after else"),
                     EOF => return Ok(expr),
                 }

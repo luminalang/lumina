@@ -22,6 +22,7 @@ pub fn build<S: BodySource + ?Sized>(source: &mut S) -> Result<Vec<Token>, Parse
                         let entry = SimpleSource::new(&raw_tokens).walk(Mode::Neutral)?;
                         match entry {
                             WalkResult::Value(v) => entries.push(v),
+                            WalkResult::EOF => break 'list,
                             _ => panic!("{:?}", entry),
                         }
                         break 'list;

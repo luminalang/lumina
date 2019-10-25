@@ -229,22 +229,22 @@ impl fmt::Display for ParseError {
                                 "Type mismatch. Wanted `{}` but got `{}`\n {}\n {}",
                                 wanted_params[i],
                                 params[i],
-                                format_function_header(ident, &params),
-                                format_function_header(&wfuncb.name, &wanted_params),
+                                format_function_header(ident, Some(&params), None),
+                                format_function_header(&wfuncb.name, Some(&wanted_params) ,None),
                             )
                         } else {
                             write!(f, "No function named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
                                 ident,
-                                format_function_header(ident, &params),
-                                format_function_header(&wfuncb.name, &wanted_params),
+                                format_function_header(ident, Some(&params), None),
+                                format_function_header(&wfuncb.name, Some(&wanted_params), None),
                                 )
                         }
                     }
                     _ => {
                         write!(f, "No function named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
                             ident,
-                            format_function_header(ident, &params),
-                            variants.values().map(|(fb, _)| format_function_header(&fb.name, &fb.parameter_types)).collect::<Vec<String>>().join("\n  ")
+                            format_function_header(ident, Some(&params), None),
+                            variants.values().map(|(fb, _)| format_function_header(&fb.name, Some(&fb.parameter_types), None)).collect::<Vec<String>>().join("\n  ")
                             )
                     },
                 }
@@ -333,7 +333,7 @@ impl fmt::Display for ParseError {
             EmptyListType => write!(f, "I know that this is a list but you need to say what type the contents of the list will be\n such as [a] or [int]"),
             FnTypeReturnMismatch(funcb, got) => write!(f, "This function returns the wrong value. Acording to its type signature it should return `{}`\n  {}\nbut instead it returns `{}`",
                 funcb.returns,
-                format_function_header(&funcb.name, &funcb.parameter_types),
+                format_function_header(&funcb.name, None, Some(&funcb.returns)),
                 got,
             ),
             OpTypeReturnMismatch(opb, got) => write!(f, "This operator returns the wrong value. Acording to its type signature it should return `{}`\n  {}\nbut instead it returns `{}`",
@@ -346,23 +346,35 @@ impl fmt::Display for ParseError {
     }
 }
 
-// TODO: Display return type in special cases, guess I'll add an `returns: Option<Type>`
+fn format_function_header(name: &str, params: Option<&[Type]>, returns: Option<&Type>) -> String {
+    let mut buf = String::with_capacity(10);
+    buf.push_str(color::Yellow.fg_str());
+    buf.push_str("fn ");
+    buf.push_str(color::Reset.fg_str());
+    buf.push_str(name);
+    buf.push_str(" (");
+    if let Some(params) = params {
+        buf.push_str(color::Yellow.fg_str());
+        for param in params {
+            buf.push_str(&param.to_string());
+            buf.push(' ');
+        }
+        buf.push_str(color::Reset.fg_str());
+        buf.push_str("-> ");
+    }
+    buf.push_str(color::Yellow.fg_str());
+    match returns {
+        Some(t) => buf.push_str(&t.to_string()),
+        None => buf.push_str("..."),
+    }
+    buf.push_str(color::Reset.fg_str());
+    buf.push(')');
 
-fn format_function_header(fname: &str, fparams: &[Type]) -> String {
-    format!(
-        "{}fn{} {} ({}{}{} -> ...)",
-        color::Yellow.fg_str(),
-        color::Reset.fg_str(),
-        fname,
-        color::Green.fg_str(),
-        fparams
-            .iter()
-            .map(|t| t.to_string())
-            .collect::<Vec<String>>()
-            .join(" "),
-        color::Reset.fg_str(),
-    )
+    buf
 }
+
+// TODO: Replicate optional return/param like format_function_header
+
 fn format_operator_header(opname: &str, left: &Type, right: &Type) -> String {
     format!(
         "{}operator{} {} ({}{} ... {}{})",

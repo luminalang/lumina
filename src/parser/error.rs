@@ -228,13 +228,13 @@ impl fmt::Display for ParseError {
                                 wanted_params[i],
                                 params[i],
                                 format_function_header(ident, Some(&params), None),
-                                format_function_header(&wfuncb.name, Some(&wanted_params) ,None),
+                                format_function_header(&wfuncb.borrow().name, Some(&wanted_params) ,None),
                             )
                         } else {
                             write!(f, "No function named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
                                 ident,
                                 format_function_header(ident, Some(&params), None),
-                                format_function_header(&wfuncb.name, Some(&wanted_params), None),
+                                format_function_header(&wfuncb.borrow().name, Some(&wanted_params), None),
                                 )
                         }
                     }
@@ -242,7 +242,7 @@ impl fmt::Display for ParseError {
                         write!(f, "No function named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
                             ident,
                             format_function_header(ident, Some(&params), None),
-                            variants.values().map(|(fb, _)| format_function_header(&fb.name, Some(&fb.parameter_types), None)).collect::<Vec<String>>().join("\n  ")
+                            variants.values().map(|(fb, _)| format_function_header(&fb.borrow().name, Some(&fb.borrow().parameter_types), None)).collect::<Vec<String>>().join("\n  ")
                             )
                     },
                 }
@@ -271,13 +271,13 @@ impl fmt::Display for ParseError {
                                 wanted_params[i],
                                 params[i],
                                 format_operator_header(ident, &params[0], &params[1]),
-                                format_operator_header(&wfuncb.name, &wanted_params[0], &wanted_params[1]),
+                                format_operator_header(&wfuncb.borrow().name, &wanted_params[0], &wanted_params[1]),
                             )
                         } else {
                             write!(f, "No operator named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
                                 ident,
                                     format_operator_header(ident, &params[0], &params[1]),
-                                    format_operator_header(&wfuncb.name, &wanted_params[0], &wanted_params[1]),
+                                    format_operator_header(&wfuncb.borrow().name, &wanted_params[0], &wanted_params[1]),
                                 )
                         }
                     }
@@ -285,7 +285,7 @@ impl fmt::Display for ParseError {
                         write!(f, "No operator named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
                             ident,
                             format_operator_header(ident, &params[0], &params[1]),
-                            variants.values().map(|(fb, _)| format_operator_header(&fb.name, &fb.parameter_types[0], &fb.parameter_types[1])).collect::<Vec<String>>().join("\n  ")
+                            variants.values().map(|(fb, _)| format_operator_header(&fb.borrow().name, &fb.borrow().parameter_types[0], &fb.borrow().parameter_types[1])).collect::<Vec<String>>().join("\n  ")
                             )
                     },
                 }

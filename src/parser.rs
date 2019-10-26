@@ -1,4 +1,5 @@
 use crate::env::Environment;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt;
@@ -39,10 +40,9 @@ pub struct Parser {
 // #[derive(Default)]
 pub struct ParseModule {
     //                     identifer       parameters
-    pub functions: HashMap<String, HashMap<Vec<Type>, (FunctionBuilder, usize)>>,
-    // With a nested hashmap here we can no longer rely on it's .len method to generate new
-    // funcid's
+    pub functions: HashMap<String, HashMap<Vec<Type>, (Rc<RefCell<FunctionBuilder>>, usize)>>,
     function_count: usize,
+
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
     pub imports: HashMap<String, usize>,
@@ -99,13 +99,19 @@ impl Parser {
         let funcid = module.next_funcid();
         match module.functions.get_mut(&funcb.name) {
             Some(existing) => {
-                existing.insert(funcb.parameter_types.clone(), (funcb, funcid));
+                existing.insert(
+                    funcb.parameter_types.clone(),
+                    (Rc::new(RefCell::new(funcb)), funcid),
+                );
                 funcid
             }
             None => {
                 let mut hashmap = HashMap::with_capacity(1);
                 let name = funcb.name.clone();
-                hashmap.insert(funcb.parameter_types.clone(), (funcb, funcid));
+                hashmap.insert(
+                    funcb.parameter_types.clone(),
+                    (Rc::new(RefCell::new(funcb)), funcid),
+                );
                 module.functions.insert(name, hashmap);
                 funcid
             }

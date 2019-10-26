@@ -1,16 +1,17 @@
-use super::{Inlined, ParseError, ParseFault, Parser, RawToken, Token, Type, DCE};
+use super::{FunctionBuilder, Inlined, ParseError, ParseFault, Parser, RawToken, Token, Type, DCE};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 #[derive(Clone)]
-struct Position<'f> {
+struct Position {
     module: usize,
-    function: Box<&'f dyn Typeable>,
+    function: Rc<RefCell<FunctionBuilder>>,
     funcid: usize,
 }
 
 pub struct TypeChecker<'f> {
     pub dce: DCE,
-    active: Position<'f>,
+    active: Position,
     parser: &'f Parser,
 }
 
@@ -62,7 +63,7 @@ impl<'f> TypeChecker<'f> {
         fmodule: usize,
         fname: &str,
         fparams: Vec<Type>,
-    ) -> Result<Position<'f>, ParseFault> {
+    ) -> Result<Position, ParseFault> {
         Self::locate_func_from(self.parser, fmodule, fname, fparams)
     }
 
@@ -71,7 +72,7 @@ impl<'f> TypeChecker<'f> {
         fmodule: usize,
         fname: &str,
         fparams: Vec<Type>,
-    ) -> Result<Position<'f>, ParseFault> {
+    ) -> Result<Position, ParseFault> {
         let self_mod = &parser.modules[fmodule];
         let is_operator = !super::is_valid_identifier(fname);
 
@@ -123,7 +124,7 @@ impl<'f> TypeChecker<'f> {
 
                 // Found!
                 Some(func) => Ok(Position {
-                    function: Box::new(&func.0),
+                    function: func.0.clone(),
                     module: fmodule,
                     funcid: func.1,
                 }),
@@ -135,7 +136,7 @@ impl<'f> TypeChecker<'f> {
         parser: &'f Parser,
         fname: &str,
         fparams: &[Type],
-    ) -> Result<Position<'f>, bool> {
+    ) -> Result<Position, bool> {
         let prelude = &parser.modules[super::PRELUDE_FID];
         let (func, funcid) = prelude
             .functions
@@ -145,12 +146,12 @@ impl<'f> TypeChecker<'f> {
             .ok_or(true)?;
         Ok(Position {
             module: super::PRELUDE_FID,
-            function: Box::new(func),
+            function: func.clone(),
             funcid: *funcid,
         })
     }
 
-    fn fork(&mut self, position: Position<'f>) -> Self {
+    fn fork(&mut self, position: Position) -> Self {
         Self {
             active: position,
             dce: self.dce.clone(),
@@ -159,11 +160,12 @@ impl<'f> TypeChecker<'f> {
     }
 
     pub fn run(&mut self) -> Result<Type, ParseError> {
-        let entry = self.active.function.entry_point();
+        let entry = self.active.function.borrow().entry_point();
         let got = self.type_check(&entry)?;
 
         self.active
             .function
+            .borrow()
             .check_return(&got)
             .map_err(|e| e.to_err(entry.source_index))?;
 
@@ -218,16 +220,20 @@ impl<'f> TypeChecker<'f> {
                 self.fork(new_pos).run()?
             }
             RawToken::Identifier(constant_ident) => {
-                let func = &self.active.function;
-                if let Some(param_id) = func.get_parameter(constant_ident) {
-                    func.get_parameter_type(param_id).clone()
-                } else {
-                    let new_pos = self
-                        .locate_func(self.active.module, constant_ident, vec![])
-                        .map_err(|e| e.to_err(t.source_index))?;
-                    self.dce.tag_func(new_pos.module, new_pos.funcid);
-                    self.fork(new_pos).run()?
+                if let Some(param_id) = self.active.function.borrow().get_parameter(constant_ident)
+                {
+                    return Ok(self
+                        .active
+                        .function
+                        .borrow()
+                        .get_parameter_type(param_id)
+                        .clone());
                 }
+                let new_pos = self
+                    .locate_func(self.active.module, constant_ident, vec![])
+                    .map_err(|e| e.to_err(t.source_index))?;
+                self.dce.tag_func(new_pos.module, new_pos.funcid);
+                self.fork(new_pos).run()?
             }
             RawToken::FirstStatement(entries) => {
                 for entry in entries[0..entries.len() - 1].iter() {

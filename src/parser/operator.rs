@@ -1,48 +1,26 @@
 use super::{
-    body, body::BodySource, checker::Typeable, tokenizer::Operator, Header, Key, ParseError,
-    ParseFault, RawToken, Token, Tokenizer, Type,
+    body::BodySource, FunctionBuilder, Key, ParseError, ParseFault, RawToken, Tokenizer, Type,
 };
 use std::convert::TryFrom;
-use std::fmt;
-use std::rc::Rc;
 
-#[derive(Default, Clone)]
-pub struct OperatorBuilder {
-    pub name: Operator,
-    pub parameter_types: [Type; 2],
-    pub returns: Type,
-    pub body: Rc<Token>,
-    pub wheres: Vec<(String, Token)>,
-}
-
-impl OperatorBuilder {
-    pub fn new() -> Self {
-        OperatorBuilder {
-            name: Operator::default(),
-            parameter_types: <[Type; 2]>::default(),
-            returns: Type::Nothing,
-            body: Rc::new(Token::new(RawToken::NewLine, 0)),
-            wheres: Vec::new(),
-        }
-    }
-
-    pub fn with_header(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+impl FunctionBuilder {
+    pub fn with_header_operator(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
         let first = match tokenizer.next() {
             None => return ParseFault::OpNoIdent.to_err(0).into(),
             Some(t) => t,
         };
         match first.inner {
-            RawToken::Operator(op) => self.name = op,
+            RawToken::Operator(op) => self.name = op.identifier,
             _ => {
                 return ParseFault::OpWantedIdent(first.inner)
                     .to_err(first.source_index)
                     .into()
             }
         };
-        self.with_types(tokenizer)
+        self.with_types_operator(tokenizer)
     }
 
-    fn with_types(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+    fn with_types_operator(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
         let t = match tokenizer.next() {
             None => {
                 return ParseFault::EndedWhileExpecting(vec![RawToken::Key(Key::ParenOpen)])
@@ -108,97 +86,9 @@ impl OperatorBuilder {
             }
         }
 
-        self.parameter_types = [left, right];
+        self.parameter_types = vec![left, right];
+        self.parameter_names = vec!["left".into(), "right".into()];
         self.returns = returns;
         Ok(self)
-    }
-
-    pub fn parse_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ParseError> {
-        let entry = self.parse_body_tokens(tokenizer)?;
-        self.parse_body_wheres(tokenizer)?;
-        Ok(entry)
-    }
-
-    fn parse_body_tokens(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ParseError> {
-        let entry = tokenizer.walk(body::Mode::Neutral)?;
-        match entry {
-            body::WalkResult::Value(v) => Ok(v),
-            _ => panic!("{:?}", entry),
-        }
-    }
-
-    fn parse_body_wheres(&mut self, tokenizer: &mut Tokenizer) -> Result<(), ParseError> {
-        loop {
-            let next = match tokenizer.next() {
-                None => {
-                    tokenizer.undo();
-                    return Ok(());
-                }
-                Some(t) => t,
-            };
-            match next.inner {
-                RawToken::Key(Key::Where) => {
-                    let (name, t) = body::r#where::build(tokenizer)?;
-                    self.wheres.push((name, t));
-                }
-                RawToken::Header(_) => {
-                    tokenizer.undo();
-                    return Ok(());
-                }
-                _ => {
-                    return ParseFault::GotButExpected(
-                        next.inner,
-                        vec![
-                            RawToken::Header(Header::Function),
-                            RawToken::Key(Key::Where),
-                        ],
-                    )
-                    .to_err(next.source_index)
-                    .into()
-                }
-            }
-        }
-    }
-}
-impl Typeable for OperatorBuilder {
-    fn get_parameter(&self, ident: &str) -> Option<usize> {
-        match ident {
-            "left" => Some(0),
-            "right" => Some(1),
-            _ => None,
-        }
-    }
-    fn get_parameter_type(&self, pid: usize) -> &Type {
-        &self.parameter_types[pid]
-    }
-    fn check_return(&self, got: &Type) -> Result<(), ParseFault> {
-        if *got != self.returns && self.returns != Type::Nothing {
-            return Err(ParseFault::OpTypeReturnMismatch(self.clone(), got.clone()));
-        }
-        Ok(())
-    }
-    fn entry_point(&self) -> Rc<Token> {
-        self.body.clone()
-    }
-}
-
-impl fmt::Debug for OperatorBuilder {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let where_statements = self
-            .wheres
-            .iter()
-            .map(|(name, entry)| format!("where {}: {:?}", name, entry))
-            .collect::<Vec<String>>()
-            .join("\n  ");
-        write!(
-            f,
-            "fn {} ({} {} {})\n{:#?}{}",
-            self.name.identifier,
-            self.parameter_types[0],
-            self.returns,
-            self.parameter_types[1],
-            self.body,
-            where_statements,
-        )
     }
 }

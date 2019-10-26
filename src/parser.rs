@@ -22,9 +22,8 @@ pub mod flags;
 use checker::TypeChecker;
 pub mod body;
 use body::BodySource;
-mod operator;
-pub use operator::OperatorBuilder;
 mod error;
+mod operator;
 pub use error::*;
 mod dce;
 pub use dce::DCE;
@@ -44,9 +43,6 @@ pub struct ParseModule {
     // With a nested hashmap here we can no longer rely on it's .len method to generate new
     // funcid's
     function_count: usize,
-    operator_count: usize,
-    pub operators: HashMap<String, HashMap<[Type; 2], (OperatorBuilder, usize)>>,
-
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
     pub imports: HashMap<String, usize>,
@@ -59,8 +55,6 @@ impl ParseModule {
         Self {
             functions: HashMap::new(),
             function_count: 0,
-            operator_count: 0,
-            operators: HashMap::new(),
             types: HashMap::new(),
             type_fields: Vec::new(),
             imports: HashMap::new(),
@@ -70,11 +64,6 @@ impl ParseModule {
 
     fn next_funcid(&mut self) -> usize {
         let id = self.function_count;
-        self.function_count += 1;
-        id
-    }
-    fn next_operid(&mut self) -> usize {
-        let id = self.operator_count;
         self.function_count += 1;
         id
     }
@@ -122,23 +111,6 @@ impl Parser {
             }
         };
         funcid
-    }
-    fn new_operator(&mut self, fid: usize, opb: OperatorBuilder) -> usize {
-        let module = &mut self.modules[fid];
-        let opid = module.next_operid();
-        match module.operators.get_mut(&opb.name.identifier) {
-            Some(existing) => {
-                existing.insert(opb.parameter_types.clone(), (opb, opid));
-                opid
-            }
-            None => {
-                let mut hashmap = HashMap::with_capacity(1);
-                let name = opb.name.identifier.clone();
-                hashmap.insert(opb.parameter_types.clone(), (opb, opid));
-                module.operators.insert(name, hashmap);
-                opid
-            }
-        }
     }
     fn new_type(&mut self, fid: usize, name: String, fields: Vec<(String, Type)>) -> usize {
         let module = &mut self.modules[fid];
@@ -210,14 +182,15 @@ impl Parser {
                         self.new_function(fid, funcb);
                     }
                     Header::Operator => {
-                        let mut opb = OperatorBuilder::new().with_header(&mut tokenizer)?;
-                        let body_entry = opb
+                        let mut funcb =
+                            FunctionBuilder::new().with_header_operator(&mut tokenizer)?;
+                        let body_entry = funcb
                             .parse_body(&mut tokenizer)
                             .map_err(|e| e.fallback(source_index))?;
 
-                        opb.body = Rc::new(body_entry);
+                        funcb.body = Rc::new(body_entry);
 
-                        self.new_operator(fid, opb);
+                        self.new_function(fid, funcb);
                     }
                     Header::Type => {
                         let (type_name, fields) = self.parse_type_decl(&mut tokenizer)?;
@@ -411,15 +384,7 @@ impl fmt::Debug for ParseModule {
                     .join("\n"))
                 .collect::<Vec<String>>()
                 .join("\n"),
-            self.operators
-                .values()
-                .map(|same_name| same_name
-                    .values()
-                    .map(|(opb, opid)| format!("  #{} {:?}", opid, opb))
-                    .collect::<Vec<String>>()
-                    .join("\n"))
-                .collect::<Vec<String>>()
-                .join("\n")
+            "TODO",
         )
     }
 }

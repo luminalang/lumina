@@ -46,7 +46,7 @@ fn main() {
             return;
         }
     };
-    // println!("{:#?}\n", parser);
+    println!("{:#?}\n", parser);
 
     // Verify syntax and infer types
     let dce = match parser.type_check(fid) {

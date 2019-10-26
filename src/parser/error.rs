@@ -1,6 +1,4 @@
-use super::{
-    tokenizer::Operator, FileSource, FunctionBuilder, Key, OperatorBuilder, Parser, RawToken, Type,
-};
+use super::{tokenizer::Operator, FileSource, FunctionBuilder, Key, Parser, RawToken, Type};
 use std::convert::Into;
 use std::fmt;
 use std::io;
@@ -81,7 +79,7 @@ pub enum ParseFault {
     PipeIntoVoid,
     EmptyListType,
     FnTypeReturnMismatch(FunctionBuilder, Type),
-    OpTypeReturnMismatch(OperatorBuilder, Type),
+    OpTypeReturnMismatch(FunctionBuilder, Type),
     FunctionNotFound(String, usize),
     OperatorNotFound(String, usize),
     FunctionVariantNotFound(String, Vec<Type>, usize),
@@ -251,7 +249,7 @@ impl fmt::Display for ParseError {
             }
             OperatorVariantNotFound(ident, params, fid) => {
                 let module = &parser.modules[*fid];
-                let variants = &module.operators[ident];
+                let variants = &module.functions[ident];
                 match variants.len() {
                     1 => {
                         let (wanted_params, (wfuncb, _)) = variants.iter().next().unwrap();
@@ -273,13 +271,13 @@ impl fmt::Display for ParseError {
                                 wanted_params[i],
                                 params[i],
                                 format_operator_header(ident, &params[0], &params[1]),
-                                format_operator_header(&wfuncb.name.identifier, &wanted_params[0], &wanted_params[1]),
+                                format_operator_header(&wfuncb.name, &wanted_params[0], &wanted_params[1]),
                             )
                         } else {
                             write!(f, "No operator named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
                                 ident,
                                     format_operator_header(ident, &params[0], &params[1]),
-                                    format_operator_header(&wfuncb.name.identifier, &wanted_params[0], &wanted_params[1]),
+                                    format_operator_header(&wfuncb.name, &wanted_params[0], &wanted_params[1]),
                                 )
                         }
                     }
@@ -287,7 +285,7 @@ impl fmt::Display for ParseError {
                         write!(f, "No operator named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
                             ident,
                             format_operator_header(ident, &params[0], &params[1]),
-                            variants.values().map(|(fb, _)| format_operator_header(&fb.name.identifier, &fb.parameter_types[0], &fb.parameter_types[1])).collect::<Vec<String>>().join("\n  ")
+                            variants.values().map(|(fb, _)| format_operator_header(&fb.name, &fb.parameter_types[0], &fb.parameter_types[1])).collect::<Vec<String>>().join("\n  ")
                             )
                     },
                 }
@@ -338,7 +336,7 @@ impl fmt::Display for ParseError {
             ),
             OpTypeReturnMismatch(opb, got) => write!(f, "This operator returns the wrong value. Acording to its type signature it should return `{}`\n  {}\nbut instead it returns `{}`",
                 opb.returns,
-                format_operator_header(&opb.name.identifier, &opb.parameter_types[0], &opb.parameter_types[1]),
+                format_operator_header(&opb.name, &opb.parameter_types[0], &opb.parameter_types[1]),
                 got,
             ),
             Internal => write!(f, "Internal leaf error"),

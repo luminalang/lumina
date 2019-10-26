@@ -108,7 +108,7 @@ pub trait BodySource {
                         WalkResult::EOF => {
                             previous.get(0).map(|a| a.source_index).unwrap_or_else(|| 0)
                         }
-                        WalkResult::CloseParen(t) => {
+                        WalkResult::CloseParen(_) => {
                             return ParseFault::Unexpected(RawToken::Key(Key::ParenClose))
                                 .to_err(previous.last().unwrap().source_index)
                                 .into();

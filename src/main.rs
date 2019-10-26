@@ -46,10 +46,10 @@ fn main() {
             return;
         }
     };
-    println!("{:#?}\n", parser);
+    // println!("{:#?}\n", parser);
 
     // Verify syntax and infer types
-    match parser.type_check(fid) {
+    let dce = match parser.type_check(fid) {
         Err(e) => {
             println!(
                 "{}",
@@ -58,7 +58,7 @@ fn main() {
             );
             return;
         }
-        Ok(_main_return) => {}
+        Ok((_main_return, dce)) => dce,
     };
 
     /*

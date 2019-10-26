@@ -26,6 +26,8 @@ mod operator;
 pub use operator::OperatorBuilder;
 mod error;
 pub use error::*;
+mod dce;
+pub use dce::DCE;
 
 const PRELUDE_FID: usize = 0;
 
@@ -295,10 +297,10 @@ impl Parser {
         }
     }
 
-    pub fn type_check(&mut self, fid: usize) -> Result<Type, ParseError> {
-        TypeChecker::new(self, fid, "main", vec![])
-            .map_err(|e| e.to_err(0))?
-            .run()
+    pub fn type_check(&mut self, fid: usize) -> Result<(Type, DCE), ParseError> {
+        let mut checker = TypeChecker::new(self, fid, "main", vec![]).map_err(|e| e.to_err(0))?;
+        let main_returns = checker.run()?;
+        Ok((main_returns, checker.dce))
     }
 
     fn parse_type_decl(

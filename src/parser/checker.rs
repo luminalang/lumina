@@ -1,5 +1,4 @@
-use super::{Inlined, ParseError, ParseFault, Parser, RawToken, Token, Type};
-use crate::evaler::bridge;
+use super::{Inlined, ParseError, ParseFault, Parser, RawToken, Token, Type, DCE};
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -10,6 +9,7 @@ struct Position<'f> {
 }
 
 pub struct TypeChecker<'f> {
+    pub dce: DCE,
     active: Position<'f>,
     parser: &'f Parser,
 }
@@ -20,6 +20,26 @@ pub trait Typeable {
     fn check_return(&self, got: &Type) -> Result<(), ParseFault>;
     fn entry_point(&self) -> Rc<Token>;
 }
+
+/*
+TODO: I want to collect as much useful data as possible for the to_optimized_ir() step.
+I'm gonna move all functions from parser into the IrBuilder, BUT! I'm gonna in that exact step add dead-code-elimination.
+Now the info required for DCE will have to be gathered during the checker. Because here we only dive into functions that are used.
+
+I suggest we make ourself some sort of "used_functions: Vec<(usize, usize)>" and "user_operators: Vec<(usize, usize)>"
+And then we iterate that to move from ParseModule.functions to IrBuilder.modules[i].functions (but only the used ones).
+
+I should also create the "used_last" flag here as well, along with other flags if needed.
+Actually, deciding upon the flags I need is probably the next step.
+Actually, fuck how will I apply the flags? I could just add it to the token but for all the tokens that don't use it, it'll be quite wasteful.
+Eh, I'll just apply it to the token. We're talking about really small one-time mem costs here.
+
+How about we just apply the flags to the function.parameter_names instead?
+Ye lets try that. I can just tag the amount of usages here. And then do the actual usage tracking in the IrBuilder I guess
+
+Hang on now, we're kind of missing a major peice here. We don't even know what's a parameter and a identifier without doing a second lookup now do we?
+Or can we just reuse the first lookup?
+*/
 
 impl<'f> TypeChecker<'f> {
     pub fn new(
@@ -32,6 +52,7 @@ impl<'f> TypeChecker<'f> {
 
         Ok(Self {
             parser,
+            dce: DCE::default(),
             active: position,
         })
     }
@@ -177,13 +198,12 @@ impl<'f> TypeChecker<'f> {
     fn fork(&mut self, position: Position<'f>) -> Self {
         Self {
             active: position,
+            dce: self.dce.clone(),
             parser: self.parser,
         }
     }
 
     pub fn run(&mut self) -> Result<Type, ParseError> {
-        // let func = self.func().map_err(|e| e.to_err(0))?;
-        // let returns = func.get_return().clone();
         let entry = self.active.function.entry_point();
         let got = self.type_check(&entry)?;
 
@@ -213,7 +233,7 @@ impl<'f> TypeChecker<'f> {
                         let new_pos = self
                             .locate_func(self.active.module, ident, param_types)
                             .map_err(|e| e.to_err(entity.source_index))?;
-
+                        self.dce.tag_func(new_pos.module, new_pos.funcid);
                         self.fork(new_pos).run()?
                     }
                     RawToken::ExternalIdentifier(entries) => {
@@ -225,6 +245,7 @@ impl<'f> TypeChecker<'f> {
                         let new_pos = self
                             .locate_func(new_fid, &entries[1], param_types)
                             .map_err(|e| e.to_err(t.source_index))?;
+                        self.dce.tag_func(new_pos.module, new_pos.funcid);
                         self.fork(new_pos).run()?
                     }
                     RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
@@ -238,6 +259,7 @@ impl<'f> TypeChecker<'f> {
                 let new_pos = self
                     .locate_func(self.active.module, &op.identifier, vec![left_t, right_t])
                     .map_err(|e| e.to_err(t.source_index))?;
+                self.dce.tag_oper(new_pos.module, new_pos.funcid);
                 self.fork(new_pos).run()?
             }
             RawToken::Identifier(constant_ident) => {
@@ -248,6 +270,7 @@ impl<'f> TypeChecker<'f> {
                     let new_pos = self
                         .locate_func(self.active.module, constant_ident, vec![])
                         .map_err(|e| e.to_err(t.source_index))?;
+                    self.dce.tag_func(new_pos.module, new_pos.funcid);
                     self.fork(new_pos).run()?
                 }
             }

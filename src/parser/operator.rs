@@ -87,7 +87,7 @@ impl FunctionBuilder {
         }
 
         self.parameter_types = vec![left, right];
-        self.parameter_names = vec!["left".into(), "right".into()];
+        self.parameter_names = vec![("left".into(), 0), ("right".into(), 0)];
         self.returns = returns;
         Ok(self)
     }

@@ -16,7 +16,7 @@ pub struct TypeChecker<'f> {
 }
 
 pub trait Typeable {
-    fn get_parameter(&self, ident: &str) -> Option<usize>;
+    fn get_parameter(&mut self, ident: &str) -> Option<usize>;
     fn get_parameter_type(&self, pid: usize) -> &Type;
     fn check_return(&self, got: &Type) -> Result<(), ParseFault>;
     fn entry_point(&self) -> Rc<Token>;
@@ -220,19 +220,15 @@ impl<'f> TypeChecker<'f> {
                 self.fork(new_pos).run()?
             }
             RawToken::Identifier(constant_ident) => {
-                if let Some(param_id) = self.active.function.borrow().get_parameter(constant_ident)
-                {
-                    return Ok(self
-                        .active
-                        .function
-                        .borrow()
-                        .get_parameter_type(param_id)
-                        .clone());
+                let mut func = self.active.function.borrow_mut();
+                if let Some(param_id) = func.get_parameter(constant_ident) {
+                    return Ok(func.get_parameter_type(param_id).clone());
                 }
                 let new_pos = self
                     .locate_func(self.active.module, constant_ident, vec![])
                     .map_err(|e| e.to_err(t.source_index))?;
                 self.dce.tag_func(new_pos.module, new_pos.funcid);
+                drop(func);
                 self.fork(new_pos).run()?
             }
             RawToken::FirstStatement(entries) => {

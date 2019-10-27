@@ -9,7 +9,7 @@ use std::rc::Rc;
 #[derive(Default, Clone)]
 pub struct FunctionBuilder {
     pub name: String,
-    pub parameter_names: Vec<String>,
+    pub parameter_names: Vec<(String, usize)>,
     pub parameter_types: Vec<Type>,
     pub returns: Type,
     pub body: Rc<Token>,
@@ -109,7 +109,7 @@ impl FunctionBuilder {
                 }
             };
             match next.inner {
-                RawToken::Identifier(name) => self.parameter_names.push(name),
+                RawToken::Identifier(name) => self.parameter_names.push((name, 0)),
                 RawToken::Key(Key::ParenOpen) => return Ok(self),
                 _ => {
                     return ParseFault::GotButExpected(
@@ -253,9 +253,10 @@ impl FunctionBuilder {
 }
 
 impl Typeable for FunctionBuilder {
-    fn get_parameter(&self, ident: &str) -> Option<usize> {
-        for (i, n) in self.parameter_names.iter().enumerate() {
-            if n == ident {
+    fn get_parameter(&mut self, ident: &str) -> Option<usize> {
+        for (i, n) in self.parameter_names.iter_mut().enumerate() {
+            if n.0 == ident {
+                n.1 += 1;
                 return Some(i);
             }
         }
@@ -297,7 +298,11 @@ impl fmt::Debug for FunctionBuilder {
             f,
             "fn {} {} ({})\n{:#?}{}",
             self.name,
-            self.parameter_names.join(" "),
+            self.parameter_names
+                .iter()
+                .map(|(name, usecount)| format!("{}:{}", name, usecount))
+                .collect::<Vec<String>>()
+                .join(" "),
             annotation,
             self.body,
             where_statements,

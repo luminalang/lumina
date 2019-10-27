@@ -46,7 +46,6 @@ fn main() {
             return;
         }
     };
-    println!("{:#?}\n", parser);
 
     // Verify syntax and infer types
     let dce = match parser.type_check(fid) {
@@ -60,6 +59,7 @@ fn main() {
         }
         Ok((_main_return, dce)) => dce,
     };
+    println!("{:#?}\n", parser);
 
     /*
     // Perform optimizations, remove all metadata and generate raw unsafe IR

@@ -361,7 +361,7 @@ impl fmt::Debug for ParseModule {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "IMPORTS:\n {}\nTYPES:\n {}\nFUNCTIONS:\n{}\nOPERATORS:\n{}",
+            "IMPORTS:\n {}\nTYPES:\n {}\nFUNCTIONS:\n{}",
             self.imports
                 .iter()
                 .map(|(name, fid)| format!(" {} -> {}", name, fid))
@@ -385,12 +385,11 @@ impl fmt::Debug for ParseModule {
                 .values()
                 .map(|same_name| same_name
                     .values()
-                    .map(|(funcb, funcid)| format!("  #{} {:?}", funcid, funcb))
+                    .map(|(funcb, funcid)| format!("  #{} {:?}", funcid, funcb.borrow()))
                     .collect::<Vec<String>>()
                     .join("\n"))
                 .collect::<Vec<String>>()
                 .join("\n"),
-            "TODO",
         )
     }
 }

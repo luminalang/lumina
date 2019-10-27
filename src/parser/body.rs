@@ -14,7 +14,7 @@ pub mod r#where;
 #[derive(PartialEq, Debug)]
 pub enum Mode {
     Neutral,
-    Operator(Token, Operator),
+    Operator(Token, (Operator, usize)),
     Parameters(Vec<Token>),
 }
 
@@ -66,8 +66,8 @@ pub trait BodySource {
                         Ok(WalkResult::Value(Token::new(RawToken::Parameters(v), 0)))
                     }
                     Mode::Operator(left, op) => {
-                        ParseFault::EndedMissingRightSideOperator(left.inner, op)
-                            .to_err(0)
+                        ParseFault::EndedMissingRightSideOperator(left.inner, op.0)
+                            .to_err(op.1)
                             .into()
                     }
                     _ => Ok(WalkResult::EOF),
@@ -78,8 +78,8 @@ pub trait BodySource {
         match token.inner {
             RawToken::Header(_) | RawToken::Key(Key::Where) => match mode {
                 Mode::Operator(left, op) => {
-                    ParseFault::MissingRightSideOperator(Box::new((left.inner, op, token.inner)))
-                        .to_err(token.source_index)
+                    ParseFault::MissingRightSideOperator(Box::new((left.inner, op.0, token.inner)))
+                        .to_err(op.1)
                         .into()
                 }
                 Mode::Parameters(previous) => {
@@ -120,9 +120,14 @@ pub trait BodySource {
                     )))
                 }
                 Mode::Operator(left, op) => {
-                    let operation = |left: Token, op, right| {
-                        let source = left.source_index;
-                        Token::new(RawToken::Operation(Box::new((left, right)), op), source)
+                    let operation = |left: Token, op: (Operator, usize), right| {
+                        Token::new(
+                            RawToken::Parameterized(
+                                Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
+                                vec![left, right],
+                            ),
+                            op.1,
+                        )
                     };
 
                     match self
@@ -139,10 +144,10 @@ pub trait BodySource {
                                 None => {
                                     return ParseFault::MissingRightSideOperator(Box::new((
                                         left.inner,
-                                        op,
+                                        op.0,
                                         RawToken::Key(Key::ParenClose),
                                     )))
-                                    .to_err(token.source_index)
+                                    .to_err(op.1)
                                     .into()
                                 }
                             };
@@ -151,10 +156,10 @@ pub trait BodySource {
                         }
                         WalkResult::EOF => ParseFault::MissingRightSideOperator(Box::new((
                             left.inner,
-                            op,
+                            op.0,
                             RawToken::Key(Key::ParenClose),
                         )))
-                        .to_err(token.source_index)
+                        .to_err(op.1)
                         .into(),
                     }
                 }
@@ -192,31 +197,36 @@ pub trait BodySource {
                 Mode::Operator(left, op) => {
                     let operation = |left: Token, op, right| {
                         let source = left.source_index;
-                        Token::new(RawToken::Operation(Box::new((left, right)), op), source)
+                        Token::new(
+                            RawToken::Parameterized(
+                                Box::new(Token::new(RawToken::Identifier(op), source)),
+                                vec![left, right],
+                            ),
+                            source,
+                        )
                     };
 
                     match self.walk(Mode::Neutral)? {
                         WalkResult::Value(t) => {
-                            let operation = operation(left, op, t);
+                            let operation = operation(left, op.0.identifier, t);
                             self.handle_after(operation)
                         }
                         WalkResult::CloseParen(t) => {
-                            let operation = operation(left, op, t.unwrap());
+                            let operation = operation(left, op.0.identifier, t.unwrap());
                             self.handle_after(operation)
                         }
                         WalkResult::EOF => ParseFault::MissingRightSideOperator(Box::new((
                             left.inner,
-                            op,
+                            op.0,
                             RawToken::NewLine,
                         )))
-                        .to_err(token.source_index)
+                        .to_err(op.1)
                         .into(),
                     }
                 }
             },
             RawToken::Inlined(v) => {
-                let source = token.source_index;
-                let reconstruct = Token::new(RawToken::Inlined(v), source);
+                let reconstruct = Token::new(RawToken::Inlined(v), token.source_index);
 
                 match mode {
                     Mode::Neutral => self.handle_after(reconstruct),
@@ -227,8 +237,11 @@ pub trait BodySource {
                     Mode::Operator(left, op) => {
                         let source = left.source_index;
                         let operation = Token::new(
-                            RawToken::Operation(Box::new((left, reconstruct)), op),
-                            source,
+                            RawToken::Parameterized(
+                                Box::new(Token::new(RawToken::Identifier(op.0.identifier), source)),
+                                vec![left, reconstruct],
+                            ),
+                            op.1,
                         );
                         self.handle_after(operation)
                     }
@@ -285,8 +298,11 @@ pub trait BodySource {
                     }
                     Mode::Operator(left, op) => {
                         let operation = Token::new(
-                            RawToken::Operation(Box::new((left, v)), op),
-                            token.source_index,
+                            RawToken::Parameterized(
+                                Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
+                                vec![left, v],
+                            ),
+                            op.1,
                         );
                         self.handle_after(operation)
                     }
@@ -303,8 +319,11 @@ pub trait BodySource {
                     }
                     Mode::Operator(left, op) => {
                         let operation = Token::new(
-                            RawToken::Operation(Box::new((left, v)), op),
-                            token.source_index,
+                            RawToken::Parameterized(
+                                Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
+                                vec![left, v],
+                            ),
+                            op.1,
                         );
                         self.handle_after(operation)
                     }
@@ -321,8 +340,11 @@ pub trait BodySource {
                     }
                     Mode::Operator(left, op) => {
                         let operation = Token::new(
-                            RawToken::Operation(Box::new((left, v)), op),
-                            token.source_index,
+                            RawToken::Parameterized(
+                                Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
+                                vec![left, v],
+                            ),
+                            op.1,
                         );
                         self.handle_after(operation)
                     }
@@ -334,8 +356,8 @@ pub trait BodySource {
                     Ok(WalkResult::CloseParen(Some(t)))
                 }
                 Mode::Operator(left, op) => {
-                    ParseFault::MissingRightSideOperator(Box::new((left.inner, op, token.inner)))
-                        .to_err(token.source_index)
+                    ParseFault::MissingRightSideOperator(Box::new((left.inner, op.0, token.inner)))
+                        .to_err(op.1)
                         .into()
                 }
                 Mode::Neutral => Ok(WalkResult::CloseParen(None)),
@@ -348,9 +370,9 @@ pub trait BodySource {
                         Ok(WalkResult::Value(t))
                     }
                     Mode::Operator(left, old_op) => ParseFault::MissingRightSideOperator(Box::new(
-                        (left.inner, old_op, RawToken::Operator(op)),
+                        (left.inner, old_op.0, RawToken::Operator(op)),
                     ))
-                    .to_err(token.source_index)
+                    .to_err(old_op.1)
                     .into(),
                     _ => unimplemented!(), // possible?
                 }
@@ -361,14 +383,14 @@ pub trait BodySource {
 
     fn handle_after(&mut self, v: Token) -> Result<WalkResult, ParseError> {
         let next = self.next();
-        match next.map(|t| t.inner) {
+        match next.map(|t| (t.inner, t.source_index)) {
             None => {
                 self.undo();
                 Ok(WalkResult::Value(v))
             }
-            Some(RawToken::Operator(op)) => self.walk(Mode::Operator(v, op)),
-            Some(RawToken::NewLine) => self.handle_after(v),
-            Some(RawToken::Key(Key::ParenClose)) => Ok(WalkResult::CloseParen(Some(v))),
+            Some((RawToken::Operator(op), source)) => self.walk(Mode::Operator(v, (op, source))),
+            Some((RawToken::NewLine, _)) => self.handle_after(v),
+            Some((RawToken::Key(Key::ParenClose), _)) => Ok(WalkResult::CloseParen(Some(v))),
             _ => {
                 self.undo();
                 Ok(WalkResult::Value(v))
@@ -410,18 +432,33 @@ pub trait BodySource {
             }
             Mode::Operator(left, op) => {
                 self.undo();
-                let source = left.source_index;
                 let v = self.walk(Mode::Neutral)?;
                 match v {
                     WalkResult::Value(v) => match &v.inner {
                         RawToken::Parameterized(_n, _p) => {
-                            let operation =
-                                Token::new(RawToken::Operation(Box::new((left, v)), op), source);
+                            let operation = Token::new(
+                                RawToken::Parameterized(
+                                    Box::new(Token::new(
+                                        RawToken::Identifier(op.0.identifier),
+                                        op.1,
+                                    )),
+                                    vec![left, v],
+                                ),
+                                op.1,
+                            );
                             self.handle_after(operation)
                         }
                         RawToken::Identifier(_n) => {
-                            let operation =
-                                Token::new(RawToken::Operation(Box::new((left, v)), op), source);
+                            let operation = Token::new(
+                                RawToken::Parameterized(
+                                    Box::new(Token::new(
+                                        RawToken::Identifier(op.0.identifier),
+                                        op.1,
+                                    )),
+                                    vec![left, v],
+                                ),
+                                op.1,
+                            );
                             self.handle_after(operation)
                         }
                         _ => panic!("{:?}", &v.inner), // TODO: Should this be an ET?

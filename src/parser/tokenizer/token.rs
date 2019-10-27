@@ -84,7 +84,7 @@ pub enum RawToken {
     Header(Header),
     Key(Key),
     Inlined(Inlined),
-    Operation(Box<(Token, Token)>, Operator),
+    // Operation(Box<(Token, Token)>, Operator),
     Parameters(Vec<Token>),
     Parameterized(Box<Token>, Vec<Token>),
 
@@ -107,7 +107,7 @@ impl fmt::Display for RawToken {
             Header(h) => h.fmt(f),
             Key(key) => key.fmt(f),
             Inlined(inlined) => inlined.fmt(f),
-            Operation(_, op) => write!(f, "... {} ...", op),
+            // Operation(_, op) => write!(f, "... {} ...", op),
             Operator(op) => write!(f, "{}", op),
             _ => panic!("TODO: Format {:?}", self),
         }

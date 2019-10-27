@@ -23,23 +23,8 @@ pub trait Typeable {
 }
 
 /*
-TODO: I want to collect as much useful data as possible for the to_optimized_ir() step.
-I'm gonna move all functions from parser into the IrBuilder, BUT! I'm gonna in that exact step add dead-code-elimination.
-Now the info required for DCE will have to be gathered during the checker. Because here we only dive into functions that are used.
-
-I suggest we make ourself some sort of "used_functions: Vec<(usize, usize)>" and "user_operators: Vec<(usize, usize)>"
-And then we iterate that to move from ParseModule.functions to IrBuilder.modules[i].functions (but only the used ones).
-
-I should also create the "used_last" flag here as well, along with other flags if needed.
-Actually, deciding upon the flags I need is probably the next step.
-Actually, fuck how will I apply the flags? I could just add it to the token but for all the tokens that don't use it, it'll be quite wasteful.
-Eh, I'll just apply it to the token. We're talking about really small one-time mem costs here.
-
-How about we just apply the flags to the function.parameter_names instead?
-Ye lets try that. I can just tag the amount of usages here. And then do the actual usage tracking in the IrBuilder I guess
-
-Hang on now, we're kind of missing a major peice here. We don't even know what's a parameter and a identifier without doing a second lookup now do we?
-Or can we just reuse the first lookup?
+TODO:
+    The parameter checking will dupe if the same function is used multiple times, breaking everything!
 */
 
 impl<'f> TypeChecker<'f> {
@@ -210,15 +195,6 @@ impl<'f> TypeChecker<'f> {
                 }
             }
             RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
-            RawToken::Operation(box (left, right), op) => {
-                let left_t = self.type_check(left)?;
-                let right_t = self.type_check(right)?;
-                let new_pos = self
-                    .locate_func(self.active.module, &op.identifier, vec![left_t, right_t])
-                    .map_err(|e| e.to_err(t.source_index))?;
-                self.dce.tag_oper(new_pos.module, new_pos.funcid);
-                self.fork(new_pos).run()?
-            }
             RawToken::Identifier(constant_ident) => {
                 let mut func = self.active.function.borrow_mut();
                 if let Some(param_id) = func.get_parameter(constant_ident) {

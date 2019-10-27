@@ -1,6 +1,5 @@
 use super::{
-    body, body::BodySource, checker::Typeable, Key, ParseError, ParseFault, RawToken, Token,
-    Tokenizer, Type,
+    body, body::BodySource, Key, ParseError, ParseFault, RawToken, Token, Tokenizer, Type,
 };
 use std::convert::TryFrom;
 use std::fmt;
@@ -250,10 +249,7 @@ impl FunctionBuilder {
             }
         }
     }
-}
-
-impl Typeable for FunctionBuilder {
-    fn get_parameter(&mut self, ident: &str) -> Option<usize> {
+    pub fn get_parameter(&mut self, ident: &str) -> Option<usize> {
         for (i, n) in self.parameter_names.iter_mut().enumerate() {
             if n.0 == ident {
                 n.1 += 1;
@@ -262,16 +258,16 @@ impl Typeable for FunctionBuilder {
         }
         None
     }
-    fn get_parameter_type(&self, pid: usize) -> &Type {
+    pub fn get_parameter_type(&self, pid: usize) -> &Type {
         &self.parameter_types[pid]
     }
-    fn check_return(&self, got: &Type) -> Result<(), ParseFault> {
+    pub fn check_return(&self, got: &Type) -> Result<(), ParseFault> {
         if *got != self.returns && self.returns != Type::Nothing {
             return Err(ParseFault::FnTypeReturnMismatch(self.clone(), got.clone()));
         }
         Ok(())
     }
-    fn entry_point(&self) -> Rc<Token> {
+    pub fn entry_point(&self) -> Rc<Token> {
         self.body.clone()
     }
 }

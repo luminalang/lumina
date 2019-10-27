@@ -15,13 +15,6 @@ pub struct TypeChecker<'f> {
     parser: &'f Parser,
 }
 
-pub trait Typeable {
-    fn get_parameter(&mut self, ident: &str) -> Option<usize>;
-    fn get_parameter_type(&self, pid: usize) -> &Type;
-    fn check_return(&self, got: &Type) -> Result<(), ParseFault>;
-    fn entry_point(&self) -> Rc<Token>;
-}
-
 /*
 TODO:
     The parameter checking will dupe if the same function is used multiple times, breaking everything!

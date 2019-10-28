@@ -81,9 +81,9 @@ pub enum ParseFault {
     FnTypeReturnMismatch(FunctionBuilder, Type),
     OpTypeReturnMismatch(FunctionBuilder, Type),
     FunctionNotFound(String, usize),
-    OperatorNotFound(String, usize),
+    // OperatorNotFound(String, usize),
     FunctionVariantNotFound(String, Vec<Type>, usize),
-    OperatorVariantNotFound(String, [Type; 2], usize),
+    // OperatorVariantNotFound(String, [Type; 2], usize),
     Internal,
 }
 
@@ -196,20 +196,16 @@ impl fmt::Display for ParseError {
                     ident, module.module_path
                 )
             }
-            OperatorNotFound(ident, fid) => {
-                let module = &parser.modules[*fid];
-                write!(
-                    f,
-                    "Operator `{}` not found in {} (or prelude)",
-                    ident, module.module_path
-                )
-            }
+            // TODO: Detect operator since they're now functions and format accordingly
             FunctionVariantNotFound(ident, params, fid) => {
                 let module = &parser.modules[*fid];
-                let variants = &module.functions[ident];
+                let variants = &module.function_ids[ident];
                 match variants.len() {
                     1 => {
-                        let (wanted_params, (wfuncb, _)) = variants.iter().next().unwrap();
+                        let (wanted_params, funcid) = {
+                            variants.iter().next().unwrap()
+                        };
+                        let wfuncb = &module.functions[*funcid];
                         let mut mismatches = Vec::with_capacity(2);
                         for (i, param) in wanted_params.iter().enumerate() {
                             let got = match params.get(i) {
@@ -228,13 +224,13 @@ impl fmt::Display for ParseError {
                                 wanted_params[i],
                                 params[i],
                                 format_function_header(ident, Some(&params), None),
-                                format_function_header(&wfuncb.borrow().name, Some(&wanted_params) ,None),
+                                format_function_header(&wfuncb.name, Some(&wanted_params) ,None),
                             )
                         } else {
                             write!(f, "No function named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
                                 ident,
                                 format_function_header(ident, Some(&params), None),
-                                format_function_header(&wfuncb.borrow().name, Some(&wanted_params), None),
+                                format_function_header(&wfuncb.name, Some(&wanted_params), None),
                                 )
                         }
                     }
@@ -242,50 +238,7 @@ impl fmt::Display for ParseError {
                         write!(f, "No function named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
                             ident,
                             format_function_header(ident, Some(&params), None),
-                            variants.values().map(|(fb, _)| format_function_header(&fb.borrow().name, Some(&fb.borrow().parameter_types), None)).collect::<Vec<String>>().join("\n  ")
-                            )
-                    },
-                }
-            }
-            OperatorVariantNotFound(ident, params, fid) => {
-                let module = &parser.modules[*fid];
-                let variants = &module.functions[ident];
-                match variants.len() {
-                    1 => {
-                        let (wanted_params, (wfuncb, _)) = variants.iter().next().unwrap();
-                        let mut mismatches = Vec::with_capacity(2);
-                        for (i, param) in wanted_params.iter().enumerate() {
-                            let got = match params.get(i) {
-                                None => break, // TODO: What if `got` has less parmater then `wanted`?
-                                Some(t) => t,
-                            };
-                            if param != got {
-                                mismatches.push(i);
-                            }
-                        }
-                        if mismatches.len() == 1 {
-                            let i = mismatches[0];
-                            write!(
-                                f,
-                                "Type mismatch. Wanted `{}` but got `{}`\n {}\n {}",
-                                wanted_params[i],
-                                params[i],
-                                format_operator_header(ident, &params[0], &params[1]),
-                                format_operator_header(&wfuncb.borrow().name, &wanted_params[0], &wanted_params[1]),
-                            )
-                        } else {
-                            write!(f, "No operator named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
-                                ident,
-                                    format_operator_header(ident, &params[0], &params[1]),
-                                    format_operator_header(&wfuncb.borrow().name, &wanted_params[0], &wanted_params[1]),
-                                )
-                        }
-                    }
-                    _ => {
-                        write!(f, "No operator named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
-                            ident,
-                            format_operator_header(ident, &params[0], &params[1]),
-                            variants.values().map(|(fb, _)| format_operator_header(&fb.borrow().name, &fb.borrow().parameter_types[0], &fb.borrow().parameter_types[1])).collect::<Vec<String>>().join("\n  ")
+                            variants.keys().map(|params| format_function_header(&ident, Some(&params), None)).collect::<Vec<String>>().join("\n  ")
                             )
                     },
                 }

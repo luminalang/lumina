@@ -11,7 +11,7 @@ pub struct FunctionBuilder {
     pub parameter_names: Vec<(String, usize)>,
     pub parameter_types: Vec<Type>,
     pub returns: Type,
-    pub body: Rc<Token>,
+    pub body: Token,
     pub wheres: Vec<(String, Token)>,
 }
 
@@ -22,7 +22,7 @@ impl FunctionBuilder {
             parameter_names: Vec::new(),
             parameter_types: Vec::new(),
             returns: Type::default(),
-            body: Rc::new(Token::new(RawToken::NewLine, 0)),
+            body: Token::new(RawToken::NewLine, 0),
             wheres: Vec::new(),
         }
     }
@@ -266,9 +266,6 @@ impl FunctionBuilder {
             return Err(ParseFault::FnTypeReturnMismatch(self.clone(), got.clone()));
         }
         Ok(())
-    }
-    pub fn entry_point(&self) -> Rc<Token> {
-        self.body.clone()
     }
 }
 

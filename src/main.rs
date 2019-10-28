@@ -46,20 +46,16 @@ fn main() {
             return;
         }
     };
+    println!("{:#?}\n", parser);
 
     // Verify syntax and infer types
     let dce = match parser.type_check(fid) {
         Err(e) => {
-            println!(
-                "{}",
-                e.with_source_code(source_code, file_path)
-                    .with_parser(parser)
-            );
+            println!("{}", e.with_source_code(source_code, file_path));
             return;
         }
         Ok((_main_return, dce)) => dce,
     };
-    println!("{:#?}\n", parser);
 
     /*
     // Perform optimizations, remove all metadata and generate raw unsafe IR

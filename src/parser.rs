@@ -40,8 +40,8 @@ pub struct Parser {
 // #[derive(Default)]
 pub struct ParseModule {
     //                     identifer       parameters
-    pub functions: HashMap<String, HashMap<Vec<Type>, (Rc<RefCell<FunctionBuilder>>, usize)>>,
-    function_count: usize,
+    pub function_ids: HashMap<String, HashMap<Vec<Type>, usize>>,
+    pub functions: Vec<FunctionBuilder>,
 
     pub types: HashMap<String, usize>,
     pub type_fields: Vec<Vec<(String, Type)>>,
@@ -53,19 +53,13 @@ pub struct ParseModule {
 impl ParseModule {
     pub fn new(module_path: FileSource) -> Self {
         Self {
-            functions: HashMap::new(),
-            function_count: 0,
+            function_ids: HashMap::new(),
+            functions: Vec::new(),
             types: HashMap::new(),
             type_fields: Vec::new(),
             imports: HashMap::new(),
             module_path,
         }
-    }
-
-    fn next_funcid(&mut self) -> usize {
-        let id = self.function_count;
-        self.function_count += 1;
-        id
     }
 }
 
@@ -96,23 +90,19 @@ impl Parser {
     }
     fn new_function(&mut self, fid: usize, funcb: FunctionBuilder) -> usize {
         let module = &mut self.modules[fid];
-        let funcid = module.next_funcid();
-        match module.functions.get_mut(&funcb.name) {
+        let funcid = module.functions.len();
+        match module.function_ids.get_mut(&funcb.name) {
             Some(existing) => {
-                existing.insert(
-                    funcb.parameter_types.clone(),
-                    (Rc::new(RefCell::new(funcb)), funcid),
-                );
+                existing.insert(funcb.parameter_types.clone(), funcid);
+                module.functions.push(funcb);
                 funcid
             }
             None => {
                 let mut hashmap = HashMap::with_capacity(1);
                 let name = funcb.name.clone();
-                hashmap.insert(
-                    funcb.parameter_types.clone(),
-                    (Rc::new(RefCell::new(funcb)), funcid),
-                );
-                module.functions.insert(name, hashmap);
+                hashmap.insert(funcb.parameter_types.clone(), funcid);
+                module.function_ids.insert(name, hashmap);
+                module.functions.push(funcb);
                 funcid
             }
         };
@@ -183,7 +173,7 @@ impl Parser {
                             .parse_body(&mut tokenizer)
                             .map_err(|e| e.fallback(source_index))?;
 
-                        funcb.body = Rc::new(body_entry);
+                        funcb.body = body_entry;
 
                         self.new_function(fid, funcb);
                     }
@@ -194,7 +184,7 @@ impl Parser {
                             .parse_body(&mut tokenizer)
                             .map_err(|e| e.fallback(source_index))?;
 
-                        funcb.body = Rc::new(body_entry);
+                        funcb.body = body_entry;
 
                         self.new_function(fid, funcb);
                     }
@@ -276,8 +266,9 @@ impl Parser {
         }
     }
 
-    pub fn type_check(&mut self, fid: usize) -> Result<(Type, DCE), ParseError> {
-        let mut checker = TypeChecker::new(self, fid, "main", vec![]).map_err(|e| e.to_err(0))?;
+    pub fn type_check(self, fid: usize) -> Result<(Type, DCE), ParseError> {
+        let entry_id = self.modules[fid].function_ids["main"][&vec![]];
+        let mut checker = TypeChecker::new(self, fid, entry_id);
         let main_returns = checker.run()?;
         Ok((main_returns, checker.dce))
     }
@@ -382,14 +373,10 @@ impl fmt::Debug for ParseModule {
                 .collect::<Vec<String>>()
                 .join("\n"),
             self.functions
-                .values()
-                .map(|same_name| same_name
-                    .values()
-                    .map(|(funcb, funcid)| format!("  #{} {:?}", funcid, funcb.borrow()))
-                    .collect::<Vec<String>>()
-                    .join("\n"))
+                .iter()
+                .map(|funcb| format!("  {:?}", funcb))
                 .collect::<Vec<String>>()
-                .join("\n"),
+                .join("\n")
         )
     }
 }

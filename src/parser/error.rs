@@ -1,4 +1,7 @@
-use super::{tokenizer::Operator, FileSource, FunctionBuilder, Key, Parser, RawToken, Type};
+use super::{
+    is_valid_identifier, tokenizer::Operator, FileSource, FunctionBuilder, Key, Parser, RawToken,
+    Type,
+};
 use crate::env::Environment;
 use std::convert::Into;
 use std::fmt;
@@ -253,22 +256,22 @@ impl fmt::Display for ParseError {
                                 "Type mismatch. Wanted `{}` but got `{}`\n {}\n {}",
                                 wanted_params[i],
                                 params[i],
-                                format_function_header(ident, Some(&params), None),
-                                format_function_header(&wfuncb.name, Some(&wanted_params) ,None),
+                                format_header(ident, Some(&params), None),
+                                format_header(&wfuncb.name, Some(&wanted_params) ,None),
                             )
                         } else {
                             write!(f, "No function named `{}` takes these parameters\n  {}\n perhaps you meant to use?\n  {}",
                                 ident,
-                                format_function_header(ident, Some(&params), None),
-                                format_function_header(&wfuncb.name, Some(&wanted_params), None),
+                                format_header(ident, Some(&params), None),
+                                format_header(&wfuncb.name, Some(&wanted_params), None),
                                 )
                         }
                     }
                     _ => {
                         write!(f, "No function named `{}` takes these parameters\n  {}\n i did however find these variants\n  {}",
                             ident,
-                            format_function_header(ident, Some(&params), None),
-                            variants.keys().map(|params| format_function_header(&ident, Some(&params), None)).collect::<Vec<String>>().join("\n  ")
+                            format_header(ident, Some(&params), None),
+                            variants.keys().map(|params| format_header(&ident, Some(&params), None)).collect::<Vec<String>>().join("\n  ")
                             )
                     },
                 }
@@ -323,6 +326,15 @@ impl fmt::Display for ParseError {
     }
 }
 
+fn format_header(name: &str, params: Option<&[Type]>, returns: Option<&Type>) -> String {
+    if is_valid_identifier(name) {
+        format_function_header(name, params, returns)
+    } else {
+        let params = params.unwrap();
+        format_operator_header(name, &params[0], &params[1], returns)
+    }
+}
+
 fn format_function_header(name: &str, params: Option<&[Type]>, returns: Option<&Type>) -> String {
     let mut buf = String::with_capacity(10);
     buf.push_str(color::Yellow.fg_str());
@@ -352,15 +364,19 @@ fn format_function_header(name: &str, params: Option<&[Type]>, returns: Option<&
 
 // TODO: Replicate optional return/param like format_function_header
 
-fn format_operator_header(opname: &str, left: &Type, right: &Type) -> String {
+fn format_operator_header(opname: &str, left: &Type, right: &Type, ret: Option<&Type>) -> String {
     format!(
-        "{}operator{} {} ({}{} ... {}{})",
+        "{}operator{} {} ({}{} {}{} -> {}{}{})",
         color::Yellow.fg_str(),
         color::Reset.fg_str(),
         opname,
         color::Green.fg_str(),
         left,
         right,
+        color::Reset.fg_str(),
+        color::Green.fg_str(),
+        ret.map(|t| t.to_string())
+            .unwrap_or_else(|| String::from("...")),
         color::Reset.fg_str(),
     )
 }

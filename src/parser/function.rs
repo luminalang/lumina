@@ -3,12 +3,11 @@ use super::{
 };
 use std::convert::TryFrom;
 use std::fmt;
-use std::rc::Rc;
 
 #[derive(Default, Clone)]
 pub struct FunctionBuilder {
     pub name: String,
-    pub parameter_names: Vec<(String, usize)>,
+    pub parameter_names: Vec<String>,
     pub parameter_types: Vec<Type>,
     pub returns: Type,
     pub body: Token,
@@ -108,7 +107,7 @@ impl FunctionBuilder {
                 }
             };
             match next.inner {
-                RawToken::Identifier(name) => self.parameter_names.push((name, 0)),
+                RawToken::Identifier(name) => self.parameter_names.push(name),
                 RawToken::Key(Key::ParenOpen) => return Ok(self),
                 _ => {
                     return ParseFault::GotButExpected(
@@ -249,10 +248,9 @@ impl FunctionBuilder {
             }
         }
     }
-    pub fn get_parameter(&mut self, ident: &str) -> Option<usize> {
-        for (i, n) in self.parameter_names.iter_mut().enumerate() {
-            if n.0 == ident {
-                n.1 += 1;
+    pub fn get_parameter(&self, ident: &str) -> Option<usize> {
+        for (i, n) in self.parameter_names.iter().enumerate() {
+            if n == ident {
                 return Some(i);
             }
         }
@@ -263,7 +261,10 @@ impl FunctionBuilder {
     }
     pub fn check_return(&self, got: &Type) -> Result<(), ParseFault> {
         if *got != self.returns && self.returns != Type::Nothing {
-            return Err(ParseFault::FnTypeReturnMismatch(self.clone(), got.clone()));
+            return Err(ParseFault::FnTypeReturnMismatch(
+                Box::new(self.clone()),
+                got.clone(),
+            ));
         }
         Ok(())
     }
@@ -291,11 +292,7 @@ impl fmt::Debug for FunctionBuilder {
             f,
             "fn {} {} ({})\n{:#?}{}",
             self.name,
-            self.parameter_names
-                .iter()
-                .map(|(name, usecount)| format!("{}:{}", name, usecount))
-                .collect::<Vec<String>>()
-                .join(" "),
+            self.parameter_names.join(" "),
             annotation,
             self.body,
             where_statements,

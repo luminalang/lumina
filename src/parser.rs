@@ -1,5 +1,4 @@
 use crate::env::Environment;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt;
@@ -18,16 +17,14 @@ pub use function::FunctionBuilder;
 pub use leafmod::FileSource;
 mod r#type;
 pub use r#type::Type;
-mod checker;
-pub mod flags;
-use checker::TypeChecker;
 pub mod body;
+mod irbuilder;
+pub use irbuilder::IrBuilder;
+pub mod flags;
 use body::BodySource;
 mod error;
 mod operator;
 pub use error::*;
-mod dce;
-pub use dce::DCE;
 
 const PRELUDE_FID: usize = 0;
 
@@ -169,9 +166,10 @@ impl Parser {
                 RawToken::Header(h) => match h {
                     Header::Function => {
                         let mut funcb = FunctionBuilder::new().with_header(&mut tokenizer)?;
-                        let body_entry = funcb
-                            .parse_body(&mut tokenizer)
-                            .map_err(|e| e.fallback(source_index))?;
+                        let body_entry = funcb.parse_body(&mut tokenizer).map_err(|e| {
+                            e.fallback(source_index)
+                                .with_source_code(source_code, &module_path)
+                        })?;
 
                         funcb.body = body_entry;
 
@@ -180,9 +178,10 @@ impl Parser {
                     Header::Operator => {
                         let mut funcb =
                             FunctionBuilder::new().with_header_operator(&mut tokenizer)?;
-                        let body_entry = funcb
-                            .parse_body(&mut tokenizer)
-                            .map_err(|e| e.fallback(source_index))?;
+                        let body_entry = funcb.parse_body(&mut tokenizer).map_err(|e| {
+                            e.fallback(source_index)
+                                .with_source_code(source_code, &module_path)
+                        })?;
 
                         funcb.body = body_entry;
 
@@ -202,6 +201,7 @@ impl Parser {
                                     "identifier".into(),
                                 )])
                                 .to_err(tokenizer.index() - 1)
+                                .with_source_code(source_code, &module_path)
                                 .into()
                             }
                             Some(other) => {
@@ -243,7 +243,7 @@ impl Parser {
                             })?;
 
                         let usefid = match self.tokenize(file_path.clone(), &source_code) {
-                            Err(e) => return Err(e.with_source_code(source_code, file_path)),
+                            Err(e) => return Err(e.with_source_code(&source_code, &file_path)),
                             Ok(fid) => fid,
                         };
                         self.modules[fid]
@@ -266,12 +266,14 @@ impl Parser {
         }
     }
 
-    pub fn type_check(self, fid: usize) -> Result<(Type, DCE), ParseError> {
-        let entry_id = self.modules[fid].function_ids["main"][&vec![]];
-        let mut checker = TypeChecker::new(self, fid, entry_id);
-        let main_returns = checker.run()?;
-        Ok((main_returns, checker.dce))
+    /*
+    pub fn type_check(self, fid: usize) -> Result<Vec<Token>, ParseError> {
+        // let entry_id = self.modules[fid].function_ids["main"][&vec![]];
+        let checker = TypeChecker::new(self);
+        let entrypoints = checker.run(fid, "main", vec![])?;
+        Ok(entrypoints)
     }
+    */
 
     fn parse_type_decl(
         &mut self,

@@ -11,8 +11,8 @@ mod parser;
 use parser::Parser;
 mod env;
 use env::Environment;
-use parser::FileSource;
-pub mod evaler;
+use parser::{FileSource, IrBuilder};
+pub mod runtime;
 
 pub mod datatypes;
 
@@ -40,7 +40,7 @@ fn main() {
         Err(e) => {
             println!(
                 "{}",
-                e.with_source_code(source_code, file_path)
+                e.with_source_code(&source_code, &file_path)
                     .with_parser(parser)
             );
             return;
@@ -48,23 +48,13 @@ fn main() {
     };
     println!("{:#?}\n", parser);
 
-    // Verify syntax and infer types
-    let dce = match parser.type_check(fid) {
+    // Verify syntax, infer types and compile to low-level IR.
+    let ir = match IrBuilder::new(parser, environment).start_type_checker(fid, "main", &[]) {
         Err(e) => {
-            println!("{}", e.with_source_code(source_code, file_path));
+            println!("{}", e.with_source_code(&source_code, &file_path));
             return;
         }
-        Ok((_main_return, dce)) => dce,
+        Ok(irbuilder) => irbuilder.build(fid, "main", &[]),
     };
-
-    /*
-    // Perform optimizations, remove all metadata and generate raw unsafe IR
-    let optimized_ir = match parser.optimize {
-        Ok(optimized_ir) => optimized_ir,
-        Err(e) => panic!("{:?}", e),
-    };
-
-    let func = parser.get_function(MAIN_MODULE_ID, "main");
-    evaler.run(func);
-    */
+    dbg!(ir);
 }

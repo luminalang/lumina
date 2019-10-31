@@ -1,0 +1,327 @@
+use super::IrBuilder;
+use crate::parser::{Inlined, ParseError, ParseFault, RawToken, Token, Type, PRELUDE_FID};
+use std::collections::HashMap;
+
+struct Generics {
+    inner: Vec<Type>,
+}
+impl Generics {
+    fn decoded(&self, t: &Type) -> Result<Type, ParseFault> {
+        match t {
+            Type::Generic(n) => match self.inner.get(*n as usize) {
+                Some(t) => Ok(t.clone()),
+                None => Err(ParseFault::CannotInferType((n + 97) as char)),
+            },
+            _ => Ok(t.clone()),
+        }
+    }
+    fn new() -> Self {
+        Self::with_capacity(0)
+    }
+    fn with_capacity(cap: usize) -> Self {
+        Generics {
+            inner: Vec::with_capacity(cap),
+        }
+    }
+    fn empty() -> Self {
+        Self::new()
+    }
+}
+
+impl IrBuilder {
+    pub fn start_type_checker(
+        self,
+        fid: usize,
+        funcname: &str,
+        params: &[Type],
+    ) -> Result<Self, ParseError> {
+        let (funcid, _, generics) = match self
+            .find_matching_function(fid, fid, funcname, params)
+            .map_err(|e| {
+                e.to_err(0)
+                    .with_source_load(&self.environment, &self.parser.modules[fid].module_path)
+            }) {
+            Ok(a) => a,
+            Err(e) => return Err(e.with_parser(self.parser)),
+        };
+
+        let func = &self.parser.modules[fid].functions[funcid];
+        let actual_return_value = match self.type_check(&func.body, fid, funcid, &generics) {
+            Ok(t) => t,
+            Err(e) => return e.with_parser(self.parser).into(),
+        };
+        let decoded_return = generics.decoded(&func.returns).map_err(|e| e.to_err(0))?;
+        if actual_return_value != decoded_return && func.returns != Type::Nothing {
+            return ParseFault::FnTypeReturnMismatch(Box::new(func.clone()), actual_return_value)
+                .to_err(func.body.source_index)
+                .with_source_load(&self.environment, &self.parser.modules[fid].module_path)
+                .with_parser(self.parser)
+                .into();
+        }
+
+        Ok(self)
+    }
+
+    fn type_check_function(
+        &self,
+        fid: usize,
+        ident: &str,
+        params: &[Type],
+    ) -> Result<Type, ParseError> {
+        let (funcid, newfid, generics) = self
+            .find_matching_function(fid, fid, ident, params)
+            .map_err(|e| {
+                e.to_err(0)
+                    .with_source_load(&self.environment, &self.parser.modules[fid].module_path)
+            })?;
+
+        let func = &self.parser.modules[newfid].functions[funcid];
+        let actual_return_value = self.type_check(&func.body, newfid, funcid, &generics)?;
+        if actual_return_value != generics.decoded(&func.returns).map_err(|e| e.to_err(0))? {
+            return ParseFault::FnTypeReturnMismatch(Box::new(func.clone()), actual_return_value)
+                .to_err(func.body.source_index)
+                .into();
+        }
+        Ok(actual_return_value)
+    }
+
+    fn type_check(
+        &self,
+        token: &Token,
+        fid: usize,
+        funcid: usize,
+        generics: &Generics,
+    ) -> Result<Type, ParseError> {
+        let r#type = match &token.inner {
+            RawToken::Inlined(inlined) => match inlined {
+                Inlined::Int(_) => Type::Int,
+                Inlined::Float(_) => Type::Float,
+                Inlined::Bool(_) => Type::Bool,
+                Inlined::Nothing => Type::Nothing,
+            },
+            RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
+            RawToken::FirstStatement(entries) => {
+                for entry in entries[0..entries.len() - 1].iter() {
+                    self.type_check(entry, fid, funcid, generics)?;
+                }
+                self.type_check(entries.last().unwrap(), fid, funcid, generics)?
+            }
+            RawToken::Parameterized(box entry, params) => {
+                let mut param_types = Vec::with_capacity(params.len());
+                for param in params.iter() {
+                    param_types.push(
+                        generics
+                            .decoded(&self.type_check(param, fid, funcid, generics)?)
+                            .map_err(|e| e.to_err(token.source_index))?,
+                    )
+                }
+                match &entry.inner {
+                    RawToken::Identifier(ident) => self
+                        .type_check_function(fid, ident, &param_types)
+                        .map_err(|e| e.fallback(token.source_index))?,
+                    RawToken::ExternalIdentifier(entries) => {
+                        let newfid =
+                            match self.parser.modules[fid].imports.get(&entries[0]).copied() {
+                                Some(fid) => fid,
+                                None => {
+                                    return ParseFault::ModuleNotImported(entries[0].clone())
+                                        .to_err(token.source_index)
+                                        .into()
+                                }
+                            };
+                        self.type_check_function(newfid, &entries[1], &param_types)
+                            .map_err(|e| e.fallback(token.source_index))?
+                    }
+                    RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
+                    _ => panic!("{:#?} cannot take parameters", entry.inner),
+                }
+            }
+            RawToken::Identifier(ident) => {
+                {
+                    let func = &self.parser.modules[fid].functions[funcid];
+                    if let Some(paramid) = func.get_parameter(ident) {
+                        return Ok(func.get_parameter_type(paramid).clone());
+                    };
+                }
+
+                // This is only for leaf constants. Since other functions will be RawToken::Parameterized
+                self.type_check_function(fid, ident, &[])?
+            }
+            RawToken::ExternalIdentifier(entries) => {
+                let newfid = match self.parser.modules[fid].imports.get(&entries[0]).copied() {
+                    Some(fid) => fid,
+                    None => {
+                        return ParseFault::ModuleNotImported(entries[0].clone())
+                            .to_err(token.source_index)
+                            .into()
+                    }
+                };
+                self.type_check_function(newfid, &entries[1], &[])?
+            }
+
+            RawToken::IfExpression(expr) => {
+                let mut expect_type = None;
+                for (cond, eval) in expr.branches.iter() {
+                    let cv = self.type_check(cond, fid, funcid, generics)?;
+                    if cv != Type::Bool {
+                        panic!(
+                            "ET: Condition must result in true or false, but I got {:?}",
+                            cv
+                        );
+                    }
+                    let ev = self.type_check(eval, fid, funcid, generics)?;
+                    if let Some(expected) = &expect_type {
+                        if ev != *expected {
+                            panic!(
+                                "ET: Branches have different types. Wanted {} got {}",
+                                expected, ev
+                            );
+                        }
+                    } else {
+                        expect_type = Some(ev);
+                    }
+                }
+                let ev = self.type_check(&expr.else_branch, fid, funcid, generics)?;
+                if let Some(expected) = &expect_type {
+                    if ev != *expected {
+                        panic!(
+                            "ET: Branches have different types. Wanted {} got {}",
+                            expected, ev
+                        );
+                    }
+                }
+                expect_type.unwrap()
+            }
+            RawToken::List(entries) => {
+                let mut of_t: Option<Type> = None;
+                for (i, entry) in entries.iter().enumerate() {
+                    let r#type = self.type_check(entry, fid, funcid, generics)?;
+                    match &of_t {
+                        Some(t) => {
+                            if *t != r#type {
+                                return ParseFault::ListEntryTypeMismatch(r#type, t.clone(), i)
+                                    .to_err(entry.source_index)
+                                    .into();
+                            }
+                        }
+                        None => of_t = Some(r#type),
+                    }
+                }
+                of_t.unwrap_or_else(|| Type::Generic(0))
+            }
+            _ => panic!("Cannot discover type of {:#?}", token),
+        };
+        Ok(r#type)
+    }
+
+    fn find_matching_function(
+        &self,
+        self_fid: usize,
+        fid: usize,
+        funcname: &str,
+        params: &[Type],
+    ) -> Result<(usize, usize, Generics), ParseFault> {
+        let module = &self.parser.modules[fid];
+        let variants = match module.function_ids.get(funcname) {
+            None => {
+                return if fid == self_fid && fid != PRELUDE_FID {
+                    // Wasn't found, Try prelude
+                    match self.find_matching_function(PRELUDE_FID, PRELUDE_FID, funcname, params)
+                        // Switch out the PRELUDE fid's with this file's fids since it makes
+                        // more sense to assume local over prelude.
+                        // .map_err(|_| ParseFault::FunctionNotFound(funcname.to_string(), fid))
+                    {
+                        Ok(a) => Ok(a),
+                        Err(e) => match e {
+                            ParseFault::FunctionNotFound(name, _prelude) => Err(ParseFault::FunctionNotFound(name, fid)),
+                            ParseFault::FunctionVariantNotFound(name, params, prelude) => Err(ParseFault::FunctionVariantNotFound(name, params, prelude)),
+                            _ => unreachable!(),
+                        }
+                    }
+                } else {
+                    Err(ParseFault::FunctionNotFound(funcname.to_string(), self_fid))
+                };
+            }
+            Some(variants) => variants,
+        };
+
+        // Exact match?
+        if let Some(funcid) = variants.get(params).copied() {
+            return Ok((funcid, fid, Generics::empty()));
+        };
+
+        // Maybe there's a generic match?
+        if let Some((funcid, generics)) = generic_search(variants, params) {
+            return Ok((funcid, fid, generics));
+        };
+
+        Err(ParseFault::FunctionVariantNotFound(
+            funcname.to_string(),
+            params.to_vec(),
+            fid,
+        ))
+    }
+}
+
+fn generic_search<'a>(
+    from: &'a HashMap<Vec<Type>, usize>,
+    find: &[Type],
+) -> Option<(usize, Generics)> {
+    let mut matches: Vec<(&'a [Type], usize, HashMap<u8, Type>)> = Vec::new();
+    'variants: for (params, funcid) in from.iter() {
+        if find.len() != params.len() {
+            continue;
+        }
+        let mut generic_map: HashMap<u8, Type> = HashMap::new();
+        for (i, param) in params.iter().enumerate() {
+            // Type match
+            if *param == find[i] {
+                continue;
+            }
+            // Generic match
+            if let Type::Generic(n) = param {
+                if let Some(existing_generic) = generic_map.get(n) {
+                    if *existing_generic != find[i] {
+                        continue 'variants;
+                    }
+                } else {
+                    generic_map.insert(*n, find[i].clone());
+                }
+                continue;
+            }
+            // This one isn't a match. So lets continue with the other variants
+            continue 'variants;
+        }
+        // This variant is compatible!
+        matches.push((params, *funcid, generic_map));
+    }
+    if matches.is_empty() {
+        return None;
+    }
+
+    Some(get_match_highest_order(matches))
+}
+
+// Gets the variant with the least generics
+fn get_match_highest_order(
+    mut from: Vec<(&[Type], usize, HashMap<u8, Type>)>,
+) -> (usize, Generics) {
+    from.sort_by(|a, b| b.2.len().partial_cmp(&a.2.len()).unwrap());
+    let selected = from.first().unwrap();
+    let funcid = selected.1;
+    let mut list = selected
+        .2
+        .iter()
+        .map(|(gen_n, _)| *gen_n)
+        .collect::<Vec<u8>>();
+    list.sort();
+    (
+        funcid,
+        Generics {
+            inner: list
+                .iter()
+                .map(|n| selected.2[n].clone())
+                .collect::<Vec<Type>>(),
+        },
+    )
+}

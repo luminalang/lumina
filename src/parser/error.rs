@@ -1,7 +1,10 @@
 use super::{tokenizer::Operator, FileSource, FunctionBuilder, Key, Parser, RawToken, Type};
+use crate::env::Environment;
 use std::convert::Into;
 use std::fmt;
+use std::fs::File;
 use std::io;
+use std::io::Read;
 use std::ops::Add;
 use std::path::PathBuf;
 use termion::color;
@@ -33,9 +36,22 @@ impl ParseError {
         self
     }
 
-    pub fn with_source_code(mut self, source_code: Vec<u8>, source_name: FileSource) -> Self {
-        self.source_code = Some(source_code);
-        self.module_name = Some(source_name);
+    pub fn with_source_code(mut self, source: &[u8], source_name: &FileSource) -> Self {
+        if self.source_code.is_some() || self.module_name.is_some() {
+            return self;
+        };
+        self.module_name = Some(source_name.clone());
+        self.source_code = Some(source.to_vec());
+        self
+    }
+    pub fn with_source_load(mut self, env: &Environment, source_name: &FileSource) -> Self {
+        let mut source = Vec::with_capacity(20);
+        File::open(source_name.to_pathbuf(&env))
+            .unwrap()
+            .read_to_end(&mut source)
+            .unwrap();
+        self.source_code = Some(source);
+        self.module_name = Some(source_name.clone());
         self
     }
 
@@ -67,6 +83,8 @@ pub enum ParseFault {
     BridgedFunctionNoMode(u8),
     Unexpected(RawToken),
     Unmatched(Key),
+    ModuleNotImported(String),
+    CannotInferType(char),
     FirstStmNoThen,
     EmptyParen,
     IfMissingElse,
@@ -78,8 +96,8 @@ pub enum ParseFault {
     InvalidParameterName(String),
     PipeIntoVoid,
     EmptyListType,
-    FnTypeReturnMismatch(FunctionBuilder, Type),
-    OpTypeReturnMismatch(FunctionBuilder, Type),
+    ListEntryTypeMismatch(Type, Type, usize),
+    FnTypeReturnMismatch(Box<FunctionBuilder>, Type),
     FunctionNotFound(String, usize),
     // OperatorNotFound(String, usize),
     FunctionVariantNotFound(String, Vec<Type>, usize),
@@ -146,6 +164,18 @@ impl fmt::Display for ParseError {
             BridgedFunctionNoMode(c) => write!(f, "Bridged path mode doesn't exist, got `{}`", c),
             Unexpected(t) => write!(f, "Unexpected {}", t),
             Unmatched(k) => write!(f, "Unmatched {}", k),
+            CannotInferType(c) => write!(f, "Cannot infer type for `{}`", c),
+            ListEntryTypeMismatch(got, wanted, entry_index) => {
+                let num = match entry_index {
+                    0 => "first".to_string(),
+                    1 => "second".to_string(),
+                    2 => "third".to_string(),
+                    4 => "fourth".to_string(),
+                    5 => "fifth".to_string(),
+                    _ => entry_index.to_string().add("th"),
+                };
+                write!(f, "The {} entry of this list doesn't result in the same type as the previous ones\n Expected {}\n But got {}", num, wanted, got)
+            },
             EndedWhileExpecting(expected) => match expected.len() {
                 0 => panic!("None expected"),
                 1 => write!(f, "I was expecting {} but the file ended here", expected[0]),
@@ -282,14 +312,10 @@ impl fmt::Display for ParseError {
             InvalidParameterName(name) => write!(f, "`{}` is not a valid identifier for a parmater", name),
             PipeIntoVoid => write!(f, "This pipe doesn't lead to anywhere, perhaps you need to remove it?"),
             EmptyListType => write!(f, "I know that this is a list but you need to say what type the contents of the list will be\n such as [a] or [int]"),
+            ModuleNotImported(mod_name) => write!(f, "Module {} is not imported", mod_name),
             FnTypeReturnMismatch(funcb, got) => write!(f, "This function returns the wrong value. Acording to its type signature it should return `{}`\n  {}\nbut instead it returns `{}`",
                 funcb.returns,
                 format_function_header(&funcb.name, None, Some(&funcb.returns)),
-                got,
-            ),
-            OpTypeReturnMismatch(opb, got) => write!(f, "This operator returns the wrong value. Acording to its type signature it should return `{}`\n  {}\nbut instead it returns `{}`",
-                opb.returns,
-                format_operator_header(&opb.name, &opb.parameter_types[0], &opb.parameter_types[1]),
                 got,
             ),
             Internal => write!(f, "Internal leaf error"),

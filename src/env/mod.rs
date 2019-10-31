@@ -1,6 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug)]
 pub struct Environment {
     pub leafpath: PathBuf,
     pub entrypoint: PathBuf,

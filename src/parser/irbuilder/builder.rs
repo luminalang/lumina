@@ -1,6 +1,6 @@
 use super::IrBuilder;
+use crate::ir;
 use crate::parser::{Inlined, RawToken, Type, PRELUDE_FID};
-use crate::runtime::ir;
 
 impl IrBuilder {
     pub fn token_to_ir(&self, fid: usize, funcid: usize, t: &RawToken) -> ir::Entity {

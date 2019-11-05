@@ -1,4 +1,6 @@
+pub mod bridge;
 mod r#if;
+pub mod optimizer;
 pub use r#if::If;
 mod first;
 pub use first::First;

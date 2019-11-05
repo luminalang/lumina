@@ -12,7 +12,7 @@ use parser::Parser;
 mod env;
 use env::Environment;
 use parser::{FileSource, IrBuilder};
-pub mod runtime;
+pub mod ir;
 
 fn main() {
     let environment = match Environment::discover() {

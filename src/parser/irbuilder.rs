@@ -1,6 +1,6 @@
 use crate::env::Environment;
+use crate::ir;
 use crate::parser::{ParseError, ParseFault, Parser, Type};
-use crate::runtime::ir;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;

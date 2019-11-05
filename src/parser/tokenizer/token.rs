@@ -1,5 +1,6 @@
 use crate::parser::body::{IfExpr, MatchExpr};
 use crate::parser::{flags, Type};
+use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -84,9 +85,8 @@ pub enum RawToken {
     Header(Header),
     Key(Key),
     Inlined(Inlined),
-    // Operation(Box<(Token, Token)>, Operator),
     Parameters(Vec<Token>),
-    Parameterized(Box<Token>, Vec<Token>),
+    Parameterized(Box<Token>, Vec<Token>, RefCell<Vec<Type>>),
 
     Operator(Operator),
     IfExpression(IfExpr),

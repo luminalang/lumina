@@ -2,6 +2,7 @@ pub use super::FunctionBuilder;
 use crate::parser::tokenizer::{is_valid_identifier, Key, Operator, RawToken, Token};
 use crate::parser::{IdentSource, ParseError, ParseFault};
 use crate::runtime::bridge;
+use std::cell::RefCell;
 
 mod first;
 mod r#if;
@@ -125,6 +126,7 @@ pub trait BodySource {
                             RawToken::Parameterized(
                                 Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
                                 vec![left, right],
+                                RefCell::default(),
                             ),
                             op.1,
                         )
@@ -201,6 +203,7 @@ pub trait BodySource {
                             RawToken::Parameterized(
                                 Box::new(Token::new(RawToken::Identifier(op), source)),
                                 vec![left, right],
+                                RefCell::default(),
                             ),
                             source,
                         )
@@ -240,6 +243,7 @@ pub trait BodySource {
                             RawToken::Parameterized(
                                 Box::new(Token::new(RawToken::Identifier(op.0.identifier), source)),
                                 vec![left, reconstruct],
+                                RefCell::default(),
                             ),
                             op.1,
                         );
@@ -301,6 +305,7 @@ pub trait BodySource {
                             RawToken::Parameterized(
                                 Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
                                 vec![left, v],
+                                RefCell::default(),
                             ),
                             op.1,
                         );
@@ -322,6 +327,7 @@ pub trait BodySource {
                             RawToken::Parameterized(
                                 Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
                                 vec![left, v],
+                                RefCell::default(),
                             ),
                             op.1,
                         );
@@ -343,6 +349,7 @@ pub trait BodySource {
                             RawToken::Parameterized(
                                 Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
                                 vec![left, v],
+                                RefCell::default(),
                             ),
                             op.1,
                         );
@@ -407,7 +414,10 @@ pub trait BodySource {
                     if params.is_empty() {
                         token
                     } else {
-                        Token::new(RawToken::Parameterized(Box::new(token), params), source)
+                        Token::new(
+                            RawToken::Parameterized(Box::new(token), params, RefCell::default()),
+                            source,
+                        )
                     }
                 };
                 match want_params {
@@ -435,7 +445,7 @@ pub trait BodySource {
                 let v = self.walk(Mode::Neutral)?;
                 match v {
                     WalkResult::Value(v) => match &v.inner {
-                        RawToken::Parameterized(_n, _p) => {
+                        RawToken::Parameterized(_n, _p, _pt) => {
                             let operation = Token::new(
                                 RawToken::Parameterized(
                                     Box::new(Token::new(
@@ -443,6 +453,7 @@ pub trait BodySource {
                                         op.1,
                                     )),
                                     vec![left, v],
+                                    RefCell::default(),
                                 ),
                                 op.1,
                             );
@@ -456,6 +467,7 @@ pub trait BodySource {
                                         op.1,
                                     )),
                                     vec![left, v],
+                                    RefCell::default(),
                                 ),
                                 op.1,
                             );

@@ -9,8 +9,9 @@ pub enum Entity {
     FunctionCall(u32, Vec<Entity>),
     IfExpression(self::If<Entity>),
     FirstStatement(self::First<Entity>),
+    Parameter(u16),
 
-    Int(u64),
+    Int(i64),
     Float(f64),
     Bool(bool),
     List(Vec<Entity>),

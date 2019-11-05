@@ -2,11 +2,11 @@ use super::IrBuilder;
 use crate::parser::{Inlined, ParseError, ParseFault, RawToken, Token, Type, PRELUDE_FID};
 use std::collections::HashMap;
 
-struct Generics {
+pub struct Generics {
     inner: Vec<Type>,
 }
 impl Generics {
-    fn decoded(&self, t: &Type) -> Result<Type, ParseFault> {
+    pub fn decoded(&self, t: &Type) -> Result<Type, ParseFault> {
         match t {
             Type::Generic(n) => match self.inner.get(*n as usize) {
                 Some(t) => Ok(t.clone()),
@@ -29,63 +29,7 @@ impl Generics {
 }
 
 impl IrBuilder {
-    pub fn start_type_checker(
-        self,
-        fid: usize,
-        funcname: &str,
-        params: &[Type],
-    ) -> Result<Self, ParseError> {
-        let (funcid, _, generics) = match self
-            .find_matching_function(fid, fid, funcname, params)
-            .map_err(|e| {
-                e.to_err(0)
-                    .with_source_load(&self.environment, &self.parser.modules[fid].module_path)
-            }) {
-            Ok(a) => a,
-            Err(e) => return Err(e.with_parser(self.parser)),
-        };
-
-        let func = &self.parser.modules[fid].functions[funcid];
-        let actual_return_value = match self.type_check(&func.body, fid, funcid, &generics) {
-            Ok(t) => t,
-            Err(e) => return e.with_parser(self.parser).into(),
-        };
-        let decoded_return = generics.decoded(&func.returns).map_err(|e| e.to_err(0))?;
-        if actual_return_value != decoded_return && func.returns != Type::Nothing {
-            return ParseFault::FnTypeReturnMismatch(Box::new(func.clone()), actual_return_value)
-                .to_err(func.body.source_index)
-                .with_source_load(&self.environment, &self.parser.modules[fid].module_path)
-                .with_parser(self.parser)
-                .into();
-        }
-
-        Ok(self)
-    }
-
-    fn type_check_function(
-        &self,
-        fid: usize,
-        ident: &str,
-        params: &[Type],
-    ) -> Result<Type, ParseError> {
-        let (funcid, newfid, generics) = self
-            .find_matching_function(fid, fid, ident, params)
-            .map_err(|e| {
-                e.to_err(0)
-                    .with_source_load(&self.environment, &self.parser.modules[fid].module_path)
-            })?;
-
-        let func = &self.parser.modules[newfid].functions[funcid];
-        let actual_return_value = self.type_check(&func.body, newfid, funcid, &generics)?;
-        if actual_return_value != generics.decoded(&func.returns).map_err(|e| e.to_err(0))? {
-            return ParseFault::FnTypeReturnMismatch(Box::new(func.clone()), actual_return_value)
-                .to_err(func.body.source_index)
-                .into();
-        }
-        Ok(actual_return_value)
-    }
-
-    fn type_check(
+    pub fn type_check(
         &self,
         token: &Token,
         fid: usize,
@@ -106,18 +50,30 @@ impl IrBuilder {
                 }
                 self.type_check(entries.last().unwrap(), fid, funcid, generics)?
             }
-            RawToken::Parameterized(box entry, params) => {
-                let mut param_types = Vec::with_capacity(params.len());
-                for param in params.iter() {
-                    param_types.push(
-                        generics
-                            .decoded(&self.type_check(param, fid, funcid, generics)?)
-                            .map_err(|e| e.to_err(token.source_index))?,
-                    )
+            RawToken::Parameterized(box entry, params, p_types) => {
+                let mut param_types = match p_types.try_borrow_mut() {
+                    Ok(a) => a,
+                    Err(_) => {
+                        // If it's already borrowed then that means that this is a recursive call.
+                        // Therefore we can assume that it's already being type checked!
+                        return Ok(generics
+                            .decoded(&self.find_return_type(fid, &p_types.borrow(), &entry.inner))
+                            .unwrap());
+                    }
+                };
+                if param_types.is_empty() {
+                    for param in params.iter() {
+                        param_types.push(
+                            generics
+                                .decoded(&self.type_check(param, fid, funcid, generics)?)
+                                .map_err(|e| e.to_err(token.source_index))?,
+                        )
+                    }
                 }
+                drop(param_types);
                 match &entry.inner {
                     RawToken::Identifier(ident) => self
-                        .type_check_function(fid, ident, &param_types)
+                        .type_check_function(fid, ident, &p_types.borrow())
                         .map_err(|e| e.fallback(token.source_index))?,
                     RawToken::ExternalIdentifier(entries) => {
                         let newfid =
@@ -129,7 +85,7 @@ impl IrBuilder {
                                         .into()
                                 }
                             };
-                        self.type_check_function(newfid, &entries[1], &param_types)
+                        self.type_check_function(newfid, &entries[1], &p_types.borrow())
                             .map_err(|e| e.fallback(token.source_index))?
                     }
                     RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
@@ -214,7 +170,7 @@ impl IrBuilder {
         Ok(r#type)
     }
 
-    fn find_matching_function(
+    pub fn find_matching_function(
         &self,
         self_fid: usize,
         fid: usize,
@@ -260,6 +216,23 @@ impl IrBuilder {
             params.to_vec(),
             fid,
         ))
+    }
+
+    fn find_return_type(&self, fid: usize, params: &[Type], t: &RawToken) -> Type {
+        let me = &self.parser.modules[fid];
+        match t {
+            RawToken::Identifier(ident) => {
+                me.functions[me.function_ids[ident][params]].returns.clone()
+            }
+            RawToken::ExternalIdentifier(entries) => {
+                let newfid = me.imports[&entries[0]];
+                let newme = &self.parser.modules[newfid];
+                newme.functions[newme.function_ids[&entries[1]][params]]
+                    .returns
+                    .clone()
+            }
+            _ => unimplemented!(),
+        }
     }
 }
 

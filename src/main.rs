@@ -14,8 +14,6 @@ use env::Environment;
 use parser::{FileSource, IrBuilder};
 pub mod runtime;
 
-pub mod datatypes;
-
 fn main() {
     let environment = match Environment::discover() {
         Ok(env) => Rc::new(env),
@@ -54,7 +52,7 @@ fn main() {
             println!("{}", e.with_source_code(&source_code, &file_path));
             return;
         }
-        Ok(irbuilder) => irbuilder.build(fid, "main", &[]),
+        Ok((ir, _entrypoint)) => ir,
     };
     dbg!(ir);
 }

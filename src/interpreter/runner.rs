@@ -59,7 +59,7 @@ impl<'a> Runner<'a> {
             2 => {
                 let func = bridge::get_func_two(index);
 
-                let a = self.spawn(&rust_params[1], self.params.borrow());
+                let a = self.spawn(&rust_params[0], self.params.borrow());
 
                 self.entity = &rust_params[1];
                 let b = self.run();

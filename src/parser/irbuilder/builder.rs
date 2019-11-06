@@ -66,9 +66,9 @@ impl IrBuilder {
                 )
             }
             RawToken::Inlined(inlined) => match &inlined {
-                Inlined::Int(n) => ir::Entity::Int(*n),
-                Inlined::Float(n) => ir::Entity::Float(*n),
-                Inlined::Bool(b) => ir::Entity::Bool(*b),
+                Inlined::Int(n) => ir::Entity::Inlined(ir::Value::Int(*n)),
+                Inlined::Float(n) => ir::Entity::Inlined(ir::Value::Float(*n)),
+                Inlined::Bool(b) => ir::Entity::Inlined(ir::Value::Bool(*b)),
                 _ => unimplemented!(),
             },
             RawToken::FirstStatement(entries) => ir::Entity::FirstStatement(ir::First::from(
@@ -92,6 +92,9 @@ impl IrBuilder {
 
     pub fn complete(&self, findex: usize, entity: ir::Entity) {
         let mut stack = self.completed.borrow_mut();
+        if findex > stack.len() {
+            stack.resize(findex, ir::Entity::Unique)
+        }
         stack.insert(findex, entity);
     }
 }

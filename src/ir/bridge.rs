@@ -32,13 +32,3 @@ pub fn get_funcid(ident: &str, params: u16) -> Result<(u16, Type), ParseFault> {
     };
     Ok(id)
 }
-
-pub fn get_func_two(id: usize) -> fn(u8, u8) -> u8 {
-    match id {
-        0 => |x, y| x + y,
-        1 => |x, y| x - y,
-        2 => |x, y| x * y,
-        3 => |x, y| x / y,
-        _ => unreachable!(),
-    }
-}

@@ -56,6 +56,7 @@ impl IrBuilder {
                     Err(_) => {
                         // If it's already borrowed then that means that this is a recursive call.
                         // Therefore we can assume that it's already being type checked!
+                        dbg!(&params);
                         return Ok(generics
                             .decoded(&self.find_return_type(fid, &p_types.borrow(), &entry.inner))
                             .unwrap());

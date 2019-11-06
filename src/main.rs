@@ -12,6 +12,7 @@ use parser::Parser;
 mod env;
 use env::Environment;
 use parser::{FileSource, IrBuilder};
+mod interpreter;
 pub mod ir;
 
 fn main() {
@@ -47,12 +48,18 @@ fn main() {
     println!("{:#?}\n", parser);
 
     // Verify syntax, infer types and compile to low-level IR.
-    let ir = match IrBuilder::new(parser, environment).start_type_checker(fid, "main", &[]) {
-        Err(e) => {
-            println!("{}", e.with_source_code(&source_code, &file_path));
-            return;
-        }
-        Ok((ir, _entrypoint)) => ir,
-    };
-    dbg!(ir);
+    let (ir, entrypoint) =
+        match IrBuilder::new(parser, environment).start_type_checker(fid, "main", &[]) {
+            Err(e) => {
+                println!("{}", e.with_source_code(&source_code, &file_path));
+                return;
+            }
+            Ok(ir) => ir,
+        };
+    dbg!(&ir);
+
+    let runtime = interpreter::Runtime::new(ir);
+    let entry = &runtime.instructions[entrypoint];
+    let final_value = interpreter::Runner::start(&runtime, &entry, Vec::new().into());
+    dbg!(final_value);
 }

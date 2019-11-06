@@ -8,18 +8,13 @@ use std::rc::Rc;
 mod builder;
 mod checker;
 
-#[derive(Debug)]
+//#[derive(Debug)]
 pub struct IrBuilder {
     parser: Parser,
     completed: RefCell<Vec<ir::Entity>>,
     environment: Rc<Environment>,
     assigned_indexes: RefCell<HashMap<(usize, usize), usize>>,
 }
-
-/*
-We're gonna make the typechecker also append to irbuilder.completed.
-How? Not quite sure. But I think we can just wrap type_check_function
-*/
 
 impl IrBuilder {
     pub fn new(parser: Parser, env: Rc<Environment>) -> Self {
@@ -40,6 +35,16 @@ impl IrBuilder {
                 new_index
             }
             Some(existing) => *existing,
+        }
+    }
+    fn try_get_id(&self, fid: usize, funcid: usize) -> Option<usize> {
+        self.assigned_indexes.borrow().get(&(fid, funcid)).copied()
+    }
+    fn should_replace(&self, findex: usize) -> bool {
+        use std::mem::discriminant;
+        match self.completed.borrow().get(findex) {
+            Some(a) => discriminant(a) == discriminant(&ir::Entity::Unique),
+            None => true,
         }
     }
 
@@ -88,7 +93,6 @@ impl IrBuilder {
         ident: &str,
         params: &[Type],
     ) -> Result<Type, ParseError> {
-        // TODO: Recursive data pattern will forever typecheck
         let (funcid, newfid, generics) = self
             .find_matching_function(fid, fid, ident, params)
             .map_err(|e| {
@@ -104,26 +108,19 @@ impl IrBuilder {
                 .into();
         }
 
-        if self
-            .assigned_indexes
-            .borrow()
-            .get(&(newfid, funcid))
-            .is_none()
-        {
-            // let entry = self.token_to_ir()
-
-            // TODO: Maybe I can inline by pop'ing of the self.completed and self.assigned_indexes?
-            // We are working in reverse so that'd make a lot of sense and as long as we're not
-            // multithreadded when doing this it should be fine.
-            //
-            // We actually can't pop off assigned_indexes though since it's a hashmap.
-            //
-            // Perhaps we shouldn't even pop it off. Some other function will probably use it so
-            // might as well let it stay I guess.
-
-            let entry = self.token_to_ir(newfid, funcid, &func.body.inner);
-            let findex = self.gen_id(newfid, funcid);
-            self.complete(findex, entry);
+        match self.try_get_id(newfid, funcid) {
+            None => {
+                let findex = self.gen_id(newfid, funcid);
+                let entry = self.token_to_ir(newfid, funcid, &func.body.inner);
+                self.complete(findex, entry);
+            }
+            Some(findex) => {
+                dbg!(&self.assigned_indexes.borrow(), &self.completed.borrow());
+                if self.should_replace(findex) {
+                    let entry = self.token_to_ir(newfid, funcid, &func.body.inner);
+                    self.complete(findex, entry);
+                }
+            }
         }
 
         Ok(actual_return_value)

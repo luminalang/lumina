@@ -1,5 +1,5 @@
 use super::runtime::Runtime;
-use crate::ir::{Entity, Value};
+use crate::ir::{Entity, If, Value};
 
 mod bridge;
 mod parambuffer;
@@ -36,6 +36,7 @@ impl<'a> Runner<'a> {
                 Entity::RustCall(index, params) => return self.rust_call(*index, params),
                 Entity::Parameter(n) => return self.params.param_consume(*n as usize),
                 Entity::Inlined(v) => return v.clone(),
+                Entity::IfExpression(expr) => return self.if_expression(expr),
                 Entity::FunctionCall(findex, params) => {
                     let evaluated_params = params
                         .iter()
@@ -63,5 +64,15 @@ impl<'a> Runner<'a> {
             }
             _ => unreachable!(),
         }
+    }
+    fn if_expression(&self, expr: &If<Entity>) -> Value {
+        for i in 0..expr.branches() {
+            let cond = expr.condition(i);
+            if let Value::Bool(true) = self.spawn(cond, self.params.borrow()) {
+                let eval = expr.evaluation(i);
+                return self.spawn(eval, self.params.borrow());
+            }
+        }
+        self.spawn(expr.r#else(), self.params.borrow())
     }
 }

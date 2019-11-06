@@ -20,6 +20,9 @@ impl<T> If<T> {
         index = (index * 2) + 2;
         &self.inner[index]
     }
+    pub fn branches(&self) -> usize {
+        (self.inner.len() - 1) / 2
+    }
 
     pub fn r#else(&self) -> &T {
         &self.inner[0]

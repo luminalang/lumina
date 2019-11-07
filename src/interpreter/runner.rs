@@ -39,13 +39,24 @@ impl<'a> Runner<'a> {
                 Entity::IfExpression(expr) => return self.if_expression(expr),
                 Entity::FirstStatement(stmt) => return self.first_statement(stmt),
                 Entity::FunctionCall(findex, params) => {
-                    let evaluated_params = params
-                        .iter()
-                        .map(|p| self.spawn(p, self.params.borrow()))
-                        .collect::<Vec<Value>>()
-                        .into();
+                    let evaluated_params = match params.len() {
+                        0 => Vec::new(),
+                        1 => {
+                            let new_params = self.params.consume();
+                            vec![self.spawn(&params[0], new_params)]
+                        }
+                        _ => {
+                            let mut buf = Vec::with_capacity(params.len());
+                            for p in params[0..params.len() - 1].iter() {
+                                buf.push(self.spawn(p, self.params.borrow()))
+                            }
+                            let new_params = self.params.consume();
+                            buf.push(self.spawn(&params[params.len() - 1], new_params));
+                            buf
+                        }
+                    };
 
-                    self.params = evaluated_params;
+                    self.params = evaluated_params.into();
                     let entity = &self.runtime.instructions[*findex as usize];
                     self.entity = entity;
                 }

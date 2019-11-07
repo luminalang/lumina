@@ -14,6 +14,16 @@ impl<'p> ParamBuffer<'p> {
             Owned(a) => ParamBuffer::Borrowed(&a),
         }
     }
+    pub fn consume(&mut self) -> ParamBuffer<'p> {
+        match self {
+            Borrowed(a) => ParamBuffer::Borrowed(&a),
+            Owned(a) => {
+                let mut v = Vec::new();
+                std::mem::swap(&mut v, a);
+                ParamBuffer::Owned(v)
+            }
+        }
+    }
     pub fn param_borrow(&'p self, i: usize) -> &'p Value {
         match self {
             Borrowed(a) => &a[i],
@@ -37,55 +47,3 @@ impl From<Vec<Value>> for ParamBuffer<'_> {
         Self::Owned(v)
     }
 }
-
-/*
-pub trait ParamBuffer {
-    fn param_borrow(&self, i: usize) -> &Value;
-    fn param_consume(&mut self, i: usize) -> Value;
-    fn borrow(&self) -> BorrowedParamBuffer<'_>;
-}
-
-pub struct BorrowedParamBuffer<'a> {
-    content: &'a [Value],
-}
-
-impl<'a> ParamBuffer for BorrowedParamBuffer<'a> {
-    fn borrow(&self) -> BorrowedParamBuffer<'_> {
-        Self {
-            content: self.content,
-        }
-    }
-    fn param_borrow(&self, i: usize) -> &Value {
-        &self.content[i]
-    }
-    fn param_consume(&mut self, i: usize) -> Value {
-        self.content[i].clone()
-    }
-}
-
-pub struct OwnedParamBuffer {
-    content: Vec<Value>,
-}
-
-impl From<Vec<Value>> for OwnedParamBuffer {
-    fn from(v: Vec<Value>) -> Self {
-        Self { content: v }
-    }
-}
-
-impl ParamBuffer for OwnedParamBuffer {
-    fn borrow(&self) -> BorrowedParamBuffer {
-        BorrowedParamBuffer {
-            content: &self.content,
-        }
-    }
-    fn param_borrow(&self, i: usize) -> &Value {
-        &self.content[i]
-    }
-    fn param_consume(&mut self, i: usize) -> Value {
-        let mut v = Value::Nothing;
-        std::mem::swap(&mut v, &mut self.content[i]);
-        v
-    }
-}
-*/

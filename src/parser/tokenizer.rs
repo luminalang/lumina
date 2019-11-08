@@ -11,13 +11,11 @@ pub struct Tokenizer<'s> {
     index: usize,
 }
 
-const BREAK_AT: &[u8] = b" ,()[]+*/\n#{}|=";
-const IGNORES_SPACE: &[u8] = b",([+*/\n#{}|";
+const BREAK_AT: &[u8] = b" ,()[]+*/\n#{}";
+const IGNORES_SPACE: &[u8] = b",([+*/\n#{}";
 // &[(x, [y])] -> Only early-breaks on x if the next byte isn't any of y
 const MAYBE_IGNORES_SPACE: &[(u8, &[u8])] = &[
     (b'-', &[b'>']),
-    // (b'<', &[b'=', b'<']),
-    // (b'=', &[b'>']),
     (b'!', &[b'=']),
     (b':', ALLOWED_IDENTIFIER_CHARACTERS),
 ];
@@ -86,15 +84,14 @@ impl<'s> Tokenizer<'s> {
                 self.progress(1);
                 self.skip_spaces_and_newlines();
             }
-            Some(b'|') => {
+            Some(b'/') => {
                 let next = self.source_code.get(self.index + 1).copied();
-                if next == Some(b'|') {
+                if next == Some(b'/') {
                     self.progress_until(|s| s.source_code[s.index] == b'\n');
                     self.skip_spaces_and_newlines();
-                } else if next == Some(b'>') {
+                } else if next == Some(b'*') {
                     self.progress_until(|s| {
-                        (s.source_code[s.index] == b'|' && s.next_char() == b'<')
-                            || (s.source_code[s.index] == b'<' && s.next_char() == b'|')
+                        (s.source_code[s.index] == b'*' && s.next_char() == b'/')
                     });
                 }
             }
@@ -127,19 +124,17 @@ impl<'s> Tokenizer<'s> {
             self.progress(1);
             return self.gather_to(stoppers);
         }
-        if c == b'|' {
+        if c == b'/' {
             let next = self.source_code.get(self.index + 1).copied();
             // Single line comment
-            if next == Some(b'|') {
+            if next == Some(b'/') {
                 self.progress_until(|s| s.source_code[s.index] == b'\n');
                 self.progress(1);
                 return self.gather_to(stoppers);
             }
-            if next == Some(b'>') {
-                let found_comment_exit = self.progress_until(|s| {
-                    (s.source_code[s.index] == b'|' && s.next_char() == b'<')
-                        || (s.source_code[s.index] == b'<' && s.next_char() == b'|')
-                });
+            if next == Some(b'*') {
+                let found_comment_exit = self
+                    .progress_until(|s| (s.source_code[s.index] == b'*' && s.next_char() == b'/'));
                 self.progress(1);
                 if !found_comment_exit {
                     return &[];

@@ -11,8 +11,8 @@ pub struct Tokenizer<'s> {
     index: usize,
 }
 
-const BREAK_AT: &[u8] = b" ,()[]+*/\n#{}";
-const IGNORES_SPACE: &[u8] = b",([+*/\n#{}";
+const BREAK_AT: &[u8] = b" ,()[]+*/\n#{}#";
+const IGNORES_SPACE: &[u8] = b",([+*/\n#{}#";
 // &[(x, [y])] -> Only early-breaks on x if the next byte isn't any of y
 const MAYBE_IGNORES_SPACE: &[(u8, &[u8])] = &[
     (b'-', &[b'>']),

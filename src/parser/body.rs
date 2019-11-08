@@ -384,6 +384,54 @@ pub trait BodySource {
                     _ => unimplemented!(), // possible?
                 }
             }
+            RawToken::Key(Key::ClosureMarker) => {
+                let next = self.next().ok_or_else(|| {
+                    ParseFault::EndedWhileExpecting(vec![
+                        RawToken::Key(Key::ParenOpen),
+                        RawToken::Identifier("function name".to_owned()),
+                    ])
+                    .to_err(token.source_index)
+                })?;
+                let source = next.source_index;
+
+                let to_pass = match &next.inner {
+                    RawToken::Key(Key::ParenOpen) => {
+                        let v = self.walk(Mode::Neutral)?;
+                        match v {
+                            WalkResult::CloseParen(Some(v)) => v,
+                            WalkResult::CloseParen(None) => {
+                                return ParseFault::EmptyParen.to_err(next.source_index).into()
+                            }
+                            _ => {
+                                return ParseFault::Unmatched(Key::ParenClose)
+                                    .to_err(next.source_index)
+                                    .into()
+                            }
+                        }
+                    }
+                    RawToken::Identifier(_ident) => next,
+                    _ => panic!("ET: {:?} cannot be passed as closure", next.inner),
+                };
+                let completed = Token::new(RawToken::ByPointer(Box::new(to_pass)), source);
+                match mode {
+                    Mode::Parameters(mut previous) => {
+                        previous.push(completed);
+                        self.walk(Mode::Parameters(previous))
+                    }
+                    Mode::Neutral => Ok(WalkResult::Value(completed)),
+                    Mode::Operator(left, op) => {
+                        let operation = Token::new(
+                            RawToken::Parameterized(
+                                Box::new(Token::new(RawToken::Identifier(op.0.identifier), op.1)),
+                                vec![left, completed],
+                                RefCell::default(),
+                            ),
+                            op.1,
+                        );
+                        self.handle_after(operation)
+                    }
+                }
+            }
             _ => panic!("Unexpected {:?}; MODE:{:?}", token, mode),
         }
     }

@@ -15,6 +15,7 @@ pub enum Type {
     Generic(u8),
     List(Box<Type>),
     Struct(i32, i32),
+    Function(Box<(Vec<Type>, Type)>),
     Custom(String),
 }
 
@@ -61,6 +62,16 @@ impl fmt::Display for Type {
             Type::Float => f.write_str("float"),
             Type::Bool => f.write_str("bool"),
             Type::Generic(gid) => write!(f, "{}", (gid + 97) as char),
+            Type::Function(box (takes, gives)) => write!(
+                f,
+                "({} -> {})",
+                takes
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" "),
+                gives
+            ),
             Type::List(inner) => write!(f, "[{}]", inner.to_string()),
             Type::Struct(fid, tid) => write!(f, "Struct({}:{})", fid, tid),
             Type::Custom(name) => write!(f, "unevaluated type {}", name),

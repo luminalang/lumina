@@ -87,6 +87,7 @@ pub enum RawToken {
     Inlined(Inlined),
     Parameters(Vec<Token>),
     Parameterized(Box<Token>, Vec<Token>, RefCell<Vec<Type>>),
+    ByPointer(Box<Token>),
 
     Operator(Operator),
     IfExpression(IfExpr),

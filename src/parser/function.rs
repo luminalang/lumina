@@ -123,22 +123,24 @@ impl FunctionBuilder {
             }
         }
     }
+
+    fn err_type_expecting(&self) -> Vec<RawToken> {
+        if self.parameter_types.is_empty() {
+            vec![RawToken::Identifier("parameter type".into())]
+        } else {
+            vec![
+                RawToken::Identifier("parameter type".into()),
+                RawToken::Key(Key::Arrow),
+            ]
+        }
+    }
+
     fn with_parameter_types(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
-        let expecting = |s: &FunctionBuilder| {
-            if s.parameter_types.is_empty() {
-                vec![RawToken::Identifier("parameter type".into())]
-            } else {
-                vec![
-                    RawToken::Identifier("parameter type".into()),
-                    RawToken::Key(Key::Arrow),
-                ]
-            }
-        };
         loop {
             let (next_inner, next_source_index) = match tokenizer.next() {
                 Some(t) => (t.inner, t.source_index),
                 None => {
-                    return ParseFault::EndedWhileExpecting(expecting(&self))
+                    return ParseFault::EndedWhileExpecting(self.err_type_expecting())
                         .to_err(tokenizer.index() - 1)
                         .into();
                 }
@@ -151,9 +153,12 @@ impl FunctionBuilder {
                     .parameter_types
                     .push(Type::List(Box::new(self.parse_list_type(tokenizer)?))),
                 RawToken::Key(Key::ParenClose) => return Ok(self),
+                RawToken::Key(Key::ParenOpen) => self
+                    .parameter_types
+                    .push(Type::Function(Box::new(self.parse_param_type(tokenizer)?))),
                 RawToken::Key(Key::Arrow) => return self.with_return(tokenizer),
                 _ => {
-                    return ParseFault::GotButExpected(next_inner, expecting(&self))
+                    return ParseFault::GotButExpected(next_inner, self.err_type_expecting())
                         .to_err(next_source_index)
                         .into()
                 }
@@ -195,7 +200,40 @@ impl FunctionBuilder {
         }
     }
 
-    fn with_return(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+    fn parse_param_type(&self, tokenizer: &mut Tokenizer) -> Result<(Vec<Type>, Type), ParseError> {
+        let mut buf = Vec::new();
+        loop {
+            let (next_inner, next_source_index) = match tokenizer.next() {
+                Some(t) => (t.inner, t.source_index),
+                None => {
+                    return ParseFault::EndedWhileExpecting(self.err_type_expecting())
+                        .to_err(tokenizer.index() - 1)
+                        .into();
+                }
+            };
+            match next_inner {
+                RawToken::Identifier(name) => buf
+                    .push(Type::try_from(name.as_str()).map_err(|e| e.to_err(next_source_index))?),
+                RawToken::Key(Key::ListOpen) => {
+                    buf.push(Type::List(Box::new(self.parse_list_type(tokenizer)?)))
+                }
+                RawToken::Key(Key::ParenOpen) => {
+                    buf.push(Type::Function(Box::new(self.parse_param_type(tokenizer)?)))
+                }
+                RawToken::Key(Key::Arrow) => {
+                    let returns = (buf, self.parse_return_type(tokenizer)?);
+                    return Ok(returns);
+                }
+                _ => {
+                    return ParseFault::GotButExpected(next_inner, self.err_type_expecting())
+                        .to_err(next_source_index)
+                        .into()
+                }
+            }
+        }
+    }
+
+    fn parse_return_type(&self, tokenizer: &mut Tokenizer) -> Result<Type, ParseError> {
         let (next_inner, next_source_index) = match tokenizer.next() {
             Some(t) => (t.inner, t.source_index),
             None => {
@@ -206,14 +244,14 @@ impl FunctionBuilder {
                 .into()
             }
         };
-        match next_inner {
+        let r#type = match next_inner {
             RawToken::Identifier(name) => {
-                self.returns =
-                    Type::try_from(name.as_str()).map_err(|e| e.to_err(next_source_index))?;
+                Type::try_from(name.as_str()).map_err(|e| e.to_err(next_source_index))?
             }
-            RawToken::Key(Key::ListOpen) => {
-                self.returns = Type::List(Box::new(self.parse_list_type(tokenizer)?))
+            RawToken::Key(Key::ParenOpen) => {
+                Type::Function(Box::new(self.parse_param_type(tokenizer)?))
             }
+            RawToken::Key(Key::ListOpen) => Type::List(Box::new(self.parse_list_type(tokenizer)?)),
             _ => {
                 return ParseFault::GotButExpected(
                     next_inner,
@@ -222,7 +260,7 @@ impl FunctionBuilder {
                 .to_err(next_source_index)
                 .into()
             }
-        }
+        };
         let after = match tokenizer.next() {
             None => {
                 return ParseFault::EndedWhileExpecting(vec![RawToken::Key(Key::ParenClose)])
@@ -232,11 +270,16 @@ impl FunctionBuilder {
             Some(t) => t,
         };
         match after.inner {
-            RawToken::Key(Key::ParenClose) => Ok(self),
+            RawToken::Key(Key::ParenClose) => Ok(r#type),
             _ => ParseFault::GotButExpected(after.inner, vec![RawToken::Key(Key::ParenClose)])
                 .to_err(after.source_index)
                 .into(),
         }
+    }
+
+    fn with_return(mut self, tokenizer: &mut Tokenizer) -> Result<Self, ParseError> {
+        self.returns = self.parse_return_type(tokenizer)?;
+        Ok(self)
     }
 
     pub fn parse_body(&mut self, tokenizer: &mut Tokenizer) -> Result<Token, ParseError> {

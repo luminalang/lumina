@@ -95,6 +95,10 @@ pub enum RawToken {
     List(Vec<Token>),
     RustCall(u16, Type),
 
+    // Special marker that automatically is placed on empty function bodies
+    // Allows valid type checking but causes runtime crash
+    Unimplemented,
+
     NewLine,
 }
 

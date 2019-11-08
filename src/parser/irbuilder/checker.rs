@@ -1,32 +1,6 @@
+use super::generics::*;
 use super::IrBuilder;
 use crate::parser::{Inlined, ParseError, ParseFault, RawToken, Token, Type, PRELUDE_FID};
-use std::collections::HashMap;
-
-pub struct Generics {
-    inner: Vec<Type>,
-}
-impl Generics {
-    pub fn decoded(&self, t: &Type) -> Result<Type, ParseFault> {
-        match t {
-            Type::Generic(n) => match self.inner.get(*n as usize) {
-                Some(t) => Ok(t.clone()),
-                None => Err(ParseFault::CannotInferType((n + 97) as char)),
-            },
-            _ => Ok(t.clone()),
-        }
-    }
-    fn new() -> Self {
-        Self::with_capacity(0)
-    }
-    fn with_capacity(cap: usize) -> Self {
-        Generics {
-            inner: Vec::with_capacity(cap),
-        }
-    }
-    fn empty() -> Self {
-        Self::new()
-    }
-}
 
 impl IrBuilder {
     pub fn type_check(
@@ -43,6 +17,9 @@ impl IrBuilder {
                 Inlined::Bool(_) => Type::Bool,
                 Inlined::Nothing => Type::Nothing,
             },
+            RawToken::Unimplemented => generics
+                .decoded(&self.parser.modules[fid].functions[funcid].returns)
+                .unwrap(),
             RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
             RawToken::FirstStatement(entries) => {
                 for entry in entries[0..entries.len() - 1].iter() {
@@ -56,7 +33,6 @@ impl IrBuilder {
                     Err(_) => {
                         // If it's already borrowed then that means that this is a recursive call.
                         // Therefore we can assume that it's already being type checked!
-                        dbg!(&params);
                         return Ok(generics
                             .decoded(&self.find_return_type(fid, &p_types.borrow(), &entry.inner))
                             .unwrap());
@@ -97,7 +73,9 @@ impl IrBuilder {
                 {
                     let func = &self.parser.modules[fid].functions[funcid];
                     if let Some(paramid) = func.get_parameter(ident) {
-                        return Ok(func.get_parameter_type(paramid).clone());
+                        return Ok(generics
+                            .decoded(&func.get_parameter_type(paramid).clone())
+                            .unwrap());
                     };
                 }
 
@@ -164,7 +142,7 @@ impl IrBuilder {
                         None => of_t = Some(r#type),
                     }
                 }
-                of_t.unwrap_or_else(|| Type::Generic(0))
+                Type::List(Box::new(of_t.unwrap_or_else(|| Type::Generic(0))))
             }
             _ => panic!("Cannot discover type of {:#?}", token),
         };
@@ -235,67 +213,4 @@ impl IrBuilder {
             _ => unimplemented!(),
         }
     }
-}
-
-fn generic_search<'a>(
-    from: &'a HashMap<Vec<Type>, usize>,
-    find: &[Type],
-) -> Option<(usize, Generics)> {
-    let mut matches: Vec<(&'a [Type], usize, HashMap<u8, Type>)> = Vec::new();
-    'variants: for (params, funcid) in from.iter() {
-        if find.len() != params.len() {
-            continue;
-        }
-        let mut generic_map: HashMap<u8, Type> = HashMap::new();
-        for (i, param) in params.iter().enumerate() {
-            // Type match
-            if *param == find[i] {
-                continue;
-            }
-            // Generic match
-            if let Type::Generic(n) = param {
-                if let Some(existing_generic) = generic_map.get(n) {
-                    if *existing_generic != find[i] {
-                        continue 'variants;
-                    }
-                } else {
-                    generic_map.insert(*n, find[i].clone());
-                }
-                continue;
-            }
-            // This one isn't a match. So lets continue with the other variants
-            continue 'variants;
-        }
-        // This variant is compatible!
-        matches.push((params, *funcid, generic_map));
-    }
-    if matches.is_empty() {
-        return None;
-    }
-
-    Some(get_match_highest_order(matches))
-}
-
-// Gets the variant with the least generics
-fn get_match_highest_order(
-    mut from: Vec<(&[Type], usize, HashMap<u8, Type>)>,
-) -> (usize, Generics) {
-    from.sort_by(|a, b| b.2.len().partial_cmp(&a.2.len()).unwrap());
-    let selected = from.first().unwrap();
-    let funcid = selected.1;
-    let mut list = selected
-        .2
-        .iter()
-        .map(|(gen_n, _)| *gen_n)
-        .collect::<Vec<u8>>();
-    list.sort();
-    (
-        funcid,
-        Generics {
-            inner: list
-                .iter()
-                .map(|n| selected.2[n].clone())
-                .collect::<Vec<Type>>(),
-        },
-    )
 }

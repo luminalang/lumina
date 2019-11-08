@@ -1,6 +1,5 @@
 pub mod bridge;
 mod r#if;
-pub mod optimizer;
 pub use r#if::If;
 mod first;
 pub use first::First;
@@ -16,8 +15,8 @@ pub enum Entity {
     Parameter(u16),
 
     Inlined(Value),
+    Unimplemented,
     Unique,
-    /*
+
     List(Vec<Entity>),
-    */
 }

@@ -13,10 +13,11 @@ impl IrBuilder {
                 match &takes.inner {
                     RawToken::Identifier(ident) => {
                         let ptypes: &[Type] = &param_types.borrow();
+                        dbg!(ident, ptypes);
                         let (newfid, newfuncid) = self.parser.modules[fid]
                             .function_ids
                             .get(ident.as_str())
-                            .map(|a| (fid, a[ptypes]))
+                            .map(|a| (fid, super::generics::generic_search(a, ptypes).unwrap().0))
                             .unwrap_or_else(|| {
                                 (
                                     PRELUDE_FID,
@@ -86,6 +87,13 @@ impl IrBuilder {
                 }
                 ir::Entity::IfExpression(ir::If::from(buf))
             }
+            RawToken::Unimplemented => ir::Entity::Unimplemented,
+            RawToken::List(entries) => ir::Entity::List(
+                entries
+                    .iter()
+                    .map(|t| self.token_to_ir(fid, funcid, &t.inner))
+                    .collect(),
+            ),
             _ => unimplemented!("{:?}", t),
         }
     }

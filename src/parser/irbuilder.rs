@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 mod builder;
 mod checker;
+pub mod generics;
 
 //#[derive(Debug)]
 pub struct IrBuilder {

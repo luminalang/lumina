@@ -38,6 +38,7 @@ impl<'a> Runner<'a> {
                 Entity::Inlined(v) => return v.clone(),
                 Entity::IfExpression(expr) => return self.if_expression(expr),
                 Entity::FirstStatement(stmt) => return self.first_statement(stmt),
+                Entity::List(list) => return self.list(list),
                 Entity::FunctionCall(findex, params) => {
                     let evaluated_params = match params.len() {
                         0 => Vec::new(),
@@ -86,7 +87,6 @@ impl<'a> Runner<'a> {
             if let Value::Bool(true) = self.spawn(cond, self.params.borrow()) {
                 self.entity = expr.evaluation(i);
                 return self.run();
-                // return self.spawn(eval, self.params.borrow());
             }
         }
         self.entity = expr.r#else();
@@ -98,5 +98,16 @@ impl<'a> Runner<'a> {
         }
         self.entity = stmt.to_eval();
         self.run()
+    }
+    fn list(mut self, list: &'a [Entity]) -> Value {
+        let mut buf = Vec::with_capacity(list.len());
+        for entity in list[0..list.len() - 1].iter() {
+            buf.push(self.spawn(entity, self.params.borrow()))
+        }
+        buf.push({
+            self.entity = &list[list.len() - 1];
+            self.run()
+        });
+        Value::List(buf)
     }
 }

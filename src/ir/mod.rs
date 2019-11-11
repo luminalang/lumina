@@ -15,8 +15,8 @@ pub enum Entity {
     Parameter(u16),
 
     Inlined(Value),
+    List(Vec<Entity>),
+
     Unimplemented,
     Unique,
-
-    List(Vec<Entity>),
 }

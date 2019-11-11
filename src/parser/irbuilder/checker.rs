@@ -20,6 +20,37 @@ impl IrBuilder {
             RawToken::Unimplemented => generics
                 .decoded(&self.parser.modules[fid].functions[funcid].returns)
                 .unwrap(),
+            RawToken::ByPointer(box t) => {
+                match &t.inner {
+                    RawToken::Identifier(ident) => {
+                        let func = &self.parser.modules[fid].functions[funcid];
+                        if let Some(paramid) = func.get_parameter(ident) {
+                            let param = func.get_parameter_type(paramid);
+                            if let Type::Function(_) = param {
+                                generics
+                                    .decoded(param)
+                                    .map_err(|e| e.to_err(t.source_index))?
+                            } else {
+                                panic!("ET: the value {:?} cannot be passed as closure", param)
+                            }
+                        } else {
+                            unimplemented!();
+                        }
+                    }
+                    RawToken::ExternalIdentifier(entries) => {
+                        let newfid = self.parser.modules[fid]
+                            .imports
+                            .get(&entries[0])
+                            .ok_or_else(|| {
+                                ParseFault::ModuleNotImported(entries[0].clone())
+                                    .to_err(token.source_index)
+                            })?;
+                        unimplemented!();
+                    }
+                    // TODO: Parameterized()
+                    _ => panic!("{:?} cannot be passed as closure", t.inner), // ET? I think body.rs already handles faults here
+                }
+            }
             RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
             RawToken::FirstStatement(entries) => {
                 for entry in entries[0..entries.len() - 1].iter() {

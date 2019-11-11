@@ -66,12 +66,11 @@ impl IrBuilder {
         };
 
         let func = &self.parser.modules[fid].functions[funcid];
-        let actual_return_value = match self.type_check(&func.body, fid, funcid, &generics) {
+        let actual_return_value = match self.type_check(&func.body, fid, funcid) {
             Ok(t) => t,
             Err(e) => return e.with_parser(self.parser).into(),
         };
-        let decoded_return = generics.decoded(&func.returns).map_err(|e| e.to_err(0))?;
-        if actual_return_value != decoded_return && func.returns != Type::Nothing {
+        if actual_return_value != func.returns && func.returns != Type::Nothing {
             return ParseFault::FnTypeReturnMismatch(Box::new(func.clone()), actual_return_value)
                 .to_err(func.body.source_index)
                 .with_source_load(&self.environment, &self.parser.modules[fid].module_path)
@@ -102,8 +101,8 @@ impl IrBuilder {
             })?;
 
         let func = &self.parser.modules[newfid].functions[funcid];
-        let actual_return_value = self.type_check(&func.body, newfid, funcid, &generics)?;
-        if actual_return_value != generics.decoded(&func.returns).map_err(|e| e.to_err(0))? {
+        let actual_return_value = self.type_check(&func.body, newfid, funcid)?;
+        if actual_return_value != func.returns {
             return ParseFault::FnTypeReturnMismatch(Box::new(func.clone()), actual_return_value)
                 .to_err(func.body.source_index)
                 .into();

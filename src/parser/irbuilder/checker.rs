@@ -3,13 +3,7 @@ use super::IrBuilder;
 use crate::parser::{Inlined, ParseError, ParseFault, RawToken, Token, Type, PRELUDE_FID};
 
 impl IrBuilder {
-    pub fn type_check(
-        &self,
-        token: &Token,
-        fid: usize,
-        funcid: usize,
-        generics: &Generics,
-    ) -> Result<Type, ParseError> {
+    pub fn type_check(&self, token: &Token, fid: usize, funcid: usize) -> Result<Type, ParseError> {
         let r#type = match &token.inner {
             RawToken::Inlined(inlined) => match inlined {
                 Inlined::Int(_) => Type::Int,
@@ -17,9 +11,7 @@ impl IrBuilder {
                 Inlined::Bool(_) => Type::Bool,
                 Inlined::Nothing => Type::Nothing,
             },
-            RawToken::Unimplemented => generics
-                .decoded(&self.parser.modules[fid].functions[funcid].returns)
-                .unwrap(),
+            RawToken::Unimplemented => self.parser.modules[fid].functions[funcid].returns.clone(),
             RawToken::ByPointer(box t) => {
                 match &t.inner {
                     RawToken::Identifier(ident) => {
@@ -27,9 +19,7 @@ impl IrBuilder {
                         if let Some(paramid) = func.get_parameter(ident) {
                             let param = func.get_parameter_type(paramid);
                             if let Type::Function(_) = param {
-                                generics
-                                    .decoded(param)
-                                    .map_err(|e| e.to_err(t.source_index))?
+                                param.clone()
                             } else {
                                 panic!("ET: the value {:?} cannot be passed as closure", param)
                             }
@@ -54,9 +44,9 @@ impl IrBuilder {
             RawToken::RustCall(_bridged_id, r#type) => r#type.clone(),
             RawToken::FirstStatement(entries) => {
                 for entry in entries[0..entries.len() - 1].iter() {
-                    self.type_check(entry, fid, funcid, generics)?;
+                    self.type_check(entry, fid, funcid)?;
                 }
-                self.type_check(entries.last().unwrap(), fid, funcid, generics)?
+                self.type_check(entries.last().unwrap(), fid, funcid)?
             }
             RawToken::Parameterized(box entry, params, p_types) => {
                 let mut param_types = match p_types.try_borrow_mut() {
@@ -64,18 +54,12 @@ impl IrBuilder {
                     Err(_) => {
                         // If it's already borrowed then that means that this is a recursive call.
                         // Therefore we can assume that it's already being type checked!
-                        return Ok(generics
-                            .decoded(&self.find_return_type(fid, &p_types.borrow(), &entry.inner))
-                            .unwrap());
+                        return Ok(self.find_return_type(fid, &p_types.borrow(), &entry.inner));
                     }
                 };
                 if param_types.is_empty() {
                     for param in params.iter() {
-                        param_types.push(
-                            generics
-                                .decoded(&self.type_check(param, fid, funcid, generics)?)
-                                .map_err(|e| e.to_err(token.source_index))?,
-                        )
+                        param_types.push(self.type_check(param, fid, funcid)?)
                     }
                 }
                 drop(param_types);
@@ -104,9 +88,7 @@ impl IrBuilder {
                 {
                     let func = &self.parser.modules[fid].functions[funcid];
                     if let Some(paramid) = func.get_parameter(ident) {
-                        return Ok(generics
-                            .decoded(&func.get_parameter_type(paramid).clone())
-                            .unwrap());
+                        return Ok(func.get_parameter_type(paramid).clone());
                     };
                 }
 
@@ -128,14 +110,14 @@ impl IrBuilder {
             RawToken::IfExpression(expr) => {
                 let mut expect_type = None;
                 for (cond, eval) in expr.branches.iter() {
-                    let cv = self.type_check(cond, fid, funcid, generics)?;
+                    let cv = self.type_check(cond, fid, funcid)?;
                     if cv != Type::Bool {
                         panic!(
                             "ET: Condition must result in true or false, but I got {:?}",
                             cv
                         );
                     }
-                    let ev = self.type_check(eval, fid, funcid, generics)?;
+                    let ev = self.type_check(eval, fid, funcid)?;
                     if let Some(expected) = &expect_type {
                         if ev != *expected {
                             panic!(
@@ -147,7 +129,7 @@ impl IrBuilder {
                         expect_type = Some(ev);
                     }
                 }
-                let ev = self.type_check(&expr.else_branch, fid, funcid, generics)?;
+                let ev = self.type_check(&expr.else_branch, fid, funcid)?;
                 if let Some(expected) = &expect_type {
                     if ev != *expected {
                         panic!(
@@ -161,7 +143,7 @@ impl IrBuilder {
             RawToken::List(entries) => {
                 let mut of_t: Option<Type> = None;
                 for (i, entry) in entries.iter().enumerate() {
-                    let r#type = self.type_check(entry, fid, funcid, generics)?;
+                    let r#type = self.type_check(entry, fid, funcid)?;
                     match &of_t {
                         Some(t) => {
                             if *t != r#type {

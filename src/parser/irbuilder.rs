@@ -7,14 +7,16 @@ use std::rc::Rc;
 
 mod builder;
 mod checker;
+mod fsource;
 pub mod generics;
+use fsource::FunctionSource;
 
 //#[derive(Debug)]
 pub struct IrBuilder {
     parser: Parser,
     completed: RefCell<Vec<ir::Entity>>,
     environment: Rc<Environment>,
-    assigned_indexes: RefCell<HashMap<(usize, usize), usize>>,
+    assigned_indexes: RefCell<HashMap<FunctionSource, usize>>,
 }
 
 impl IrBuilder {
@@ -27,20 +29,6 @@ impl IrBuilder {
         }
     }
 
-    fn gen_id(&self, fid: usize, funcid: usize) -> usize {
-        let mut indexes = self.assigned_indexes.borrow_mut();
-        match indexes.get(&(fid, funcid)) {
-            None => {
-                let new_index = indexes.len();
-                indexes.insert((fid, funcid), new_index);
-                new_index
-            }
-            Some(existing) => *existing,
-        }
-    }
-    fn try_get_id(&self, fid: usize, funcid: usize) -> Option<usize> {
-        self.assigned_indexes.borrow().get(&(fid, funcid)).copied()
-    }
     fn should_replace(&self, findex: usize) -> bool {
         use std::mem::discriminant;
         match self.completed.borrow().get(findex) {
@@ -83,7 +71,7 @@ impl IrBuilder {
 
         Ok((
             self.completed.into_inner(),
-            self.assigned_indexes.borrow()[&(newfid, funcid)],
+            self.assigned_indexes.borrow()[&FunctionSource::from((newfid, funcid))],
         ))
     }
 

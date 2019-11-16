@@ -3,6 +3,8 @@ use super::{
 };
 use std::convert::TryFrom;
 use std::fmt;
+use std::hash::Hash;
+use std::hash::Hasher;
 
 #[derive(Default, Clone)]
 pub struct FunctionBuilder {
@@ -12,6 +14,22 @@ pub struct FunctionBuilder {
     pub returns: Type,
     pub body: Token,
     pub wheres: Vec<(String, Token)>,
+}
+
+impl PartialEq for FunctionBuilder {
+    fn eq(&self, other: &FunctionBuilder) -> bool {
+        self.name == other.name
+            && self.parameter_types == other.parameter_types
+            && self.returns == other.returns
+    }
+}
+impl Eq for FunctionBuilder {}
+impl Hash for FunctionBuilder {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.parameter_types.hash(state);
+        self.returns.hash(state);
+    }
 }
 
 impl FunctionBuilder {

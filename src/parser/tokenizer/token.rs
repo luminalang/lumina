@@ -1,5 +1,5 @@
 use crate::parser::body::{IfExpr, MatchExpr};
-use crate::parser::{flags, Type};
+use crate::parser::Type;
 use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::fmt;
@@ -16,7 +16,6 @@ pub use operator::Operator;
 #[derive(Clone, Default)]
 pub struct Token {
     pub source_index: usize,
-    flags: flags::Flag,
     pub inner: RawToken,
 }
 
@@ -24,7 +23,6 @@ impl Token {
     pub fn new(inner: RawToken, source_index: usize) -> Self {
         Self {
             source_index,
-            flags: flags::Flag::default(),
             inner,
         }
     }
@@ -71,7 +69,6 @@ impl TryFrom<&[u8]> for Token {
         let t = Token {
             inner: find_inner(),
             source_index: 0,
-            flags: flags::Flag::default(),
         };
         Ok(t)
     }

@@ -318,7 +318,7 @@ impl fmt::Display for ParseError {
             ModuleNotImported(mod_name) => write!(f, "Module {} is not imported", mod_name),
             FnTypeReturnMismatch(funcb, got) => write!(f, "This function returns the wrong value. Acording to its type signature it should return `{}`\n  {}\nbut instead it returns `{}`",
                 funcb.returns,
-                format_function_header(&funcb.name, None, Some(&funcb.returns)),
+                format_header(&funcb.name, if funcb.parameter_types.is_empty() { None } else { Some(&funcb.parameter_types) }, Some(&funcb.returns)),
                 got,
             ),
             Internal => write!(f, "Internal leaf error"),

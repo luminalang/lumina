@@ -1,6 +1,9 @@
-use crate::parser::{Inlined, ParseError, ParseFault, RawToken, Token, Type, PRELUDE_FID};
+use crate::parser::{
+    FunctionBuilder, Inlined, ParseError, ParseFault, RawToken, Token, Type, PRELUDE_FID,
+};
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct Generics {
     inner: Vec<Type>,
 }
@@ -25,6 +28,20 @@ impl Generics {
     }
     pub fn empty() -> Self {
         Self::new()
+    }
+    pub fn has_generics(&self) -> bool {
+        !self.inner.is_empty()
+    }
+
+    pub fn replace_all(&self, func: &mut FunctionBuilder) {
+        for param in func.parameter_types.iter_mut() {
+            if let Type::Generic(genid) = param {
+                *param = self.inner[*genid as usize].clone();
+            }
+        }
+        if let Type::Generic(genid) = func.returns {
+            func.returns = self.inner[genid as usize].clone();
+        }
     }
 }
 

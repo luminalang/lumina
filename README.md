@@ -53,8 +53,8 @@ fn main
 ## Features
 
 ### Data flow using '<<'
-```
-// Main returns '4'
+```haskell
+-- Main returns '4'
 fn main
     add 1 << add 1 << add 1 1
     
@@ -72,17 +72,17 @@ fn main
 ```
 
 ### Powerful record syntax
-```
+```haskell
 type point
     x int 
     y int
 
 fn main
-    // modify the point coming from pipe
+    -- modify the point coming from pipe
     { y = 3 }
-    // modify the point assign to 'p'
+    -- modify the point assign to 'p'
     << \p -> { p | x = 1 }
-    // initialize new instance of point
+    -- initialize new instance of point
     << { point | x = 2, y = 1 }
 ```
 
@@ -94,26 +94,26 @@ fn add x y (int int -> float)
 fn apply f x ((int -> float) int -> float) 
     f x
 
-// Main returns '10.0'
+-- Main returns '10.0'
 fn main
-    // The '#' shows intent to pass as function parameter. 
-    // Omitting it would cause a parameter amount mismatch since foo will be given to few arguments
-    // But with the '#' we convert it into an (int -> float) and pre-supply one parameter
+    -- The '#' shows intent to pass as function parameter. 
+    -- Omitting it would cause a parameter amount mismatch since foo will be given to few arguments
+    -- But with the '#' we convert it into an (int -> float) and pre-supply one parameter
     apply #(foo 5) 5
 
-// Main returns '10.0'
+-- Main returns '10.0'
 fn main
-    // Lambda expressions can also be turned into function parameters
+    -- Lambda expressions can also be turned into function parameters
     apply #(\n -> to_float << n + 4) 6
 
 fn inc x (int -> int)
     x + 1
 
-// Main returns '10.0'
+-- Main returns '10.0'
 fn main
-    // If we're not looking to pre-supply any parameters
-    // (since the functions we're trying to pass already matches the expected function parameter)
-    // we can just use '#' on the identifier directly
+    -- If we're not looking to pre-supply any parameters
+    -- (since the functions we're trying to pass already matches the expected function parameter)
+    -- we can just use '#' on the identifier directly
     apply #inc 9
 ```
 
@@ -136,8 +136,8 @@ This list open is missing a matching `]` to close it
 ```
 
 ### Modern rust-like error handling
-```
-// The 'try' keyword causes an early return upon encountering an None or Err variant
+```haskell
+-- The 'try' keyword causes an early return upon encountering an None or Err variant
 fn get_number_from_terminal (maybe<int>)
      \n -> Just n << try to_int << io:read_line
 ```

@@ -1,10 +1,18 @@
 #![feature(box_patterns)]
+#![feature(print_internals)]
 use std::fs::File;
 use std::io::Read;
 use std::rc::Rc;
 
 pub fn entrypoint() -> FileSource {
     FileSource::Project(vec!["main".to_owned()])
+}
+
+macro_rules! debug {
+    ($($arg:tt)*) => (
+        #[cfg(debug_assertions)]
+        std::io::_print(std::format_args!($($arg)*));
+    )
 }
 
 mod parser;
@@ -45,7 +53,7 @@ fn main() {
             return;
         }
     };
-    println!("{:#?}\n", parser);
+    debug!("{:#?}\n", parser);
 
     // Verify syntax, infer types and compile to low-level IR.
     let (ir, entrypoint) =
@@ -56,10 +64,9 @@ fn main() {
             }
             Ok(ir) => ir,
         };
-    dbg!(&ir);
 
     let runtime = interpreter::Runtime::new(ir);
     let entry = &runtime.instructions[entrypoint];
     let final_value = interpreter::Runner::start(&runtime, &entry, Vec::new().into());
-    dbg!(final_value);
+    debug!("{:#?}\n", final_value);
 }

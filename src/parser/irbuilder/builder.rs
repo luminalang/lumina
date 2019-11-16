@@ -128,7 +128,7 @@ impl IrBuilder {
     }
 
     pub fn complete(&self, findex: usize, entity: ir::Entity) {
-        println!(" || {} -> {:?}", findex, entity);
+        debug!(" || {} -> {:?}\n", findex, entity);
         let mut stack = self.completed.borrow_mut();
         if findex > stack.len() {
             stack.resize(findex, ir::Entity::Unique)

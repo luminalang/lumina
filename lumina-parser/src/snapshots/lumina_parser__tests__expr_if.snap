@@ -1,0 +1,14 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{\n    \"if (if true then true else false) then true else if true then true else false\";\n    format!(\"\\n{}\", ast)\n}"
+---
+
+if
+  (if true
+  then true
+  else false)
+  then true
+  else
+    if true
+      then true
+      else false

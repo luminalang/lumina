@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"type Option a = Just a | None\"; format!(\"\\n{}\", ast) }"
+---
+
+type Option a = Just a | None 

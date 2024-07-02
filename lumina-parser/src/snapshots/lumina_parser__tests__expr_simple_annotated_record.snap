@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"{ point int | x = 1, y = 2 }\"; format!(\"\\n{}\", ast) }"
+---
+
+{ (point int) | x = 1, y = 2 }

@@ -1,0 +1,698 @@
+use super::*;
+use crate::{TRAIT_OBJECT_DATA_FIELD, VTABLE_FIELD};
+use ssa::Value;
+
+impl<'a> FuncLower<'a> {
+    pub fn expr_to_flow(&mut self, expr: &mir::Expr) {
+        trace!("lowering expression {expr}");
+
+        match expr {
+            // TODO: we also want to edge-case tail calls here
+            _ => {
+                let value = self.expr_to_value(expr);
+                self.current.ssa.return_(value);
+            }
+        }
+    }
+
+    // Used to stop us from creating unecesarry blocks if the contents are very simple
+    pub fn expr_to_value_no_side_effects(&mut self, expr: &mir::Expr) -> Option<Value> {
+        let simple = match expr {
+            mir::Expr::Yield(local) => self.yield_to_value(*local),
+            mir::Expr::YieldFunc(_, _, _) => todo!(),
+            mir::Expr::YieldLambda(_, _, _) => todo!(),
+            mir::Expr::UInt(bitsize, n) => Value::UInt(*n, *bitsize),
+            mir::Expr::Int(bitsize, n) => Value::Int(*n, *bitsize),
+            mir::Expr::Bool(b) => Value::UInt(*b as u8 as u128, Bitsize(8)),
+            mir::Expr::Float(n) => Value::Float(*n),
+            mir::Expr::ReadOnly(_) => todo!(),
+            _ => return None,
+        };
+
+        Some(simple)
+    }
+
+    fn yield_to_value(&mut self, local: mir::Local) -> Value {
+        match local {
+            mir::Local::Param(pid) if self.current.has_captures => {
+                assert_eq!(self.current.ssa.block(), ssa::Block::entry());
+                let ptuple = ssa::BlockParam(1);
+                let field = key::RecordField(pid.0);
+                let mk = self.type_of_value(ptuple.into()).as_key();
+
+                let offset = self.lir.types.field_offset(mk, field);
+                let fty = self.lir.types.type_of_field(mk, field);
+
+                self.current
+                    .ssa
+                    .transmute(ptuple.into(), offset, fty)
+                    .into()
+            }
+            mir::Local::Param(pid) => {
+                assert_eq!(self.current.ssa.block(), ssa::Block::entry());
+                Value::BlockParam(ssa::BlockParam(pid.0))
+            }
+            mir::Local::Binding(bind) => self.current.bindmap[&bind],
+        }
+    }
+
+    pub fn expr_to_value(&mut self, expr: &mir::Expr) -> Value {
+        trace!("lowering {expr}");
+
+        match expr {
+            mir::Expr::CallFunc(func, inst, ctypes, params) => match func.value {
+                ast::NFunc::Key(key) => {
+                    let func = FuncOrigin::Defined(func.module.m(key));
+                    let kinds = [GenericKind::Parent, GenericKind::Entity];
+                    let params = self.params_to_values(params);
+                    let (mfunc, ret) = self.call_to_mfunc(func, inst, ctypes, kinds);
+                    self.current.ssa.call(mfunc, params, ret).into()
+                }
+                ast::NFunc::Method(key, method) => {
+                    let trait_ = func.module.m(key);
+
+                    let mut morph = to_morphization!(self, &mut self.current.tmap);
+
+                    let self_ = inst.self_.as_ref().unwrap();
+
+                    match morph.apply(self_) {
+                        // MonoType::Monomorphised(mk)
+                        //     if morph.mono.as_trait_object(mk) == Some(func.module.m(key)) =>
+                        // {
+                        //  let params = self.params_to_values(params);
+                        //  todo!("we want to find code-reuse for calling dyn objects");
+                        // Since we're handling all dyn and not just closure, the parameters
+                        // need to be treated with more care.
+                        //
+                        // wait; the blanked implementation already exists right? we shouldn't
+                        // even need this edge-case anymore.
+
+                        // let data =
+                        //     self.current
+                        //         .ssa
+                        //         .transmute(params[0], 0, MonoType::u8_pointer());
+
+                        // let tablekey = self
+                        //     .lir
+                        //     .types
+                        //     .type_of_field(mk, VTABLE_FIELD)
+                        //     .deref()
+                        //     .as_key();
+
+                        // let table = self.current.ssa.transmute(
+                        //     params[0],
+                        //     64,
+                        //     MonoType::Monomorphised(tablekey),
+                        // );
+
+                        // let (fnptr, ret) = {
+                        //     let field = key::RecordField(method.0);
+                        //     let ty = self.lir.types.type_of_field(tablekey, field);
+                        //     let offset = self.lir.types.field_offset(tablekey, field);
+                        //     let MonoType::FnPointer(_, ret) = ty.clone() else {
+                        //         unreachable!()
+                        //     };
+                        //     (self.current.ssa.transmute(table.into(), offset, ty), *ret)
+                        // };
+
+                        // let mut invparams = vec![data.into()];
+                        // invparams.extend(params.into_iter().skip(1));
+
+                        // self.current
+                        //     .ssa
+                        //     .call(Value::from(fnptr), invparams, ret)
+                        //     .into()
+                        // }
+                        _ => {
+                            let weak_impltor = morph.apply_weak(self_);
+
+                            let trtp = inst
+                                .pgenerics
+                                .values()
+                                .map(|ty| morph.apply_weak(ty))
+                                .collect::<Vec<_>>();
+
+                            let ikey = self.find_implementation(trait_, &trtp, &weak_impltor);
+
+                            let params = self.params_to_values(params);
+
+                            let forigin = FuncOrigin::Method(ikey, method);
+
+                            let gkinds = [GenericKind::Parent, GenericKind::Entity];
+                            let (mfunc, ret) = self.call_to_mfunc(forigin, inst, ctypes, gkinds);
+
+                            self.current.ssa.call(mfunc, params, ret).into()
+                        }
+                    }
+                }
+                ast::NFunc::SumVar(sum, var) => {
+                    let params = self.params_to_values(params);
+
+                    let sum = func.map(|_| sum);
+
+                    let ptypes = inst.generics.values().cloned().collect::<Vec<_>>();
+
+                    let mut morph = to_morphization!(self, &mut self.current.tmap);
+                    let mk = morph.sum(sum, &ptypes);
+
+                    let tag = Value::UInt(var.0 as u128, mono::TAG_SIZE);
+
+                    let size = self.lir.types.size_of_defined(mk);
+                    let ty = MonoType::byte_array(
+                        (size - mono::TAG_SIZE.0 as usize)
+                            / mono::SUM_VARIANT_CHUNK_SIZE.0 as usize,
+                    );
+                    let parameters = self.current.ssa.construct(params, ty);
+
+                    self.current
+                        .ssa
+                        .construct(vec![tag, parameters.into()], MonoType::Monomorphised(mk))
+                        .into()
+                }
+                ast::NFunc::Val(_) => todo!(),
+            },
+            mir::Expr::CallLambda(lambda, inst, ctypes, params) => {
+                let params = self.params_to_values(params);
+                let (mfunc, captures, pty, returns) =
+                    self.monomorphise_lambda(*lambda, inst, ctypes);
+
+                let pparams = self
+                    .current
+                    .ssa
+                    .construct(params, MonoType::Monomorphised(pty));
+
+                let closure_params = vec![captures, pparams.into()];
+                self.current.ssa.call(mfunc, closure_params, returns).into()
+            }
+            mir::Expr::YieldLambda(lambda, inst, ctypes) => {
+                let (mfunc, captures, param_tuple_mk, ret) =
+                    self.monomorphise_lambda(*lambda, inst, ctypes);
+
+                dbg!(&mfunc, &captures, &param_tuple_mk, &ret);
+                println!("{}", self.lir.types.fmt(param_tuple_mk));
+
+                // right; we have all the raw components but not the `Object { *data, *vtable }`
+                //
+                // just the raw `data`
+                //
+                // I don't think we generate the lambda impls anywhere?
+                //
+                // OH ACTUALLY: we're currently not even using the vtables generated for traits
+                // ahead of time either. we just generate that here...
+                //
+                // is that valid?
+
+                todo!("now we need to cast it to a trait object");
+            }
+            mir::Expr::CallLocal(local, params) => {
+                let params = self.params_to_values(params);
+                let to_call = self.yield_to_value(*local);
+                let ty = self.type_of_value(to_call);
+                match ty {
+                    MonoType::FnPointer(_, ret) => self
+                        .current
+                        .ssa
+                        .call(to_call, params, (*ret).clone())
+                        .into(),
+                    MonoType::Monomorphised(mk) => self.call_closure(mk, to_call, params),
+                    _ => unreachable!(),
+                }
+            }
+            mir::Expr::Yield(local) => self.yield_to_value(*local),
+            mir::Expr::YieldFunc(nfunc, inst, ctypes) => {
+                let mfunc = self.callable_to_mfunc(*nfunc, inst, ctypes);
+                Value::FuncPtr(mfunc)
+            }
+            mir::Expr::Access(object, record, types, field) => {
+                let value = self.expr_to_value(object);
+
+                let mut morph = to_morphization!(self, &mut self.current.tmap);
+
+                let mk = morph.record(*record, types);
+
+                let v = self.field_access_to_value(mk, value, *field);
+                Value::V(v)
+            }
+            mir::Expr::Record(record, types, fields) => {
+                let mut mono = to_morphization!(self, &mut self.current.tmap);
+
+                let ty = MonoType::Monomorphised(mono.record(*record, types));
+
+                let values = fields
+                    .iter()
+                    .map(|(_, expr)| self.expr_to_value(expr))
+                    .collect::<Vec<Value>>();
+
+                let sorted = (0..fields.len() as u32)
+                    .map(key::RecordField)
+                    .map(|field| values[fields.iter().position(|(f, _)| *f == field).unwrap()])
+                    .collect();
+
+                self.current.ssa.construct(sorted, ty).into()
+            }
+            mir::Expr::UInt(bitsize, n) => Value::UInt(*n, *bitsize),
+            mir::Expr::Int(bitsize, n) => Value::Int(*n, *bitsize),
+            mir::Expr::Bool(b) => Value::UInt(*b as u8 as u128, Bitsize(8)),
+            mir::Expr::Float(n) => Value::Float(*n),
+            mir::Expr::ReadOnly(_) => todo!(),
+            mir::Expr::Tuple(elems) => {
+                let params = self.params_to_values(elems);
+
+                let types = params.iter().map(|v| self.type_of_value(*v)).collect();
+
+                let mt = self.lir.types.new_tuple(types);
+
+                self.current
+                    .ssa
+                    .construct(params, MonoType::Monomorphised(mt))
+                    .into()
+            }
+            mir::Expr::IntCast(expr, from, to) => {
+                todo!();
+            }
+            mir::Expr::Deref(inner) => {
+                todo!();
+            }
+            mir::Expr::ObjectCast(expr, original_ty, trait_, params) => {
+                let v = self.expr_to_value(expr);
+
+                let ty = self.type_of_value(v);
+                let size = self.lir.types.size_of(&ty);
+                let align = self.lir.types.align_of(&ty);
+
+                let mut morph = to_morphization!(self, &mut self.current.tmap);
+
+                let (mk, ikey) = morph.dyn_object(*trait_, params);
+                let ikey = trait_.module.m(ikey);
+
+                let mut tmap = TypeMap::new();
+                let mut i = 0;
+                for ty in params {
+                    let mt = morph.apply(&ty);
+                    tmap.generics.push((
+                        Generic { kind: GenericKind::Parent, key: key::Generic(i) },
+                        (ty.clone(), mt),
+                    ));
+                    i += 1;
+                }
+
+                // let impltor_weak = morph.apply_weak(&original_ty);
+                // let impltor = morph.apply(&original_ty);
+                // let ikey = self.find_implementation(*trait_, params, &impltor_weak);
+
+                let erased = MonoType::u8_pointer();
+                let object = self.current.ssa.alloc(size, align, erased);
+
+                let tablekey = self
+                    .lir
+                    .types
+                    .type_of_field(mk, VTABLE_FIELD)
+                    .deref()
+                    .as_key();
+
+                // let methods = self.mir.imethods[ikey]
+                //     .iter()
+                //     .map(|(method, fkey)| {
+                //         let m = self.mir.funcs[fkey.unwrap()].as_done();
+
+                //         if !m.typing.forall.is_empty() {
+                //             panic!("ET: trait is not object safe, cannot cast to object");
+                //         }
+
+                //         let mut morph = to_morphization!(self, &mut tmap);
+
+                //         let origin = FuncOrigin::Method(ikey, method);
+
+                //         let typing = MonoTyping {
+                //             params: morph.applys(&m.typing.params),
+                //             returns: morph.apply(&m.typing.returns),
+                //             origin,
+                //         };
+
+                //         let mfunc = self.lir.func(
+                //             self.mir,
+                //             self.iquery,
+                //             self.closure,
+                //             tmap.clone(),
+                //             typing,
+                //             None,
+                //         );
+
+                //         let (params, returns) = self.lir.types.get_dyn_method(tablekey, method);
+                //         let typing = MonoTyping {
+                //             params,
+                //             returns,
+                //             origin: FuncOrigin::MethodWrapper(ikey, method),
+                //         };
+
+                //         self.lir
+                //             .generate_method_wrapper(impltor.clone(), typing, mfunc)
+                //     })
+                //     .collect();
+
+                // let vtable = self.lir.vtables.push((methods, tablekey));
+                // info!(
+                //     "creating vtable {vtable}: {}",
+                //     self.lir.vtables[vtable].0.iter().format(" ")
+                // );
+
+                let vtable_fields =
+                    todo!("just constgruct the impl methods as Value::FnPtr in reocrd for obj");
+
+                let vtable = self.current.ssa.construct(vtable_fields);
+                let objty = todo!();
+                let vtableptr = self.current.ssa.alloc(size, align, objty);
+
+                let fields = vec![Value::from(object), Value::from(vtable)];
+
+                self.current
+                    .ssa
+                    .construct(fields, mono::MonoType::Monomorphised(mk))
+                    .into()
+            }
+            mir::Expr::Match(on, tree) => {
+                let on = self.expr_to_value(on);
+                self.to_pat_lower().run(on, tree)
+            }
+            mir::Expr::ReflectTypeOf(_) => todo!(),
+            mir::Expr::Cmp(_, _) => todo!(),
+            mir::Expr::Num(_, _) => todo!(),
+            mir::Expr::Abort => Value::Int(1, Bitsize::default()),
+            mir::Expr::Poison => todo!(),
+        }
+    }
+
+    fn call_closure(&mut self, objty: MonoTypeKey, obj: Value, params: Vec<Value>) -> Value {
+        let objptr_type = self.lir.types.type_of_field(objty, TRAIT_OBJECT_DATA_FIELD);
+        let vtable_ptr_type = self.lir.types.type_of_field(objty, VTABLE_FIELD);
+
+        debug_assert_eq!(MonoType::u8_pointer(), objptr_type);
+
+        let objptr = self.current.ssa.transmute(obj, 0, objptr_type);
+        let vtableptr = self.current.ssa.transmute(obj, 64, vtable_ptr_type.clone());
+        let vtable_type = vtable_ptr_type.clone().deref();
+        let vtable = self.current.ssa.deref(vtableptr.into(), vtable_type);
+
+        let (fnptr, ret) = {
+            let call = key::RecordField(0);
+            let vtable_key = vtable_ptr_type.deref().as_key();
+            let ty = self.lir.types.type_of_field(vtable_key, call);
+            let MonoType::FnPointer(_, ret) = ty.clone() else {
+                unreachable!()
+            };
+            (self.current.ssa.transmute(vtable.into(), 0, ty), *ret)
+        };
+
+        let ptypes = params.iter().map(|v| self.type_of_value(*v)).collect();
+        let param_tuple_ty = self.lir.types.new_tuple(ptypes);
+        let param_tuple = self
+            .current
+            .ssa
+            .construct(params, MonoType::Monomorphised(param_tuple_ty));
+        let call_method_params = vec![Value::V(objptr), Value::V(param_tuple)];
+
+        self.current
+            .ssa
+            .call(Value::from(fnptr), call_method_params, ret)
+            .into()
+    }
+
+    fn callable_to_mfunc(
+        &mut self,
+        func: M<ast::NFunc>,
+        inst: &ConcreteInst,
+        ctypes: &mir::CallTypes,
+    ) -> MonoFunc {
+        match func.value {
+            ast::NFunc::Key(key) => {
+                let func = FuncOrigin::Defined(func.module.m(key));
+                let kinds = [GenericKind::Parent, GenericKind::Entity];
+                // let params = self.params_to_values(params);
+                let (mfunc, _) = self.call_to_mfunc(func, inst, ctypes, kinds);
+                mfunc
+                // self.current.ssa.call(mfunc, params, ret).into()
+            }
+            ast::NFunc::Method(key, method) => {
+                let trait_ = func.module.m(key);
+
+                let mut morph = to_morphization!(self, &mut self.current.tmap);
+
+                let self_ = inst.self_.as_ref().unwrap();
+
+                match morph.apply(self_) {
+                    MonoType::Monomorphised(mk)
+                        if morph.mono.as_trait_object(mk) == Some(func.module.m(key)) =>
+                    {
+                        // let params = self.params_to_values(params);
+
+                        // let data =
+                        //     self.current
+                        //         .ssa
+                        //         .transmute(params[0], 0, MonoType::u8_pointer().1);
+
+                        // let tablekey = self
+                        //     .lir
+                        //     .types
+                        //     .type_of_field(mk, mono::VTABLE_FIELD)
+                        //     .deref()
+                        //     .as_key();
+
+                        // todo!("wait; what on earth are we even doing here?");
+                        // we haven't checked whether the impltor is an actual trait object.
+                        //
+                        // we're constructing a vtable where we're *calling* it?
+                        //
+                        // actually nvm, this is the tcheck on self branch.
+                        //
+                        // so uh, what if this is in a `Yield`?
+                        // it should return mk which takes the vtable as parameter
+                        //
+                        // but; the trait methods can also be called on non-objects right?
+                        //
+                        // so like, wtf are we meant to do. is what we're meant to do dependent on
+                        // the value?
+                        //
+                        // we don't *construct* a vtable here. we just assume it exists in the
+                        // params.
+                        //
+                        // for call this makes sense. But what to do in yield?
+                        //
+                        // I think yield would be entirely different?
+                        //
+                        // hm, probably not. In both cases we do want to assume that the object
+                        // exists.
+                        // But; it'll be stored in different places?
+                        // nah. for giving closures as a parameter it'll just be YieldLocal where
+                        // type_of gives closure. That wouldn't point to here.
+                        //
+                        // So like, wtf do we do on this?
+                        //
+                        // we might be able to check the origin of the MonoFunc at callback
+                        //
+                        // perhaps the real solution is to implement this in the stdlib itself
+                        // instead?
+                        //
+                        // or well, actually *create* implementations that is.
+                        //
+                        // struct AnimalTable {
+                        //     name: fn(*u8) -> String,
+                        //     talk: fn(*u8, usize) -> *str,
+                        // }
+                        //
+                        // struct DynAnimal {
+                        //     data: *u8,
+                        //     table: *AnimalTable,
+                        // }
+                        //
+                        // impl Animal for DynAnimal
+                        //   fn name a as DynAminal -> String = a.name a.data
+                        //   fn talk a n as DynAminal, usize -> String = a.talk a.data n
+                        //
+                        // ye I think that makes the most sense. Each time we create it we *also*
+                        // create the impl.
+                        // Although; I suppose the downside is that this would require mutating the
+                        // query implementations. But; I think that's fine.
+                        //
+                        // OR: I guess we could just do it ahead of time in the HIR -> MIR instead?
+                        //
+                        // Because; there should be one *per trait* and they should be generic the
+                        // same way the trait is generic.
+                        //
+                        // ye this seems like a better idea
+                        //
+                        // struct Mapper a {
+                        //   generate: fn(*u8, a) -> a,
+                        // }
+                        //
+                        // struct DynMapper a {
+                        //   data *u8,
+                        //   table: *Mapper a,
+                        // }
+                        //
+                        // impl Mapper a for DynMapper a
+                        //   fn generate {data, table} a as DynMapper a, a -> a =
+                        //      let methods = builtin:deref table in
+                        //        methods.generate data a
+                        //
+                        // ^ yep, generating this ahead of time and not applying an edge-case here
+                        // is definitely the way to go.
+                        //
+                        // REMEMBER: This entire function is just a modified copy-paste of the call
+                        // nfunc branch.
+
+                        // let table = self.current.ssa.transmute(
+                        //     params[0],
+                        //     64,
+                        //     MonoType::Monomorphised(tablekey),
+                        // );
+
+                        // let (fnptr, ret) = {
+                        //     let field = key::RecordField(method.0);
+                        //     let ty = self.lir.types.type_of_field(tablekey, field);
+                        //     let offset = self.lir.types.field_offset(tablekey, field);
+                        //     let MonoType::FnPointer(_, ret) = ty.clone() else {
+                        //         unreachable!()
+                        //     };
+                        //     (self.current.ssa.transmute(table.into(), offset, ty), *ret)
+                        // };
+
+                        // let mut invparams = vec![data.into()];
+                        // invparams.extend(params.into_iter().skip(1));
+
+                        // self.current
+                        //     .ssa
+                        //     .call(Value::from(fnptr), invparams, ret)
+                        //     .into()
+
+                        todo!();
+                    }
+                    _ => {
+                        let weak_impltor = morph.apply_weak(self_);
+
+                        let trtp = inst
+                            .pgenerics
+                            .values()
+                            .map(|ty| morph.apply_weak(ty))
+                            .collect::<Vec<_>>();
+
+                        let ikey = self.find_implementation(trait_, &trtp, &weak_impltor);
+
+                        let forigin = FuncOrigin::Method(ikey, method);
+                        let gkinds = [GenericKind::Parent, GenericKind::Entity];
+                        self.call_to_mfunc(forigin, inst, ctypes, gkinds).0
+                    }
+                }
+            }
+            ast::NFunc::SumVar(sum, var) => {
+                // let params = self.params_to_values(params);
+
+                let sum = func.map(|_| sum);
+
+                let ptypes = inst.generics.values().cloned().collect::<Vec<_>>();
+
+                let mut morph = to_morphization!(self, &mut self.current.tmap);
+                let mk = morph.sum(sum, &ptypes);
+
+                let tag = Value::UInt(var.0 as u128, mono::TAG_SIZE);
+
+                let size = self.lir.types.size_of_defined(mk);
+                let ty = MonoType::byte_array(
+                    (size - mono::TAG_SIZE.0 as usize) / mono::SUM_VARIANT_CHUNK_SIZE.0 as usize,
+                );
+
+                todo!();
+
+                // let parameters = self.current.ssa.construct(params, ty);
+
+                // self.current
+                //     .ssa
+                //     .construct(vec![tag, parameters.into()], MonoType::Monomorphised(mk))
+                //     .into()
+            }
+            ast::NFunc::Val(_) => todo!(),
+        }
+    }
+
+    fn find_implementation(
+        &mut self,
+        trait_: M<key::Trait>,
+        trtp: &[Type],
+        weak_impltor: &Type,
+    ) -> M<key::Impl> {
+        warn!(
+            "conflicting implementations is not fully implemented. Weird auto-selections may occur"
+        );
+
+        dbg!(&trait_, &trtp, &weak_impltor);
+        dbg!(&self.iquery);
+
+        todo!("we're removing traitobject generation in LIR to instead generate it while making vtables in MIR");
+        // we'll probably remove the `vtables` field in favor of an `objects` field which we can
+        // access the first field off to get the vtable.
+
+        self.iquery
+            .query(trait_, &weak_impltor, |imp| {
+                dbg!("ok");
+                let iforall = &self.mir.impls[imp];
+                let (_, trait_params) = &self.mir.itraits[imp];
+                let impltor = &self.mir.impltors[imp];
+
+                let mut comp = lumina_typesystem::Compatibility::new(
+                    &self.iquery,
+                    |generic| match generic.kind {
+                        GenericKind::Parent => &iforall[generic.key].trait_constraints,
+                        _ => unreachable!(),
+                    },
+                    &|_, _, _, _| unreachable!(),
+                );
+
+                (trtp
+                    .iter()
+                    .zip(trait_params)
+                    .all(|(ty, ttp)| comp.cmp(ty, ttp))
+                    && comp.cmp(&weak_impltor, impltor))
+                .then_some(imp)
+            })
+            .unwrap()
+    }
+
+    pub fn field_access_to_value(
+        &mut self,
+        mk: MonoTypeKey,
+        value: Value,
+        field: key::RecordField,
+    ) -> ssa::V {
+        let byte_offset = self.lir.types.field_offset(mk, field);
+        let field_type = self.lir.types.type_of_field(mk, field);
+        self.current.ssa.transmute(value, byte_offset, field_type)
+    }
+
+    fn call_to_mfunc(
+        &mut self,
+        func: FuncOrigin,
+        inst: &ConcreteInst,
+        ctypes: &mir::CallTypes,
+        kinds: [GenericKind; 2],
+    ) -> (MonoFunc, MonoType) {
+        assert!(
+            !matches!(func, FuncOrigin::Lambda(..)),
+            "call_to_value does not handle captures"
+        );
+
+        let (tmap, ptypes, returns) = self.inst_to_monotyping(kinds, inst, ctypes);
+        let typing = MonoTyping::new(func, ptypes, returns);
+        let ret = typing.returns.clone();
+
+        info!(
+            "calling function {} ({})",
+            self.lir.types.fmt(&typing),
+            typing.origin.name(&self.mir)
+        );
+
+        let mfunc = self
+            .lir
+            .func(self.mir, self.iquery, self.closure, tmap, typing, None);
+
+        (mfunc, ret)
+    }
+}

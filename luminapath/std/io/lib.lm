@@ -1,0 +1,24 @@
+@[platform "linux-gnu"]
+fn read size as int -> *u8 =
+  let buf = alloc size in
+    do libc_read stdin buf size then buf
+
+@[platform "linux-gnu"]
+fn print ptr size as *u8, int -> () = 
+  do libc_write stdout ptr size then ()
+
+@[platform "linux-gnu"]
+fn println ptr size as *u8, int -> () =
+  do print ptr size then print "\n" 1
+
+@[extern "write", platform "linux-gnu"]
+fn libc_write as int, *u8, int -> int
+
+@[extern "read", platform "linux-gnu"]
+fn libc_read as int, *u8, int -> int
+
+@[platform "linux"]
+fn stdout = 1
+
+@[platform "linux"]
+fn stdin  = 0

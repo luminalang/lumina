@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"\nparam Span can PartialEq + Eq\n\"; format!(\"\\n{}\", ast) }"
+---
+
+param Span can PartialEq + Eq

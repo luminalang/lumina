@@ -1,0 +1,9 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{\n    \"\nfn map f list as fn(a -> b), [a] -> [b] = \n  match list\n  | x : xs -> f x : map #f xs\n  | []     -> []\n\";\n    format!(\"\\n{}\", ast)\n}"
+---
+
+fn map f list as fn(a -> b), [a] -> [b] =
+  match list
+  | (x : xs) -> (f x) : (map #f xs)
+  | [] -> []

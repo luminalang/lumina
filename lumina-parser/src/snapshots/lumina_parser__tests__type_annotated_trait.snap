@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"std:Iterator(Item as Option int)\"; format!(\"\\n{}\", ast) }"
+---
+
+std:Iterator(1 => (Item as (Option int)))

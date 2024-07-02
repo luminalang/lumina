@@ -1,0 +1,17 @@
+[package]
+name = "lumina"
+version = "0.1.0"
+authors = ["Simon <simon.larsson-general@protonmail.com>"]
+edition = "2021"
+
+[dependencies]
+lumina-util = { path = "../lumina-util" }
+lumina-key = { path = "../lumina-key" }
+lumina-compiler = { path = "../lumina-compiler" }
+itertools = "*"
+clap = { version = "4.1.*", features = ["derive"] }
+directories = "4.0.*"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-tree = "0.3.0"
+target-lexicon = "0.12.14"

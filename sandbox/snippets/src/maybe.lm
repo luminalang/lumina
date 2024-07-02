@@ -1,0 +1,12 @@
+type Maybe a = Just a | Nothing
+
+fn map f m as fn(a -> b), Maybe a -> Maybe b = 
+  match m
+  | Just a  -> Just (f a)
+  | Nothing -> Nothing
+
+fn or fallback m as a, Maybe a -> a =
+  match m
+  | Just a  -> a
+  | Nothing -> fallback
+  

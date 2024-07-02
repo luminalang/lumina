@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"{ x = 1, y = 2 }\"; format!(\"\\n{}\", ast) }"
+---
+
+{ x = 1, y = 2 }

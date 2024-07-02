@@ -1,0 +1,6 @@
+use std:list [List]
+
+@![langItem(list as List)]
+
+
+type string {}

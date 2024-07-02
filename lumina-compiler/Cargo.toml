@@ -1,0 +1,29 @@
+[package]
+name = "lumina-compiler"
+version = "0.1.0"
+authors = ["Simon <simon.larsson-general@protonmail.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+lumina-util = { path = "../lumina-util" }
+lumina-parser = { path = "../lumina-parser" }
+lumina-typesystem = { path = "../lumina-typesystem" }
+target-lexicon = "*"
+lumina-key = { path = "../lumina-key" }
+derive-new = "0.6"
+either = "1.9.0"
+ibig = { version = "0.3.6", features = [], default-features = false }
+owo-colors = "3.5.*"
+itertools = "0.10.*"
+smallvec = "1.10.*"
+take_mut = "*"
+derive_more = "*"
+insta = "*"
+tracing = "0.1.40"
+cranelift = "*"
+cranelift-codegen = "*"
+cranelift-module = "*"
+cranelift-object = "*"
+cranelift-native = "*"

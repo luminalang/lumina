@@ -1,0 +1,9 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"\ntype Point a {\n  x a,\n  y a,\n}\"; format!(\"\\n{}\", ast) }"
+---
+
+type Point a {
+  x a
+  y a
+}

@@ -1,0 +1,9 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{\n    \"\n  match n\n  | 0 ->\n    true\n  | 1 -> false\n  | 2 ->\n    true\n\";\n    format!(\"\\n{}\", ast)\n}"
+---
+
+match n
+| 0 -> true
+| 1 -> false
+| 2 -> true

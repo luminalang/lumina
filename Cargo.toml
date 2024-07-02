@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "lumina",
+    "lumina-parser",
+    "lumina-util",
+    "lumina-key",
+    "lumina-compiler",
+    "lumina-typesystem",
+    "lumina-gc"
+]
+resolver = "2"

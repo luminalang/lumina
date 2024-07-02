@@ -1,0 +1,9 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{\n    \"\ntrait Iterator\n  type Item\n   \n  fn next as self -> (Item, self)\n\";\n    format!(\"\\n{}\", ast)\n}"
+---
+
+type Iterator
+  type Item
+
+  fn next as self -> (Item, self)

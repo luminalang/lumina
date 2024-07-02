@@ -1,0 +1,6 @@
+val name = "snippets"
+val version = "1.0"
+val authors = []
+val prelude = "project:prelude"
+
+val dependencies = []

@@ -1,0 +1,19 @@
+// type string {}
+
+trait Default
+  fn new as self
+
+trait Show
+  fn show as self -> string
+
+impl Show for string
+  fn show s as string -> string = s
+
+// trait Add
+//   fn + as self, self -> self
+// 
+// trait Sub
+//   fn - as self, self -> self
+// 
+// trait Eq
+//   fn == as self, self -> bool

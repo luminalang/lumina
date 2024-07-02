@@ -1,0 +1,27 @@
+// mandatory but unused lang items
+trait Listable
+type string {}
+type Type = Null
+
+trait Closure p r
+  fn call as self, p -> r
+
+trait Size 
+  fn of as int
+
+@[platform "x86_64-linux-gnu"]
+fn alloc size as int -> *u8 =
+  libc_malloc size
+
+@[platform "x86_64-linux-gnu"]
+fn dealloc ptr size as *u8, int -> () = 
+  libc_free ptr
+
+@[extern "malloc", platform "x86_64-linux-gnu"]
+fn libc_malloc as int -> *u8
+
+@[extern "free", platform "x86_64-linux-gnu"]
+fn libc_free as *u8 -> ()
+
+@[extern "exit", platform "x86_64-linux-gnu"]
+fn exit as int -> ()

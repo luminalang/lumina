@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"Con int\"; format!(\"\\n{}\", ast) }"
+---
+
+(Con int)

@@ -1,0 +1,8 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"when a can Show, n can Add n\"; format!(\"\\n{}\", ast) }"
+---
+
+when
+  a gen Show
+  n gen (Add n)

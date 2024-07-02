@@ -1,0 +1,7 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"\ntrait From a\n  fn from as a -> self\"; format!(\"\\n{}\", ast) }"
+---
+
+type From a
+  fn from as a -> self

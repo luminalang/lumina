@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"#(* 2)\"; format!(\"\\n{}\", ast) }"
+---
+
+#(* 2)

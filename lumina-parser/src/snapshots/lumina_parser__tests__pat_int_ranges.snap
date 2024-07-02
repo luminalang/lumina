@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"(0..10, 0..20, ..30, 30..)\"; format!(\"\\n{}\", ast) }"
+---
+
+(0..10, 0..20, ..30, 30..)

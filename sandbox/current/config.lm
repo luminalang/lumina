@@ -1,0 +1,6 @@
+val name = "current"
+val version = "1.0"
+val authors = []
+val prelude = "project:empty_prelude"
+
+val dependencies = []

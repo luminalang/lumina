@@ -1,0 +1,43 @@
+use std:math [Compare [..]]
+
+type Maybe a = Just a | Nothing
+
+fn isJust m as Maybe a -> bool =
+  match m
+  | Just _  -> true
+  | Nothing -> false
+
+fn or f opt as fn(a), Maybe a -> a =
+  match opt
+  | Just a  -> a
+  | Nothing -> f
+
+fn map f m as fn(a -> b), Maybe a -> Maybe b = 
+  match m
+  | Just a  -> Just (f a)
+  | Nothing -> Nothing
+
+fn identity a as a -> a = a
+
+when a can Compare
+impl Compare a for Maybe a
+  fn == a b as self, self -> bool = 
+    match (a, b)
+    | (Nothing, Nothing) -> true
+    | (Just x, Just y)   -> x == y
+    | _ -> false
+
+  fn < a b  as self, self -> bool = 
+    match (a, b)
+    | (Nothing, Nothing) -> false
+    | (Just x, Just y)   -> x < y
+    | (Nothing, Just a)  -> true
+    | (Just a, Nothing)  -> false
+    
+  fn > a b  as self, self -> bool =
+    match (a, b)
+    | (Nothing, Nothing) -> false
+    | (Just x, Just y)   -> x > y
+    | (Nothing, Just a)  -> false
+    | (Just a, Nothing)  -> true
+

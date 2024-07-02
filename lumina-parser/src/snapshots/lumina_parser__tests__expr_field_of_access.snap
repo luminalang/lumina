@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"{ v | one = one.two.three }\"; format!(\"\\n{}\", ast) }"
+---
+
+{ v | one = one.two.three }

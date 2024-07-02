@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{\n    \"use ext:lumina:parser(Span as MySpan int, Output as This)\";\n    format!(\"\\n{}\", ast)\n}"
+---
+
+use ext:lumina:parser(Span as (MySpan int), Output as This) []

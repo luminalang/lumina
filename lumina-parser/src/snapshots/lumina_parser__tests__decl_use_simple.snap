@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"use std:io\"; format!(\"\\n{}\", ast) }"
+---
+
+use std:io() []

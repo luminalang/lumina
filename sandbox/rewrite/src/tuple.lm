@@ -1,0 +1,13 @@
+// trait Iterator
+//   type Item
+// 
+//   fn next as Lexer -> Item
+// 
+// type Lexer {}
+
+// impl Iterator for Lexer
+//   type Item = (i64, i32)
+// 
+//   fn next lexer as Lexer -> (i64, i32) =
+//     (0, 1)
+// 

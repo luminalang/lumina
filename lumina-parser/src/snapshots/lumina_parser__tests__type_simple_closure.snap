@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"fn(a -> b)\"; format!(\"\\n{}\", ast) }"
+---
+
+fn(a -> b)

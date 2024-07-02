@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"Con int uint i8 i64 u8 u64\"; format!(\"\\n{}\", ast) }"
+---
+
+(Con int uint i8 i64 u8 u64)

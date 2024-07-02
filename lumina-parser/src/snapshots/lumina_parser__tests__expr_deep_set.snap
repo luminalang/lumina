@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"{ v | one.two.three.four @ four = 0 }\"; format!(\"\\n{}\", ast) }"
+---
+
+{ v | one.two.three.four @ four = 0 }

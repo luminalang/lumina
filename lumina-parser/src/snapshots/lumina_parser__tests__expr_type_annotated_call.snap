@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{\n    \"Functor(self as Option):map(a as int, b as Option float)\";\n    format!(\"\\n{}\", ast)\n}"
+---
+
+Functor:map(0 => (self as Option) & 1 => (a as int, b as (Option float)))

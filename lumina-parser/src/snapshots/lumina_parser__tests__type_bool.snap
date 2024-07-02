@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"bool\"; format!(\"\\n{}\", ast) }"
+---
+
+bool

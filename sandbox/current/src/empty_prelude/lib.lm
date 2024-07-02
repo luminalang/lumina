@@ -1,0 +1,39 @@
+use std:list [Listable, List]
+use std:ptr
+
+type string {}
+
+trait Closure p r
+  fn call as self, p -> r
+
+type Type = Null
+
+trait Size 
+  fn of as int
+
+@[platform "x86_64-linux-gnu"]
+fn alloc size as int -> *u8 =
+  libc_malloc size
+
+@[platform "x86_64-linux-gnu"]
+fn dealloc ptr size as *u8, int -> () = 
+  libc_free ptr
+
+@[extern "malloc", platform "x86_64-linux-gnu"]
+fn libc_malloc as int -> *u8
+
+@[extern "free", platform "x86_64-linux-gnu"]
+fn libc_free as *u8 -> ()
+
+@[extern "realloc", platform "x86_64-linux-gnu"]
+fn libc_realloc as *u8, int -> *u8
+
+@[extern "exit", platform "x86_64-linux-gnu"]
+fn exit as int -> ()
+
+@[extern "x86_64_syscall", platform "x86_64-linux-syscall"]
+fn syscall as int, int, int, int, int, int -> ()
+
+@[platform "x86_64-linux-syscall"]
+fn exit code as int -> () =
+  do syscall code 0 0 0 0 60 then ()

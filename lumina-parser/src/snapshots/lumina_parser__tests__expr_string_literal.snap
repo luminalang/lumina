@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"\\\"hello\\\\\\\" world\\\"\"; format!(\"\\n{}\", ast) }"
+---
+
+"hello\" world"

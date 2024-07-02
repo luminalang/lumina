@@ -1,0 +1,40 @@
+trait Num
+  @[precedence 4500]
+  fn ** as self, self -> self
+  @[precedence 5000]
+  fn + as self, self -> self
+  @[precedence 5000]
+  fn - as self, self -> self
+  @[precedence 5500]
+  fn * as self, self -> self
+  @[precedence 5500]
+  fn / as self, self -> self
+
+  fn zero as self
+
+trait Compare
+  @[precedence 4000]
+  fn == as self, self -> bool
+  @[precedence 4000]
+  fn <  as self, self -> bool
+  @[precedence 4000]
+  fn >  as self, self -> bool
+
+  fn max x y as self, self -> self =
+    if y > x then y else x
+
+  fn min x y as self, self -> self =
+    if y < x then y else x
+
+impl Num for int
+  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
+  fn + a b as self, self -> self = builtin:plus a b
+  fn - a b as self, self -> self = builtin:minus a b
+  fn * a b as self, self -> self = builtin:mul a b
+  fn / a b as self, self -> self = builtin:div a b
+  fn zero = 0
+
+impl Compare for int
+  fn == a b as self, self -> bool = builtin:eq a b
+  fn < a b  as self, self -> bool = builtin:lt a b
+  fn > a b  as self, self -> bool = builtin:gt a b

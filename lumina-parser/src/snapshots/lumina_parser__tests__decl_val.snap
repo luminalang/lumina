@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"val LineBuffering = 0\"; format!(\"\\n{}\", ast) }"
+---
+
+val LineBuffering = 0

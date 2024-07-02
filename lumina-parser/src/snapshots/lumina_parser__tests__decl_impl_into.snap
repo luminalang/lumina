@@ -1,0 +1,8 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{\n    \"\nimpl Into a for b\n  fn into b as b -> a =\n    From:from b\n    \n\";\n    format!(\"\\n{}\", ast)\n}"
+---
+
+impl (Into a) for b
+  fn into b as b -> a =
+    (From:from b)

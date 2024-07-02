@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"fn(b)\"; format!(\"\\n{}\", ast) }"
+---
+
+fn(b)

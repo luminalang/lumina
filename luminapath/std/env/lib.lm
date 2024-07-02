@@ -1,0 +1,10 @@
+// ![platform "windows"]
+// fn platform_name = "windows"
+// 
+// ![platform "linux"]
+// fn platform_name = "linux"
+// 
+//
+// ![platform (not (any ["linux", "windows"]))]
+// fn platform_name = "unknown"
+

@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"Con f32 f64\"; format!(\"\\n{}\", ast) }"
+---
+
+(Con f32 f64)

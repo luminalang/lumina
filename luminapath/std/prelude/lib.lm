@@ -1,0 +1,60 @@
+use std:math [Num [..], Compare [..]]
+use std:maybe [Maybe [..], or]
+use std:string [string]
+use std:nothing [nothing]
+use std:list [Listable [:], List]
+
+@![langItem(list as List)]
+
+trait Closure p r
+  fn call as self, p -> r
+
+trait Size
+  fn of as int
+
+type Type
+  = Int bool u8
+  | Float
+  | Bool
+  | Never
+  | Poison
+  | Pointer   Type
+  | FnPointer Type
+  | Struct string [Type]
+  | Sum    string [(string, Type)]
+  | Object string
+
+impl Size for a
+  fn of as int = size_of_ty builtin:reflect_type(self as a)
+
+fn size_of_ty ty as Type -> int =
+    match ty
+    | Int _ size -> (size as int) / 8
+    | Float  -> 8
+    | Bool   -> 1
+    | Never  -> 0
+    | Poison -> 0
+    | Pointer _ -> 8
+    | FnPointer _ -> 8
+    | Struct _ fields   -> fields . map #size_of_ty . sum
+    | Sum    _ variants -> variants . map #(\_ ty -> size_of_ty ty) . max . or #0
+    | Object _ -> 16 // TODO: remember to change this if we decide to change the repr
+
+fn panic as a = builtin:abort
+
+@[platform "x86_64-linux-gnu"]
+fn alloc size as int -> *u8 =
+  libc_malloc size
+
+@[platform "x86_64-linux-gnu"]
+fn dealloc ptr size as *u8, int -> () = 
+  libc_free ptr
+
+@[extern "malloc", platform "x86_64-linux-gnu"]
+fn libc_malloc as int -> *u8
+
+@[extern "free", platform "x86_64-linux-gnu"]
+fn libc_free   as *u8 -> ()
+
+@[extern "realloc", platform "x86_64-linux-gnu"]
+fn libc_realloc as *u8, int -> *u8

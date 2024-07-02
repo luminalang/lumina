@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"map #1\"; format!(\"\\n{}\", ast) }"
+---
+
+(map #1)

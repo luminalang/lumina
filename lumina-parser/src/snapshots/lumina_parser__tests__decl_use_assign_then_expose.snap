@@ -1,0 +1,6 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{\n    \"use std:io input_output [puts, Target [Stdout, Stdin], Target [..]]\";\n    format!(\"\\n{}\", ast)\n}"
+---
+
+use std:io() input_output [puts [], Target [Stdout, Stdin], Target [..]]

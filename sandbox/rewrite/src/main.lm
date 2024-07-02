@@ -1,0 +1,315 @@
+use utils [Default, Show [..]]
+use std:io
+use std:ptr
+use std:list 
+
+@![langItem(list as List)]
+@![langItem(string as string)]
+
+type Person {
+  // name string
+  age  Maybe int
+  contribute fn(Code -> Code)
+}
+
+// maybe when we transmute we accidentally use the sum type instead of the variant field type?
+//
+// or maybe it's us not using the capture mapping? ye that's probably it. 
+// nah because the binds were supposed to be the same and capture map was only for constructing record
+//
+// block0(b0: mtkey12, b1: mtkey11):
+// v0 = transmute offset=0 b1 : Code int
+// v1 = transmute offset=80 b1 : {age, contribute}
+// v2 = transmute offset=0 v1 : age
+// v3 = transmute offset=80 v1 : contribute
+// v4 = (construct v0) : param tuple for call of contribute
+// Closure:call v3 v4
+//              ^^ instead we get v2
+//
+// we probably want the debug output to pretty-print the types. not just mktkey
+//
+// looks like the first field of the *closure* is a *sum type*?
+//
+// oh ye we can see the block parameters. 
+//
+// hm, maybe: we're not adding defaults for the records 
+// somehow? 
+//
+// SUMMARY: 
+// The parameters are destructed correctly. 
+// However; we're meant to call `v3`. but instead we're
+// calling `v2`
+//
+// oh wait, `v2` is the *bind* as well. So
+// we're mapping `v2 -> v2`. that's a bit suspicious
+//
+// ok the problem must be with the bindmap then. 
+
+// I THINK: the problem is inconsitency with whether
+// each field has it's own bind or not. 
+//
+// OH FUCK: I think the problem might be *records* with 
+// *points being offset*. 
+//
+// That's a very annoying problem to solve actually
+// if that's the case. 
+
+// hm, why would two different points give the same bind?
+//
+// is it when we *name* an argument? `Bind` skips assigning point. 
+// that'd make sense. 
+
+// but wait; shouldn't the `v2` be correct then?
+//
+// hm. ok this is definitely a missing field thing. 
+//
+// {
+//   bind: ssa
+//     v3: v2,
+//     v1: v0,
+//     v2: v2,
+// }
+// v3 bind is contribute
+// v2 bind is also contribute
+//  (double due to all fields)
+// OH WAIT: is the problem related to us bumping
+// point for the field incorrectly?
+
+// oh so; i solved the bug with fields being the incorrect order
+//
+// but... the issue is still there? lmao
+//
+// ... wait a second; the bug *wasn't* there. 
+// we constructed a `0..` iterator for it
+//
+// however; the binds *are* different now. 
+// actually nvm. it's the same but a different order
+//
+// the defaults theory is probably dead. 
+// we perform the lower after record finalization
+//
+// hm, we have `v2 -> v2` yet somehow the local that's
+// called ends up being `v3`???
+//
+// oh but according to the pointmap v3 == v2?
+// because they both point to `point1`
+// bindv2+v3 both pointing to SSA v2 makes complete sense then. 
+//
+// oh and dbg even says v2 now. Did we accidentally fix it along the road?
+// no because type_of(v2) is still sumX. But a closure may not lower to sum. 
+//
+// all this considered; the issue *MUST* be bindmap constructor. 
+// because both the *binds* and *ssa entries* are correct
+// more specifically; how we insert into the point -> ssa map during ssa lower of DecTree
+//
+// ... wait a second. There's no bind or key errors here, if we just look at `b1`
+// we'll see that the nested type is just plain incorrect. 
+// b0: {} // capture tuple
+// b1: {  // parameter tuple
+//   {▵·7:sum0 i16 [u8; 8]} // `code` parameter
+//   {▵·7:record0 // `{age @ _, contribute}`
+//     {▵·3:sum0 i16 [u8; 8]} // age
+//     {▵·0:trait0 // contribute
+//       *u8       // object
+//       *{▵·0:record1 fnptr(*u8, {{▵·7:sum0 i16 [u8; 8]}} -> {▵·7:sum0 i16 [u8; 8]})}} // vtable pointer
+//   }
+// }
+//
+// ^ this looks correct. however;
+// lumina_compiler::lir::expr v2 from v2 as mtkey3 := {▵·3:sum0 i16 [u8; 8]}
+//
+// ye, v2 == age
+//
+// so it is definitely trying to call `age` when it's supposed to call `contribute`. 
+// fuck me, it *must* be a defaulted field issue but I can't see it. Maybe the IMUT pass of HIR>MIR?
+//
+// let's create a minimal of it
+
+type Code = Code int
+
+impl Default for Code
+  fn new as Code = Code 0
+
+// TODO
+fn : elem list as a, [a] -> [a] = list
+
+// with annotations
+fn map f list as fn(a -> b), [a] -> [b] =
+  match list
+  | [x : xs] -> f x : map #f xs
+  | [] -> []
+
+// without
+fn mapNoAnot f list = 
+  match list
+  | [x : xs] -> f x : mapNoAnot #f xs
+  | []       -> []
+
+fn mapWithoutParenthesis f list as fn(a -> b), [a] -> [a] = list
+
+type Workplace {
+  workers [Person]
+  code    Code
+}
+
+fn nextDayAnot workplace as Workplace -> Workplace =
+  { workplace ~ code = list:fold #work workplace.code workplace.workers }
+ where
+  fn work code {contribute} as Code, Person -> Code = 
+    contribute code
+
+fn nextDay workplace =
+  { workplace ~ code = list:fold #work workplace.code workplace.workers }
+ where
+  fn work code {contribute} = 
+    contribute code
+
+fn mainAnot as _ =
+  develop { Workplace | workers = [], code = Default(self as Code):new }
+ where
+  fn develop workplace as Workplace -> Workplace =
+    nextDay workplace . develop
+
+fn main =
+  develop { Workplace | workers = [], code = Default(self as Code):new }
+ where fn develop workplace = nextDay workplace . develop
+
+fn unwrap_or opt fallback as Maybe a, fn(a) -> a =
+  match opt
+  | Just a  -> a
+  | Nothing -> fallback
+
+fn intConstantDirect as int = 0
+
+fn returnsFn as fn(int) = #0
+
+// TODO: parser Array support
+// fn firstOfArr arr as [a; 20] -> a = arr[0]
+
+type Held a {
+  held a
+}
+
+type DeeplyHeld n = Nested (Held (Held (Held (Held n))))
+
+fn deepUpdate (Nested v) f as DeeplyHeld a, fn(a -> a) -> DeeplyHeld a =
+  Nested { v ~ held.held.held.held @ held = f held }
+
+fn deepSet (Nested v) a as DeeplyHeld a, a -> DeeplyHeld a =
+  Nested { v ~ held.held.held.held = a }
+
+when n can Num
+fn deepAdd (Nested v) n as DeeplyHeld n, n -> DeeplyHeld n =
+  Nested { v ~ held.held.held.held @ held = n + held }
+
+when
+ a can Show
+ b can Num
+ c can Compare
+fn moreConstraints a b c as a, b, c -> b =
+  if c == c then b + b - b else b
+
+// FULL REWRITE PLANNING
+// 
+// NOTES: 
+//
+//   Language Design Changes
+//     rethink record ambiguities?
+//       it's theoretically better to use different syntax for modifcation and construction. But we haven't found any
+//       maybe we should take a deeper look into Haskell lens's
+//         Haskell lens's use a mix of composition and `apply` pattern.
+//         Problem is that the scoping would still be kinda a nightmare, since each segment of the tree would need to be exposed seperartely
+//         DECISION: I think we're gonna do this: 
+//           the left side of `|` is no longer an expression. It's instead an identifier followed by accessors
+//           the accessors shows modification scope. 
+//           for example: 
+//             { atom | point = { atom.point | x = atom.point.x + 1 } }
+//             { atom.point | x = atom.point.x + 1 }
+//             over (.point << .x) #(+ 1) atom
+//           one step further: since a common operation is to *modify* which requires access to the original, we could
+//             { atom.point | \x -> x + 1 }
+//           I think I'll include both. Where the latter is really just sugar for the former
+//           QUIRK: Would this work well if we want to deeply update multiple fields? Is there some way to make that work?
+//           IMPROVEMENT: Could we make the far-left one any expression? 
+//             maybe something like `{ f 20 1 .profile.position.point }`?
+//             very ambigious, so no. 
+//           WE ALSO NEED CONSTRUCTOR SYNTAX
+//             I think we'll just do the same but with ` . `
+//       with closures now changing syntax to put more emphesis on `->` as a binary operator; does that mean we can move tuples to `()`?
+//         if we do that then record inference could be drastically simplified. Most likely we'd want to remove it from the type system
+//       NEW APPROACH TO NESTED UPDATES
+//         it makes more sense to specify the nesting in the fields themselves, and it's also more extensible. 
+//         { anyExpression | one.two.three = this, two.three.one = that }
+//         and instead of lambdas; we should probably provide some syntax to bind
+//         { anyExpression | one.two.three @ n = n + 1, two.three.one = that }
+//       What about construction?
+//       FIELD ACCESS
+//         should we allow `(any expression).x`? probably
+//         if we do then I'm gonna need to change the lexing for it // let's just make it whitespace insensitive for now
+//     module-level generics
+//       what's the syntax? probably same as `is` instantiation: `use parsy:(span is Span) as myParsy [Parser]`
+//         keep in mind that we'd have to explicitly denote the instantiation of `Parser` when it's brought into scope. 
+//         or; hold some origin link
+//     should a project be a distinct thing from a module?
+//       that way we can properly specify dependencies and introduce caching
+//       we definitely don't want to have a `mod` though. only `use`
+//       we want to assume all `.lm` files are included in the project even if not `use`d
+//       we want to keep the same `use` syntax that keeps entities distinct from paths
+//       we want excotic file name for `main` `lib` etc. Probably `lib` for all root of folder to resemble folder name without repetition
+//     dot-calls
+//       I want to re-implement this idea but probably only use it for field access
+//       so `name.person` gets the field name from person
+//       but how would they be passed as functions? 
+//         `map #name people`
+//         `map #.name people` <- I guess this is viable?
+//         using the type as a path for constructor/accessor breaks our rules regarding a path's distinct definition
+//         we could also just... not
+//         `map #(\p -> p.name) people`
+//       hm, since they're only for properties and not functions I don't think the `f.x` order makes sense. Let's use postfix
+//     top-level declaration syntaxes
+//       we want futher consistency in regards to all top-level declerations. 
+//       this justifies the new `as _ =` annotation. Making the optional annotation be an addition rather than a modification is elegant
+//       for trait/impl `where` makes sense since it's followed by function/type declarations
+//         eh, it's not needed
+//       struct types now also use `as` for annotating the type. There's no commas and it's line sensitive
+//     when keyword and call annotation
+//       I wasn't entirely happy with it; and it also needs to change a bit to work with our new syntax. I propose making it line-sensitive and comma separated
+//
+//   Compiler Design Changes
+//     Rethink how we store data.
+//       Don't merge everything onto a global, instead vectorize modules, store imports as Location->Key mappings, resolve keys
+//       Don't mix data that different components need access to.
+//         Type annotations and parameter patterns are different data
+//         We should store them in different components *but* we need some key to link it all
+//           let's abuse the hell out of `cranelift_entity`
+//       A HLIR cache doesn't need to be implemented now. But; it's definitely something we could pursue in the future
+//       AST and HLIR should be much more loosely connected. The entity keys can tie everything together. 
+//     Since we're not gonna recurse into modules by `use`; we could parse it into a much more beautiful tree
+//     But do we still want to vectorize modules as soon as possible? 
+//       I think we want to instantly vectorize *both modules and top-level definitions*. 
+//         That way; the AST data can just work the same as all other data. 
+//         but because of this; we probably don't want the parser to handle actually storing it's own data. 
+//         the `lumina_compiler` will be the big module that ties everything together with `cranelift_entity`
+//     Use a logging library for fucks sake! 
+//     we want to use offset-based spans instead of absolute spans
+//
+//   The Type System
+//     most of the actual comparison, inference and instantiation code is fine
+//       the record inference turned into a mess. should we change it?
+//     we forgot to add `Pointer` in the checker btw, it currently silently fails
+//     we should make the type system be responsible of storing declarations as well I think?
+//     module-level generics are an amazing idea. I think I'm gonna just implement it right from the start
+//     make associated types actually work directly. No shortcuts!
+//     arrays! They have a static length
+//     RECONSIDERATION: 
+//       If we're making lumina_compiler the part that ties everything together with keys; 
+//         wouldn't it make more sense to have the typesystem *only* work over types and not store anything? 
+//         and we instead just remove the frontend completely? 
+//
+//         I think we should do that. And in that case we can even use the old type system
+//
+//   The Parser
+//     we want to greatly reduce LOC by unifying everything into generalized concepts
+//     we don't want to take any shortcuts with error handling or recovery
+//     we're gonna stick to LL(1) recursive descent, but put much further emphesis on generalised structures and methods
+//     the `Location` is a bit 'meh'. But I think it's still one of the better solutions

@@ -1,0 +1,20 @@
+use std:math [Num [+, -, *, /]]
+use io
+use maybe [Maybe [Just, Nothing], or, map]
+
+fn main = numExit
+
+fn numExit =
+  let n = 5 in 
+    Nothing
+    . map #(\n -> n * 2)
+    . map #(\n -> n * 2)
+    . map #(\n -> n + 1)
+    . or 50
+    . exit
+
+
+// fn ping_pong =
+//   let input = io:read 1 in
+//     do io:print "you wrote: " 11 then
+//        io:println input 1

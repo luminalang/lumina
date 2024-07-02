@@ -1,0 +1,16 @@
+use std:maybe [Maybe [..]]
+use std:math [Num [+, *], Compare [==]]
+
+fn main = 
+  let extra = 1 in
+    Just 4
+    . map #(\n -> n + 1)
+    . map #(* 3)
+    . map #(doubleIf 15)
+    . or #2
+    . exit
+ where
+  fn doubleIf x num as int, int -> int =
+    match x == num
+    | true  -> x * 2
+    | false -> x

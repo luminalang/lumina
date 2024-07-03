@@ -1,14 +1,17 @@
-use mmtk::memory_manager;
 use mmtk::plan::AllocationSemantics;
 use mmtk::util::address::{Address, ObjectReference};
+use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
 use mmtk::util::metadata::{
     side_metadata::SideMetadataOffset, side_metadata::SideMetadataSpec, MetadataSpec,
 };
 use mmtk::util::opaque_pointer::VMThread;
+use mmtk::util::{VMMutatorThread, VMWorkerThread};
+use mmtk::vm;
 use mmtk::vm::{
-    edge_shape::MemorySlice, edge_shape::SimpleEdge, ActivePlan, Collection, ObjectModel,
-    ReferenceGlue, Scanning, VMBinding,
+    edge_shape::MemorySlice, edge_shape::SimpleEdge, ActivePlan, Collection, EdgeVisitor,
+    GCThreadContext, ObjectModel, ReferenceGlue, RootsWorkFactory, Scanning, VMBinding,
 };
+use mmtk::{memory_manager, Mutator};
 use std::cell::OnceCell;
 
 #[derive(Default)]
@@ -35,120 +38,108 @@ struct TestingMemorySlice;
 // TODO: ???
 pub static mut LOCAL_SIDE_METADATA: u8 = 0;
 
-const L_FOR_PTR_SPEC: mmtk::vm::VMLocalForwardingPointerSpec =
-    mmtk::vm::VMLocalForwardingPointerSpec::side_first();
-const L_FOR_BITS_SPEC: mmtk::vm::VMLocalForwardingBitsSpec =
-    mmtk::vm::VMLocalForwardingBitsSpec::side_after(L_FOR_PTR_SPEC.as_spec());
-const L_MARK_BIT_SPEC: mmtk::vm::VMLocalMarkBitSpec =
-    mmtk::vm::VMLocalMarkBitSpec::side_after(L_FOR_BITS_SPEC.as_spec());
-const L_LOS_MARK_NURSERY_SPEC: mmtk::vm::VMLocalLOSMarkNurserySpec =
-    mmtk::vm::VMLocalLOSMarkNurserySpec::side_after(L_MARK_BIT_SPEC.as_spec());
+const L_FOR_PTR_SPEC: vm::VMLocalForwardingPointerSpec =
+    vm::VMLocalForwardingPointerSpec::side_first();
+const L_FOR_BITS_SPEC: vm::VMLocalForwardingBitsSpec =
+    vm::VMLocalForwardingBitsSpec::side_after(L_FOR_PTR_SPEC.as_spec());
+const L_MARK_BIT_SPEC: vm::VMLocalMarkBitSpec =
+    vm::VMLocalMarkBitSpec::side_after(L_FOR_BITS_SPEC.as_spec());
+const L_LOS_MARK_NURSERY_SPEC: vm::VMLocalLOSMarkNurserySpec =
+    vm::VMLocalLOSMarkNurserySpec::side_after(L_MARK_BIT_SPEC.as_spec());
 
 // We want to use Side metadata I think for now.
 //
 // Makes things easier since pointers can be treated like raw pointers in various situations.
 
 impl ObjectModel<TestingBinding> for TestingObjectModel {
-    const GLOBAL_LOG_BIT_SPEC: mmtk::vm::VMGlobalLogBitSpec =
-        mmtk::vm::VMGlobalLogBitSpec::side_first();
-    const LOCAL_FORWARDING_POINTER_SPEC: mmtk::vm::VMLocalForwardingPointerSpec = L_FOR_PTR_SPEC;
-    const LOCAL_FORWARDING_BITS_SPEC: mmtk::vm::VMLocalForwardingBitsSpec = L_FOR_BITS_SPEC;
-    const LOCAL_MARK_BIT_SPEC: mmtk::vm::VMLocalMarkBitSpec = L_MARK_BIT_SPEC;
+    const GLOBAL_LOG_BIT_SPEC: vm::VMGlobalLogBitSpec = vm::VMGlobalLogBitSpec::side_first();
+    const LOCAL_FORWARDING_POINTER_SPEC: vm::VMLocalForwardingPointerSpec = L_FOR_PTR_SPEC;
+    const LOCAL_FORWARDING_BITS_SPEC: vm::VMLocalForwardingBitsSpec = L_FOR_BITS_SPEC;
+    const LOCAL_MARK_BIT_SPEC: vm::VMLocalMarkBitSpec = L_MARK_BIT_SPEC;
 
-    const LOCAL_LOS_MARK_NURSERY_SPEC: mmtk::vm::VMLocalLOSMarkNurserySpec =
-        L_LOS_MARK_NURSERY_SPEC;
+    const LOCAL_LOS_MARK_NURSERY_SPEC: vm::VMLocalLOSMarkNurserySpec = L_LOS_MARK_NURSERY_SPEC;
 
     fn copy(
-        from: mmtk::util::ObjectReference,
-        semantics: mmtk::util::copy::CopySemantics,
-        copy_context: &mut mmtk::util::copy::GCWorkerCopyContext<TestingBinding>,
-    ) -> mmtk::util::ObjectReference {
+        from: ObjectReference,
+        semantics: CopySemantics,
+        copy_context: &mut GCWorkerCopyContext<TestingBinding>,
+    ) -> ObjectReference {
         todo!()
     }
 
-    fn copy_to(
-        from: mmtk::util::ObjectReference,
-        to: mmtk::util::ObjectReference,
-        region: mmtk::util::Address,
-    ) -> mmtk::util::Address {
+    fn copy_to(from: ObjectReference, to: ObjectReference, region: Address) -> Address {
         todo!()
     }
 
-    fn get_reference_when_copied_to(
-        from: mmtk::util::ObjectReference,
-        to: mmtk::util::Address,
-    ) -> mmtk::util::ObjectReference {
+    fn get_reference_when_copied_to(from: ObjectReference, to: Address) -> ObjectReference {
         todo!()
     }
 
-    fn get_current_size(object: mmtk::util::ObjectReference) -> usize {
+    fn get_current_size(object: ObjectReference) -> usize {
         todo!()
     }
 
-    fn get_size_when_copied(object: mmtk::util::ObjectReference) -> usize {
+    fn get_size_when_copied(object: ObjectReference) -> usize {
         todo!()
     }
 
-    fn get_align_when_copied(object: mmtk::util::ObjectReference) -> usize {
+    fn get_align_when_copied(object: ObjectReference) -> usize {
         todo!()
     }
 
-    fn get_align_offset_when_copied(object: mmtk::util::ObjectReference) -> usize {
+    fn get_align_offset_when_copied(object: ObjectReference) -> usize {
         todo!()
     }
 
-    fn get_type_descriptor(reference: mmtk::util::ObjectReference) -> &'static [i8] {
+    fn get_type_descriptor(reference: ObjectReference) -> &'static [i8] {
         todo!()
     }
 
     const OBJECT_REF_OFFSET_LOWER_BOUND: isize = 0;
 
-    fn ref_to_object_start(object: mmtk::util::ObjectReference) -> mmtk::util::Address {
+    fn ref_to_object_start(object: ObjectReference) -> mmtk::util::Address {
         todo!()
     }
 
-    fn ref_to_header(object: mmtk::util::ObjectReference) -> mmtk::util::Address {
+    fn ref_to_header(object: ObjectReference) -> mmtk::util::Address {
         todo!()
     }
 
-    fn ref_to_address(object: mmtk::util::ObjectReference) -> mmtk::util::Address {
+    fn ref_to_address(object: ObjectReference) -> mmtk::util::Address {
         todo!()
     }
 
-    fn address_to_ref(addr: mmtk::util::Address) -> mmtk::util::ObjectReference {
+    fn address_to_ref(addr: Address) -> ObjectReference {
         todo!()
     }
 
-    fn dump_object(object: mmtk::util::ObjectReference) {
+    fn dump_object(object: ObjectReference) {
         todo!()
     }
 }
 
 impl Scanning<TestingBinding> for TestingScanning {
-    fn scan_object<EV: mmtk::vm::EdgeVisitor<SimpleEdge>>(
-        tls: mmtk::util::VMWorkerThread,
-        object: mmtk::util::ObjectReference,
+    fn scan_object<EV: EdgeVisitor<SimpleEdge>>(
+        tls: VMWorkerThread,
+        object: ObjectReference,
         edge_visitor: &mut EV,
     ) {
         todo!()
     }
 
-    fn notify_initial_thread_scan_complete(partial_scan: bool, tls: mmtk::util::VMWorkerThread) {
+    fn notify_initial_thread_scan_complete(partial_scan: bool, tls: VMWorkerThread) {
         todo!()
     }
 
     fn scan_roots_in_mutator_thread(
-        tls: mmtk::util::VMWorkerThread,
-        mutator: &'static mut mmtk::Mutator<TestingBinding>,
-        factory: impl mmtk::vm::RootsWorkFactory<SimpleEdge>,
+        tls: VMWorkerThread,
+        mutator: &'static mut Mutator<TestingBinding>,
+        factory: impl RootsWorkFactory<SimpleEdge>,
     ) {
         todo!()
     }
 
-    fn scan_vm_specific_roots(
-        tls: mmtk::util::VMWorkerThread,
-        factory: impl mmtk::vm::RootsWorkFactory<SimpleEdge>,
-    ) {
+    fn scan_vm_specific_roots(tls: VMWorkerThread, factory: impl RootsWorkFactory<SimpleEdge>) {
         todo!()
     }
 
@@ -162,36 +153,36 @@ impl Scanning<TestingBinding> for TestingScanning {
 }
 
 impl Collection<TestingBinding> for TestingCollection {
-    fn stop_all_mutators<F>(tls: mmtk::util::VMWorkerThread, mutator_visitor: F)
+    fn stop_all_mutators<F>(tls: VMWorkerThread, mutator_visitor: F)
     where
-        F: FnMut(&'static mut mmtk::Mutator<TestingBinding>),
+        F: FnMut(&'static mut Mutator<TestingBinding>),
     {
         todo!()
     }
 
-    fn resume_mutators(tls: mmtk::util::VMWorkerThread) {
+    fn resume_mutators(tls: VMWorkerThread) {
         todo!()
     }
 
-    fn block_for_gc(tls: mmtk::util::VMMutatorThread) {
+    fn block_for_gc(tls: VMMutatorThread) {
         todo!()
     }
 
-    fn spawn_gc_thread(tls: mmtk::util::VMThread, ctx: mmtk::vm::GCThreadContext<TestingBinding>) {
+    fn spawn_gc_thread(tls: VMThread, ctx: GCThreadContext<TestingBinding>) {
         todo!()
     }
 }
 
 impl ActivePlan<TestingBinding> for TestingActivePlan {
-    fn is_mutator(tls: mmtk::util::VMThread) -> bool {
+    fn is_mutator(tls: VMThread) -> bool {
         todo!()
     }
 
-    fn mutator(tls: mmtk::util::VMMutatorThread) -> &'static mut mmtk::Mutator<TestingBinding> {
+    fn mutator(tls: VMMutatorThread) -> &'static mut Mutator<TestingBinding> {
         todo!()
     }
 
-    fn mutators<'a>() -> Box<dyn Iterator<Item = &'a mut mmtk::Mutator<TestingBinding>> + 'a> {
+    fn mutators<'a>() -> Box<dyn Iterator<Item = &'a mut Mutator<TestingBinding>> + 'a> {
         todo!()
     }
 
@@ -203,22 +194,19 @@ impl ActivePlan<TestingBinding> for TestingActivePlan {
 impl ReferenceGlue<TestingBinding> for TestingReferenceGlue {
     type FinalizableType = ObjectReference;
 
-    fn clear_referent(new_reference: mmtk::util::ObjectReference) {
+    fn clear_referent(new_reference: ObjectReference) {
         todo!()
     }
 
-    fn get_referent(object: mmtk::util::ObjectReference) -> Option<mmtk::util::ObjectReference> {
+    fn get_referent(object: ObjectReference) -> Option<mmtk::util::ObjectReference> {
         todo!()
     }
 
-    fn set_referent(reff: mmtk::util::ObjectReference, referent: mmtk::util::ObjectReference) {
+    fn set_referent(reff: ObjectReference, referent: ObjectReference) {
         todo!()
     }
 
-    fn enqueue_references(
-        references: &[mmtk::util::ObjectReference],
-        tls: mmtk::util::VMWorkerThread,
-    ) {
+    fn enqueue_references(references: &[ObjectReference], tls: VMWorkerThread) {
         todo!()
     }
 }
@@ -235,7 +223,7 @@ impl MemorySlice for TestingMemorySlice {
         todo!()
     }
 
-    fn start(&self) -> mmtk::util::Address {
+    fn start(&self) -> Address {
         todo!()
     }
 
@@ -259,18 +247,23 @@ impl Iterator for TestingEdgeIterator {
 }
 
 #[no_mangle]
-pub extern "C" fn lumina_gc_init() {
+pub extern "C" fn lumina_gc_init(trigger_heap_size: usize) {
     unsafe {
-        let builder = mmtk::MMTKBuilder::new();
-        let vm = mmtk::memory_manager::mmtk_init::<TestingBinding>(&builder);
-        if let Err(_) = GC.set(Box::leak(vm)) {
+        let mut builder = mmtk::MMTKBuilder::new();
+        builder
+            .options
+            .gc_trigger
+            .set(mmtk::util::options::GCTriggerSelector::FixedHeapSize(
+                trigger_heap_size,
+            ));
+        let vm = memory_manager::mmtk_init::<TestingBinding>(&builder);
+        if let Err(_) = GC.set(*vm) {
             panic!("lumina GC may only be initialised once");
         }
     }
-    todo!();
 }
 
-static mut GC: OnceCell<&'static mut mmtk::MMTK<TestingBinding>> = std::cell::OnceCell::new();
+static mut GC: OnceCell<mmtk::MMTK<TestingBinding>> = std::cell::OnceCell::new();
 
 #[no_mangle]
 pub extern "C" fn lumina_gc_initialize_collection(tls: VMThread) {
@@ -278,8 +271,8 @@ pub extern "C" fn lumina_gc_initialize_collection(tls: VMThread) {
 }
 
 #[no_mangle]
-pub extern "C" fn mmtk_alloc(
-    mutator: mmtk::Mutator<TestingBinding>,
+extern "C" fn mmtk_alloc(
+    mutator: Mutator<TestingBinding>,
     size: usize,
     align: usize,
     offset: usize,

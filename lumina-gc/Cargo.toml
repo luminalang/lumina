@@ -6,5 +6,10 @@ edition = "2021"
 [lib]
 crate-type = ["staticlib"]
 
+[profile.dev]
+panic='abort'
+[profile.release]
+panic='abort'
+
 [dependencies]
 mmtk = "0.25.0"

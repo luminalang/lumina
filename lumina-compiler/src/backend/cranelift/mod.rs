@@ -8,7 +8,6 @@ use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use owo_colors::OwoColorize;
 use std::io::Write;
-use target_lexicon::Triple;
 
 mod abi;
 mod ctx;
@@ -19,8 +18,9 @@ impl Target {
     fn isa(&self) -> isa::Builder {
         match self {
             Target { arch: Arch::X86_64, platform: Platform::Linux { sub } } => match sub {
-                LinuxPlatform::Gnu => isa::lookup_by_name("x86_64-unknown-linux").unwrap(),
-                LinuxPlatform::Syscall => isa::lookup_by_name("x86_64-unknown-linux").unwrap(),
+                LinuxPlatform::Gnu | LinuxPlatform::MmtkSyscall | LinuxPlatform::Syscall => {
+                    isa::lookup_by_name("x86_64-unknown-linux").unwrap()
+                }
             },
         }
     }
@@ -228,7 +228,7 @@ impl<'a> Context<'a> {
         });
 
         match target.platform {
-            Platform::Linux { sub: LinuxPlatform::Gnu } => {
+            Platform::Linux { sub: LinuxPlatform::Gnu | LinuxPlatform::MmtkSyscall } => {
                 builder.func.signature.params = vec![
                     AbiParam::new(self.isa.pointer_type()), // argc
                     AbiParam::new(self.isa.pointer_type()), // **argv

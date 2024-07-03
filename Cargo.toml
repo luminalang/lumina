@@ -6,6 +6,9 @@ members = [
     "lumina-key",
     "lumina-compiler",
     "lumina-typesystem",
-    "lumina-gc"
+]
+exclude = [
+  # Compiled separately with different flags as a staticlib
+  "lumina-gc"
 ]
 resolver = "2"

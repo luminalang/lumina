@@ -1,5 +1,10 @@
+    section .note.GNU-stack,"",@progbits
+
     global x86_64_syscall
     section .text
+
+; system-v user application: rdi, rsi, rdx, rcx, r8, r9
+; system-v kern application: rdi, rsi, rdx, r10, r8, r9
 
 x86_64_syscall:
     push rax
@@ -8,6 +13,3 @@ x86_64_syscall:
     syscall
     pop rax
     ret
-
-; system-v user application: rdi, rsi, rdx, rcx, r8, r9
-; system-v kern application: rdi, rsi, rdx, r10, r8, r9

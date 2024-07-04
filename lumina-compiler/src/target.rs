@@ -19,8 +19,8 @@ pub enum Platform {
 #[derive(Clone, Copy)]
 pub enum LinuxPlatform {
     Gnu,
+    Musl,
     Syscall,
-    MmtkSyscall,
 }
 
 impl Arch {
@@ -45,7 +45,7 @@ impl TryFrom<&str> for Target {
             "linux" => Platform::Linux {
                 sub: match iter.next() {
                     Some("syscall") => LinuxPlatform::Syscall,
-                    Some("mmtk_syscall") => LinuxPlatform::MmtkSyscall,
+                    Some("musl") => LinuxPlatform::Musl,
                     None | Some("gnu") | Some("") => LinuxPlatform::Gnu,
                     Some(_) => return Err("unknown linux platform"),
                 },
@@ -85,10 +85,7 @@ impl Target {
                 Platform::Linux { .. } => true,
             },
             "gnu" => matches!(self.platform, Platform::Linux { sub: LinuxPlatform::Gnu }),
-            "mmtk_syscall" => matches!(
-                self.platform,
-                Platform::Linux { sub: LinuxPlatform::MmtkSyscall }
-            ),
+            "musl" => matches!(self.platform, Platform::Linux { sub: LinuxPlatform::Musl }),
             "syscall" => matches!(
                 self.platform,
                 Platform::Linux { sub: LinuxPlatform::Syscall }
@@ -125,7 +122,7 @@ impl fmt::Display for LinuxPlatform {
         match self {
             LinuxPlatform::Gnu => "gnu".fmt(f),
             LinuxPlatform::Syscall => "syscall".fmt(f),
-            LinuxPlatform::MmtkSyscall => "mmtk_syscall".fmt(f),
+            LinuxPlatform::Musl => "musl".fmt(f),
         }
     }
 }

@@ -8,8 +8,16 @@ crate-type = ["staticlib"]
 
 [profile.dev]
 panic='abort'
+lto = true
+
 [profile.release]
 panic='abort'
+lto = true
 
 [dependencies]
-mmtk = "0.25.0"
+mmtk = "0.26.0"
+
+[features]
+default = []
+is_mmtk_object = ["mmtk/is_mmtk_object"]
+malloc_counted_size = ["mmtk/malloc_counted_size"]

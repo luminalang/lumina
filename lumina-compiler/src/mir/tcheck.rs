@@ -59,22 +59,23 @@ impl<'a, 's> Verify<'a, 's> {
                     .error("missing function argument")
                     .m(self.module());
 
-                if got.len().abs_diff(exp.len()) == 1 {
-                    error.eline(
-                        span,
-                        format!(
-                            "missing argument of type `{}`",
-                            tyfmt.fmt(&*exp[exp.len() - 1])
-                        ),
-                    )
-                } else {
-                    warn!("TODO: show full typings");
-                    error.eline(
+                // if got.len().abs_diff(exp.len()) == 1 {
+                //     error.eline(
+                //         span,
+                //         format!(
+                //             "missing argument of type `{}`",
+                //             tyfmt.fmt(&*exp[exp.len() - 1])
+                //         ),
+                //     )
+                // } else {
+                warn!("TODO: show full typings");
+                error
+                    .eline(
                         span,
                         format!("expected {} arguments, was given {}", exp.len(), got.len()),
                     )
-                }
-                .emit();
+                    // }
+                    .emit();
                 false
             }
             ([_], true) => {

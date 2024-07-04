@@ -18,7 +18,7 @@ impl Target {
     fn isa(&self) -> isa::Builder {
         match self {
             Target { arch: Arch::X86_64, platform: Platform::Linux { sub } } => match sub {
-                LinuxPlatform::Gnu | LinuxPlatform::MmtkSyscall | LinuxPlatform::Syscall => {
+                LinuxPlatform::Gnu | LinuxPlatform::Musl | LinuxPlatform::Syscall => {
                     isa::lookup_by_name("x86_64-unknown-linux").unwrap()
                 }
             },
@@ -228,7 +228,7 @@ impl<'a> Context<'a> {
         });
 
         match target.platform {
-            Platform::Linux { sub: LinuxPlatform::Gnu | LinuxPlatform::MmtkSyscall } => {
+            Platform::Linux { sub: LinuxPlatform::Gnu | LinuxPlatform::Musl } => {
                 builder.func.signature.params = vec![
                     AbiParam::new(self.isa.pointer_type()), // argc
                     AbiParam::new(self.isa.pointer_type()), // **argv

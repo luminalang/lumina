@@ -2,6 +2,7 @@ use std:math [Num [..], Compare [..]]
 use std:maybe [Maybe [..], or]
 use std:string [string]
 use std:nothing [nothing]
+use std:ptr
 use std:list [Listable [:], List]
 
 @![langItem(list as List)]
@@ -40,21 +41,48 @@ fn size_of_ty ty as Type -> int =
     | Sum    _ variants -> variants . map #(\_ ty -> size_of_ty ty) . max . or #0
     | Object _ -> 16 // TODO: remember to change this if we decide to change the repr
 
-fn panic as a = builtin:abort
-
-@[platform "x86_64-linux-gnu"]
+@[platform "linux"]
 fn alloc size as int -> *u8 =
-  libc_malloc size
+  mmtk_alloc main_thread_mutator size 8 0 0
 
-@[platform "x86_64-linux-gnu"]
-fn dealloc ptr size as *u8, int -> () = 
-  libc_free ptr
+@[platform "linux"]
+fn dealloc ptr size as *u8, int -> () = free ptr
 
-@[extern "malloc", platform "x86_64-linux-gnu"]
-fn libc_malloc as int -> *u8
+@[extern "free", platform "linux"]
+fn free as *u8 -> ()
 
-@[extern "free", platform "x86_64-linux-gnu"]
-fn libc_free   as *u8 -> ()
+@[extern "x86_64_syscall", platform "linux"]
+fn syscall as int, int, int, int, int, int -> ()
 
-@[extern "realloc", platform "x86_64-linux-gnu"]
-fn libc_realloc as *u8, int -> *u8
+@[platform "x86_64-linux"]
+fn raw_syscall_exit code as int -> () =
+  do syscall code 0 0 0 0 60 then ()
+
+@[platform "linux"]
+fn exit code as int -> () =
+  libc_exit code
+
+@[extern "exit", platform "linux"]
+fn libc_exit code as int -> ()
+
+@[extern "mmtk_init", platform "linux"]
+fn lumina_gc_init as uint -> ()
+
+@[extern "mmtk_bind_mutator", platform "linux"]
+fn mmtk_bind_mutator as *u8 -> *u8
+
+@[extern "mmtk_alloc", platform "linux"]
+fn mmtk_alloc mutator size align offset allocator
+  as *u8, int, int, int, int -> *u8
+
+@[extern "mmtk_post_alloc", platform "linux"]
+fn mmtk_post_alloc mutator obj size allocator
+  as *u8, *u8, int, int -> ()
+
+// TODO: To support multi-threadding we'd need thread local storage
+// then initialise MMTK seperately from creating the mutator
+// then create a mutator for each thread
+val main_thread_mutator as *u8 = 
+  do lumina_gc_init 1048576 then
+     mmtk_bind_mutator ptr:null
+

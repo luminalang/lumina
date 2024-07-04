@@ -41,6 +41,7 @@ pub enum Expr {
 
     Cmp(&'static str, Box<[Expr; 2]>),
     Num(&'static str, Box<[Expr; 2]>),
+    ValToRef(Box<Self>),
 
     Tuple(Vec<Self>),
     Match(Box<Self>, pat::DecTree),
@@ -102,6 +103,9 @@ impl<'a, 's> Lower<'a, 's> {
                     "offset" => self.lower_builtin(params, |p| Expr::Num("plus", Box::new(p))),
                     "abort" => self.lower_builtin::<0>(params, |_| Expr::Abort),
                     "transmute" => self.lower_builtin(params, |[inner]| inner),
+                    "val_to_ref" => {
+                        self.lower_builtin(params, |[inner]| Expr::ValToRef(Box::new(inner)))
+                    }
                     "reflect_type" => {
                         let (name, ty) = tanot.for_entity[0].clone();
                         assert_eq!(*name, "self");
@@ -282,6 +286,10 @@ impl<'a, 's> Lower<'a, 's> {
             (Type::Container(Container::Pointer(_)), Type::Prim(Prim::Int(signed, bitsize))) => {
                 Expr::IntCast(expr, (false, Bitsize(64)), (signed, bitsize))
             }
+            (Type::Container(Container::Pointer(_)), Type::Container(Container::Pointer(_))) => {
+                // TODO: this cast does nothing. But; we still put it here because we need an expression
+                Expr::IntCast(expr, (false, Bitsize(64)), (false, Bitsize(64)))
+            }
             _ => panic!("ET: "),
         }
     }
@@ -444,6 +452,7 @@ impl fmt::Display for Expr {
                     params.iter().format(" ")
                 )
             }
+            Expr::ValToRef(val) => write!(f, "{op}{} {val}{cp}", "ref_val".keyword()),
             Expr::Deref(inner) => write!(f, "{op}{} {inner}{cp}", "deref".keyword()),
             Expr::Write(p) => write!(f, "{op}{} {} {}{cp}", "write".keyword(), &p[0], &p[1]),
             Expr::ReflectTypeOf(ty) => write!(f, "{op}{} {ty}{cp}", "type-of".keyword()),

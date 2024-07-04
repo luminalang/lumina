@@ -6,3 +6,5 @@ fn deref ptr as *a -> a = builtin:deref ptr
 
 // Offset the pointer by a set amount of bytes
 fn offset ptr by as *a, int -> *a = builtin:offset ptr by
+
+fn null as *a = builtin:transmute 0

@@ -120,6 +120,17 @@ impl<'a> FuncLower<'a> {
                     _ => panic!("attempted to call {ty:#?} as a function"),
                 }
             }
+            mir::Expr::ValToRef(val) => match &**val {
+                mir::Expr::CallFunc(M { value: ast::NFunc::Val(val), module }, _, _) => {
+                    let key = module.m(*val);
+                    let ty = self.lir.vals[key].clone();
+                    self.current
+                        .ssa
+                        .val_to_ref(key, MonoType::pointer(ty))
+                        .value()
+                }
+                other => panic!("non-val given to val_to_ref builtin: {other}"),
+            },
             mir::Expr::Yield(local) => self.yield_to_value(*local),
             mir::Expr::YieldFunc(nfunc, inst) => {
                 let mfunc = self.callable_to_mfunc(*nfunc, inst);

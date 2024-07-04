@@ -706,6 +706,14 @@ impl<'a, 's> Verify<'a, 's> {
                     let ret = IType::Var(self.vars().var(span, lambda));
                     InstCall::LocalCall(span, ptypes, ret, FuncKind::FnPointer)
                 }
+                "val_to_ref" => {
+                    let lambda = self.lambda();
+                    let any = IType::Var(self.vars().var(span, lambda));
+                    let ptr = Container::Pointer(Box::new(any.clone())).into();
+                    let ptypes = vec![any];
+                    let ret = ptr;
+                    InstCall::LocalCall(span, ptypes, ret, FuncKind::FnPointer)
+                }
                 _ => {
                     self.error("unrecognised builtin").eline(span, "").emit();
                     InstCall::Local(IType::Prim(Prim::Poison).tr(span))

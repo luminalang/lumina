@@ -279,6 +279,10 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                 let int = T::from(Prim::Int(true, Bitsize::default()));
                 return self.forbid_params(span, int, params);
             }
+            ["uint"] => {
+                let int = T::from(Prim::Int(false, Bitsize::default()));
+                return self.forbid_params(span, int, params);
+            }
             ["float"] => {
                 return self.forbid_params(span, T::from(Prim::Float), params);
             }

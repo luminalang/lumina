@@ -37,3 +37,10 @@ pub static GC: OnceLock<Box<MMTK<DummyVM>>> = OnceLock::new();
 fn mmtk() -> &'static MMTK<DummyVM> {
     GC.get().unwrap()
 }
+
+// MMTK expects the langauge runtime to spawn threads.
+//
+// This makes sense; since it means Lumina will always be aware of which threads exist
+// (including those implicitly created by MMTK)
+//
+// However; it also means that hooking up the musl/glibc calls for that will be important.

@@ -8,11 +8,11 @@ use mmtk::memory_manager;
 use mmtk::scheduler::GCWorker;
 use mmtk::util::opaque_pointer::*;
 use mmtk::util::{Address, ObjectReference};
+use mmtk::vm::ObjectModel;
 use mmtk::AllocationSemantics;
 use mmtk::MMTKBuilder;
 use mmtk::Mutator;
 use std::ffi::CStr;
-use std::ffi::CString;
 
 // This file exposes MMTk Rust API to the native code. This is not an exhaustive list of all the APIs.
 // Most commonly used APIs are listed in https://docs.mmtk.io/api/mmtk/memory_manager/index.html. The binding can expose them here.
@@ -48,13 +48,13 @@ pub fn mmtk_init(heap_size: usize) {
     let success = mmtk_set_fixed_heap_size(&mut builder, heap_size);
     assert!(success);
 
-    // Set option by value.  We set the the option direcly using `MMTKOption::set`. Useful if
-    // the VM binding wants to set options directly, or if the VM binding has its own format for
-    // command line arguments.
-    let name = CString::new("plan").unwrap();
-    let val = CString::new("NoGC").unwrap();
-    let success = mmtk_set_option_from_string(&mut builder, name.as_ptr(), val.as_ptr());
-    assert!(success);
+    let ok = builder
+        .options
+        .plan
+        .set(mmtk::util::options::PlanSelector::NoGC);
+    if !ok {
+        panic!("invalid plan selector");
+    }
 
     // Create MMTK instance.
     let mmtk = memory_manager::mmtk_init::<DummyVM>(&builder);
@@ -97,7 +97,14 @@ pub extern "C" fn mmtk_alloc(
     {
         semantics = AllocationSemantics::Los;
     }
-    memory_manager::alloc::<DummyVM>(unsafe { &mut *mutator }, size, align, offset, semantics)
+    let address =
+        memory_manager::alloc::<DummyVM>(unsafe { &mut *mutator }, size, align, offset, semantics);
+
+    let obj = super::object_model::VMObjectModel::address_to_ref(address);
+
+    mmtk_post_alloc(mutator, obj, 16, mmtk::AllocationSemantics::Default);
+
+    address
 }
 
 #[no_mangle]

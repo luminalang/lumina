@@ -1,7 +1,5 @@
 #!/bin/env bash
     
-# TODO: rename target to musl. Since well, it uses musl. If we link to musl for MMTK then we might as well expose it to Lumina
-
 set -e
 
 # arch="x86_64"
@@ -49,5 +47,7 @@ fi
 
 set +e
 
-./a.out
+
+
+RUST_LOG=trace ./a.out
 echo $?

@@ -1,5 +1,3 @@
-    section .note.GNU-stack,"",@progbits
-
     global x86_64_syscall
     section .text
 

@@ -117,10 +117,16 @@ impl<'a, 's> TypeSystem<'a, 's> {
 
             // TVar merging
             (Ty::Var(g), Ty::Var(e)) => {
-                self.env.touch(self.lambda, *g);
-                self.env.touch(self.lambda, *e);
-
                 let [gdata, edata] = self.env.vars.get_many_mut([*g, *e]).unwrap();
+
+                let is_from_lambda = Self::lambda_hint_from_lowest(&[
+                    gdata.is_from_lambda,
+                    edata.is_from_lambda,
+                    self.lambda,
+                ]);
+
+                gdata.is_from_lambda = is_from_lambda;
+                edata.is_from_lambda = is_from_lambda;
 
                 match (gdata.assignment.clone(), edata.assignment.clone()) {
                     (None, None) => match (gdata.int_constraint, edata.int_constraint) {
@@ -239,6 +245,10 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 ok
             }
         }
+    }
+
+    fn lambda_hint_from_lowest(lambdas: &[Option<key::Lambda>]) -> Option<key::Lambda> {
+        lambdas.iter().min().copied().unwrap_or(None)
     }
 
     fn merge_records(&mut self, got: (Span, RecordVar), exp: (Span, RecordVar)) -> CheckResult<'s> {

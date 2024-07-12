@@ -412,14 +412,12 @@ impl<'a> FuncLower<'a> {
 
     pub fn run(mut self, returns: MonoType, mfkey: MonoFunc) -> MonoFunc {
         let origin = self.current.origin.clone();
-        let module = origin.module();
 
         let expr = self.expr_of_origin(origin.clone());
 
         self.expr_to_flow(&expr);
 
-        let modname = &self.mir.module_names[module];
-        let symbol = format!("{}:{mfkey}:{modname}:{}", module.0, origin.name(self.mir));
+        let symbol = self.func_symbol(mfkey, origin);
 
         info!(
             "resulting blocks for {}:\n{}",
@@ -649,6 +647,31 @@ impl<'a> FuncLower<'a> {
 
                 ResolvedNFunc::Sum { tag, ty, payload_size }
             }
+        }
+    }
+
+    fn func_symbol(&self, key: MonoFunc, origin: FuncOrigin) -> String {
+        let module = origin.module();
+        let mname = &self.mir.module_names[module];
+        let fname = origin.name(self.mir);
+        format!("{module}:{mname}:{fname}:{key}")
+    }
+
+    pub fn ty_symbol(&self, ty: &MonoType) -> String {
+        match ty {
+            MonoType::Array(inner, times) => format!("[{}; {times}]", self.ty_symbol(&inner)),
+            MonoType::Pointer(inner) => format!("*{}", self.ty_symbol(inner)),
+            MonoType::FnPointer(params, ret) => format!(
+                "fnptr({} -> {})",
+                params.iter().map(|ty| self.ty_symbol(ty)).format(", "),
+                self.ty_symbol(&ret)
+            ),
+            MonoType::Unreachable => format!("!"),
+            MonoType::Monomorphised(mk) => match self.lir.types.types[*mk].original {
+                Some(key) => format!("{key}>{mk}"),
+                None => mk.to_string(),
+            },
+            _ => MonoFormatter { types: &self.lir.types.types, v: ty }.to_string(),
         }
     }
 }

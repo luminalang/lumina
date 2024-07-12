@@ -52,7 +52,8 @@ impl<'a> FuncLower<'a> {
         let Some(param_pos) = self.mir.trait_objects[trait_].as_ref() else {
             panic!("{trait_} is not object safe");
         };
-        let vtable_type = self.new_vtable_type(Some(param_pos), methods.values().copied());
+        let vtable_type =
+            self.new_vtable_type(VTableSelf::Method(param_pos), methods.values().copied());
         let object_type = self.new_object_type(trait_, vtable_type);
 
         if let Some(val) = self.lir.vtables.get(&object_type).copied() {
@@ -128,7 +129,10 @@ impl<'a> FuncLower<'a> {
         let module = self.current.origin.module();
         let given_count = given.len();
 
-        let vtable_type = self.new_vtable_type(None, std::iter::once(target));
+        let vtable_type = self.new_vtable_type(
+            VTableSelf::PartialApplication(given_count),
+            std::iter::once(target),
+        );
         let data_type = self.lir.types.get_or_make_tuple(given);
         let object_type = self.new_object_type(self.info.closure, vtable_type);
 
@@ -148,29 +152,41 @@ impl<'a> FuncLower<'a> {
             .type_of_field(vtable_type, key::RecordField(0));
         let (vtable_func_ptypes, ret) = vtable_call_field.as_fnptr();
 
+        let target_func = &self.lir.functions[target];
+
         // Create the function that's put in the vtable
         let forwarding_func = {
             let mut blocks = ssa::Blocks::new(vtable_func_ptypes.iter().cloned().collect());
 
-            // Dereference the opaque data
-            let data = blocks.deref(Value::BlockParam(lir::BlockParam(0)), data_type.into());
+            let mut params = if given_count == 0 {
+                vec![]
+            } else {
+                // Dereference the opaque data
+                let data = blocks.deref(Value::BlockParam(lir::BlockParam(0)), data_type.into());
 
-            let rdata = &self.lir.types.types[data_type];
-            assert!(rdata.autoboxed.is_empty());
+                let rdata = &self.lir.types.types[data_type];
+                assert!(rdata.autoboxed.is_empty());
 
-            // Flatten the values by dereferencing the opaque data into parameters for target
-            let mut params = self.lir.types.types[data_type]
-                .fields
-                .iter()
-                .map(|(field, ty)| {
-                    blocks
-                        .field(data.value(), data_type, field, ty.clone())
-                        .value()
-                })
-                .collect::<Vec<_>>();
+                // Flatten the values by dereferencing the opaque data into parameters for target
+                self.lir.types.types[data_type]
+                    .fields
+                    .iter()
+                    .map(|(field, ty)| {
+                        blocks
+                            .field(data.value(), data_type, field, ty.clone())
+                            .value()
+                    })
+                    .collect::<Vec<_>>()
+            };
 
             // Append all parameters after the flattened values as additional params for target
-            for (i, _) in vtable_func_ptypes.iter().skip(given_count).enumerate() {
+            for (i, _) in target_func
+                .blocks
+                .params(lir::Block::entry())
+                .iter()
+                .skip(given_count)
+                .enumerate()
+            {
                 let pid = lir::BlockParam(i as u32 + 1); // offset to skip the capture data
                 let additional = Value::BlockParam(pid);
                 params.push(additional);
@@ -180,7 +196,7 @@ impl<'a> FuncLower<'a> {
             blocks.jump(target, params);
 
             let forwarding_func = Function {
-                symbol: format!("VTable_{target}_{object_type}"),
+                symbol: format!("VTable_({})_Closure", self.lir.functions[target].symbol),
                 blocks,
                 returns: ret.clone(),
             };
@@ -216,7 +232,11 @@ impl<'a> FuncLower<'a> {
             blocks.return_(v.value());
 
             let init_func = Function {
-                symbol: format!("VTable_{data_type:?}_{vtable}_initialiser"),
+                symbol: format!(
+                    "VTable_{}_{}_initialiser",
+                    self.ty_symbol(&data_type),
+                    self.ty_symbol(&MonoType::Monomorphised(vtable)),
+                ),
                 blocks,
                 returns: vtable.into(),
             };
@@ -233,10 +253,11 @@ impl<'a> FuncLower<'a> {
     }
 
     // Construct the vtable type by iterating the functions to be included while substituting
-    // `self` for `*u8`. If the position of `self` isn't specified then assume first parameter.
-    fn new_vtable_type(
+    // `self` for `*u8`. If the position of `self` isn't specified then assume partial application
+    // and substitute `N` parameters with a single `*u8`.
+    fn new_vtable_type<'s>(
         &mut self,
-        param: Option<&Map<key::Method, key::Param>>,
+        param: VTableSelf<'s>,
         methods: impl IntoIterator<Item = MonoFunc>,
     ) -> MonoTypeKey {
         // Using tuples here could be considered dangerous as it relies on the `self.lir.vtables`
@@ -247,17 +268,20 @@ impl<'a> FuncLower<'a> {
             .map(|(i, mfunc)| {
                 let func = &self.lir.functions[mfunc];
 
-                let mut params = func
-                    .blocks
-                    .params(lir::Block::entry())
-                    .values()
-                    .cloned()
-                    .collect::<Vec<_>>();
+                let target_params = func.blocks.params(lir::Block::entry());
 
-                let opaque = param
-                    .map(|methods| methods[key::Method(i as u32)])
-                    .unwrap_or(key::Param(0));
-                params[opaque.0 as usize] = MonoType::u8_pointer();
+                let params = match param {
+                    VTableSelf::PartialApplication(count) => {
+                        let mut params = vec![MonoType::u8_pointer()];
+                        params.extend(target_params.values().skip(count).cloned());
+                        params
+                    }
+                    VTableSelf::Method(methods) => {
+                        let mut params = target_params.values().cloned().collect::<Vec<_>>();
+                        params[methods[key::Method(i as u32)].0 as usize] = MonoType::u8_pointer();
+                        params
+                    }
+                };
 
                 MonoType::fn_pointer(params, func.returns.clone())
             })
@@ -281,4 +305,9 @@ pub struct VTable {
     data_type: MonoType, // the real type behind `*u8`
     vtable_type: MonoTypeKey,
     object: MonoTypeKey, // *u8+vtable
+}
+
+enum VTableSelf<'a> {
+    PartialApplication(usize),
+    Method(&'a Map<key::Method, key::Param>),
 }

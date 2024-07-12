@@ -26,6 +26,10 @@ impl<K: EntityRef, V> ModMap<K, V> {
         Self::with_capacity([])
     }
 
+    pub fn len(&self) -> usize {
+        self.0.values().map(|v| v.len()).sum()
+    }
+
     pub fn add_module(&mut self, cap: usize) -> Module {
         self.0.push(Map::with_capacity(cap))
     }

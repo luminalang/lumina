@@ -140,7 +140,31 @@ impl<'a, 's> Verify<'a, 's> {
                     }
                 };
 
-                assert_eq!(fdef.typing.params.len(), fdef.params.len());
+                let emit_bad_param_count = |span, msg| {
+                    hir.sources
+                        .error(msg)
+                        .m(func.module)
+                        .eline(
+                            span,
+                            format!(
+                                "function expects {} parameters from it's type annotation",
+                                fdef.typing.params.len()
+                            ),
+                        )
+                        .emit()
+                };
+
+                match fdef.typing.params.len().cmp(&fdef.params.len()) {
+                    std::cmp::Ordering::Equal => {}
+                    std::cmp::Ordering::Less => {
+                        let span = fdef.params.last().unwrap().span;
+                        emit_bad_param_count(span, "excess parameter pattern")
+                    }
+                    std::cmp::Ordering::Greater => {
+                        let span = fdef.typing.params.last().unwrap().1.span;
+                        emit_bad_param_count(span, "missing parameter pattern")
+                    }
+                }
 
                 funcs[func] = FunctionStatus::Lowering;
 

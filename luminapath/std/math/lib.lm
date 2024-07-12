@@ -26,7 +26,7 @@ trait Compare
   fn min x y as self, self -> self =
     if y < x then y else x
 
-impl Num for int
+impl Num for u8
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
   fn + a b as self, self -> self = builtin:plus a b
   fn - a b as self, self -> self = builtin:minus a b
@@ -34,7 +34,99 @@ impl Num for int
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
 
-impl Compare for int
+impl Compare for u8
   fn == a b as self, self -> bool = builtin:eq a b
   fn < a b  as self, self -> bool = builtin:lt a b
   fn > a b  as self, self -> bool = builtin:gt a b
+
+impl Num for u16
+  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
+  fn + a b as self, self -> self = builtin:plus a b
+  fn - a b as self, self -> self = builtin:minus a b
+  fn * a b as self, self -> self = builtin:mul a b
+  fn / a b as self, self -> self = builtin:div a b
+  fn zero = 0
+
+impl Compare for u16
+  fn == a b as self, self -> bool = builtin:eq a b
+  fn < a b  as self, self -> bool = builtin:lt a b
+  fn > a b  as self, self -> bool = builtin:gt a b
+
+impl Num for u32
+  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
+  fn + a b as self, self -> self = builtin:plus a b
+  fn - a b as self, self -> self = builtin:minus a b
+  fn * a b as self, self -> self = builtin:mul a b
+  fn / a b as self, self -> self = builtin:div a b
+  fn zero = 0
+
+impl Compare for u32
+  fn == a b as self, self -> bool = builtin:eq a b
+  fn < a b  as self, self -> bool = builtin:lt a b
+  fn > a b  as self, self -> bool = builtin:gt a b
+
+impl Num for u64
+  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
+  fn + a b as self, self -> self = builtin:plus a b
+  fn - a b as self, self -> self = builtin:minus a b
+  fn * a b as self, self -> self = builtin:mul a b
+  fn / a b as self, self -> self = builtin:div a b
+  fn zero = 0
+
+impl Compare for u64
+  fn == a b as self, self -> bool = builtin:eq a b
+  fn < a b  as self, self -> bool = builtin:lt a b
+  fn > a b  as self, self -> bool = builtin:gt a b
+
+impl Num for i8
+  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
+  fn + a b as self, self -> self = builtin:plus a b
+  fn - a b as self, self -> self = builtin:minus a b
+  fn * a b as self, self -> self = builtin:mul a b
+  fn / a b as self, self -> self = builtin:div a b
+  fn zero = 0
+
+impl Compare for i8
+  fn == a b as self, self -> bool = builtin:eq a b
+  fn < a b  as self, self -> bool = builtin:lt a b
+  fn > a b  as self, self -> bool = builtin:gt a b
+
+impl Num for i16
+  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
+  fn + a b as self, self -> self = builtin:plus a b
+  fn - a b as self, self -> self = builtin:minus a b
+  fn * a b as self, self -> self = builtin:mul a b
+  fn / a b as self, self -> self = builtin:div a b
+  fn zero = 0
+
+impl Compare for i16
+  fn == a b as self, self -> bool = builtin:eq a b
+  fn < a b  as self, self -> bool = builtin:lt a b
+  fn > a b  as self, self -> bool = builtin:gt a b
+
+impl Num for i32
+  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
+  fn + a b as self, self -> self = builtin:plus a b
+  fn - a b as self, self -> self = builtin:minus a b
+  fn * a b as self, self -> self = builtin:mul a b
+  fn / a b as self, self -> self = builtin:div a b
+  fn zero = 0
+
+impl Compare for i32
+  fn == a b as self, self -> bool = builtin:eq a b
+  fn < a b  as self, self -> bool = builtin:lt a b
+  fn > a b  as self, self -> bool = builtin:gt a b
+
+impl Num for i64
+  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
+  fn + a b as self, self -> self = builtin:plus a b
+  fn - a b as self, self -> self = builtin:minus a b
+  fn * a b as self, self -> self = builtin:mul a b
+  fn / a b as self, self -> self = builtin:div a b
+  fn zero = 0
+
+impl Compare for i64
+  fn == a b as self, self -> bool = builtin:eq a b
+  fn < a b  as self, self -> bool = builtin:lt a b
+  fn > a b  as self, self -> bool = builtin:gt a b
+

@@ -1,0 +1,15 @@
+use std:ptr
+use std:list [Listable]
+
+// An immutable heap-allocated array
+type Vec a {
+  ptr *a
+  len uint
+}
+
+fn get i {ptr, len} as uint, Vec a -> a =
+  ptr:offset ptr (i as int) . ptr:deref
+
+fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
+   let at = ptr:offset ptr (i as int) in
+    ptr:write at v

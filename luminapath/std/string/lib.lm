@@ -2,5 +2,10 @@ use std:list [List]
 
 @![langItem(list as List)]
 
+// I think using `List` for strings is a bad idea
+//
+// Since slices will become very weird. 
 
-type string {}
+type string {
+  // raw List u8
+}

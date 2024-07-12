@@ -1,5 +1,6 @@
 use std:maybe [Maybe [..]]
 use std:math [Compare, Num [+]]
+use vec [Vec]
 
 @![langItem(list as List)]
 
@@ -13,30 +14,44 @@ trait Listable a
   fn with_capacity as int -> self
   fn split as self -> Maybe (a, self)
 
-type List a = Cons a (List a) | Nil
+type List a = Slice uint (Vec a) | Concat self self | Singleton a | Nil
 
 impl Listable a for List a
   fn : x xs as a, List a -> List a =
-    Cons x xs
+    Concat (Singleton x) xs
 
-  fn with_capacity _ as int -> List a =
+  fn with_capacity len as int -> List a =
     Nil
 
   fn split list as List a -> Maybe (a, List a) = 
     match list
-    | Cons x xs -> Just (x, xs)
-    | Nil -> Nothing
+    | Slice start vec -> 
+      Just (vec . get start, Slice (start + 1) vec)
+
+    | Concat left right -> 
+      split left 
+      . map #(preventConcatNil right)
+
+    | Singleton a -> Just (a, Nil)
+    | Nil         -> Nothing
+
+fn preventConcatNil right (v, leftright) as [a], (a, [a]) -> (a, [a]) =
+  match leftright
+    | Nil -> (v, right)
+    | _   -> (v, Concat leftright right)
 
 fn ++ left right as [a], [a] -> [a] =
   match left
-  | [] -> right
-  | [x : xs]  -> Cons x (xs ++ right)
+  | Nil -> right
+  | _   -> Concat left right
 
+// TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
 fn fold f acc list as fn(b, a -> b), b, [a] -> b =
   match list
   | [x : xs] -> fold #f (f acc x) xs
   | []       -> acc
 
+// TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
 fn map f list as fn(a -> b), [a] -> [b] =
   match list
   | [x : xs] -> f x : map #f xs
@@ -46,9 +61,17 @@ when n can Num
 fn sum list as [n] -> n =
   fold #+ Num(self as n):zero list
 
+// TODO: for some reason this constraint it straight up not checked?
+//
+// we can use `Compare:max` on `n` with no constraint
+when n can Compare
 fn max list as [n] -> Maybe n = 
-  fold #(\acc n -> Compare:max acc (Just n)) Nothing list
+  match list
+  | [] -> Nothing
+  | [x : xs] -> Just (fold #Compare:max x xs)
 
 when n can Compare
 fn min list as [n] -> Maybe n = 
-  fold #(\acc n -> Compare:min acc (Just n)) Nothing list
+  match list
+  | [] -> Nothing
+  | [x : xs] -> Just (fold #Compare:min x xs)

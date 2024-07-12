@@ -20,7 +20,7 @@ fn map f m as fn(a -> b), Maybe a -> Maybe b =
 fn identity a as a -> a = a
 
 when a can Compare
-impl Compare a for Maybe a
+impl Compare for Maybe a
   fn == a b as self, self -> bool = 
     match (a, b)
     | (Nothing, Nothing) -> true

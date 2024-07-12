@@ -1,19 +1,19 @@
-#[extern "lumina_gc_initialize_collection"]
-fn initialize_collection as *u8 -> ()
-
-#[extern "lumina_gc_init"]
-fn init as ()
-
-#[extern "mmtk_alloc"]
-fn alloc mutator size align offset allocator
-  as MmtkMutator, uint, uint, uint, i32 -> ()
-
-#[extern "mmtk_post_alloc"]
-fn post_alloc mutator object size allocator
-  as MmtkMutator, *u8, uint, i32 -> ()
-
-#[extern "mmtk_bind_mutator"]
-fn bind_mutator as VMThread -> ()
+// #[extern "lumina_gc_initialize_collection"]
+// fn initialize_collection as *u8 -> ()
+// 
+// #[extern "lumina_gc_init"]
+// fn init as ()
+// 
+// #[extern "mmtk_alloc"]
+// fn alloc mutator size align offset allocator
+//   as MmtkMutator, uint, uint, uint, i32 -> ()
+// 
+// #[extern "mmtk_post_alloc"]
+// fn post_alloc mutator object size allocator
+//   as MmtkMutator, *u8, uint, i32 -> ()
+// 
+// #[extern "mmtk_bind_mutator"]
+// fn bind_mutator as VMThread -> ()
 
 // #[repr(i32)]
 // pub enum AllocationSemantics {

@@ -163,8 +163,7 @@ impl<'a, 's> Verify<'a, 's> {
 
     pub fn type_system(&mut self) -> TypeSystem<'_, 's> {
         let fkey = self.current.fkey;
-        let lambda = self.current.lambda;
-        self.rsolver.as_typesystem(&mut self.tenvs[fkey], lambda)
+        self.rsolver.as_typesystem(&mut self.tenvs[fkey])
     }
 
     // Returns `None` if already lowering
@@ -229,9 +228,9 @@ impl<'a, 's> Verify<'a, 's> {
         info!("typing is: {}", &self.fdef.typing);
         let _handle = _span.enter();
 
-        // Checking pass
         trace!("type checking parameters");
         self.type_check_pat_params(&self.fdef.typing.params, &self.fdef.params);
+
         trace!("type checking expression");
         let ret = self.type_check_expr(self.fdef.expr.as_ref());
         let ret = ret.as_ref();
@@ -277,9 +276,10 @@ impl<'a, 's> Verify<'a, 's> {
 
         let typing = finalization.lower_func_typing(&self.fdef.typing);
         info!("typing finalised to: {typing}");
-        finalization.lower_lambda_typings(self.fdef.lambdas.typings.iter());
 
         finalization.implicits = false;
+        finalization.lower_lambda_typings(self.fdef.lambdas.typings.iter());
+
         finalization.current.lambda = None;
         let expr = finalization.patterns_and_expr(
             &typing.params,
@@ -392,9 +392,6 @@ impl<'a, 's> Verify<'a, 's> {
     pub fn new_bind_as(&mut self, key: key::Bind, ty: Tr<IType>) {
         self.current.binds.insert(key, ty);
     }
-    pub fn push_inst(&mut self, instinfo: InstInfo) {
-        self.current.push_inst(instinfo);
-    }
 
     pub fn type_of(&mut self, bind: key::Bind) -> Tr<&IType> {
         self.current.binds[&bind].as_ref()
@@ -439,7 +436,7 @@ impl<'a, 's> Verify<'a, 's> {
         let forall = self.fdef.forall.borrow();
         let typing = &self.fdef.typing;
 
-        let inst = ForeignInst::<Var>::new(&mut self.tenvs[self.current.fkey], self.current.lambda)
+        let inst = ForeignInst::<Var>::new(&mut self.tenvs[self.current.fkey])
             // TODO: using `with_self` for all recursive functions is questionable.
             .with_self(span)
             .forall(span, &forall)
@@ -512,11 +509,10 @@ impl<'a, 's> Verify<'a, 's> {
         var: key::SumVariant,
     ) -> (ForeignInst<Var>, Vec<Tr<IType>>, Tr<IType>) {
         let forall = &self.hir.sums[sum].1;
-        let lambda = self.current.lambda;
         let vars = self.vars();
 
-        let finst = ForeignInst::<Var>::new(vars, lambda)
-            .with_self(span)
+        let finst = ForeignInst::<Var>::new(vars)
+            // .with_self(span)
             .forall(span, forall)
             .forall_cons(forall)
             .build();
@@ -590,7 +586,7 @@ impl<'a, 's> Verify<'a, 's> {
             .map(|t| t.value.clone())
             .collect();
 
-        self.current.push_inst(instinfo);
+        self.current.push_inst(span, instinfo);
 
         // let kind = if params.len() == 0 {
         //     FuncKind::FnPointer
@@ -659,25 +655,25 @@ impl<'a, 's> Verify<'a, 's> {
             hir::Callable::Builtin(name) => match *name {
                 "plus" | "minus" | "mul" | "div" => {
                     let lambda = self.lambda();
-                    let any = IType::Var(self.vars().var(span, lambda));
+                    let any = IType::Var(self.vars().var(span));
                     let ptypes = vec![any.clone(), any.clone()];
                     InstCall::LocalCall(span, ptypes, any, FuncKind::FnPointer)
                 }
                 "eq" | "lt" | "gt" => {
                     let lambda = self.lambda();
-                    let any = IType::Var(self.vars().var(span, lambda));
+                    let any = IType::Var(self.vars().var(span));
                     let ptypes = vec![any.clone(), any];
                     InstCall::LocalCall(span, ptypes, Prim::Bool.into(), FuncKind::FnPointer)
                 }
                 "deref" => {
                     let lambda = self.lambda();
-                    let any = IType::Var(self.vars().var(span, lambda));
+                    let any = IType::Var(self.vars().var(span));
                     let ptypes = vec![Container::Pointer(Box::new(any.clone())).into()];
                     InstCall::LocalCall(span, ptypes, any, FuncKind::FnPointer)
                 }
                 "write" => {
                     let lambda = self.lambda();
-                    let any = IType::Var(self.vars().var(span, lambda));
+                    let any = IType::Var(self.vars().var(span));
                     let ptypes = vec![
                         Container::Pointer(Box::new(any.clone())).into(),
                         any.clone(),
@@ -687,7 +683,7 @@ impl<'a, 's> Verify<'a, 's> {
                 }
                 "offset" => {
                     let lambda = self.lambda();
-                    let any = IType::Var(self.vars().var(span, lambda));
+                    let any = IType::Var(self.vars().var(span));
                     let ptr: IType = Container::Pointer(Box::new(any.clone())).into();
                     let ptypes = vec![ptr.clone(), Prim::Int(true, Bitsize::default()).into()];
                     InstCall::LocalCall(span, ptypes, ptr, FuncKind::FnPointer)
@@ -697,18 +693,18 @@ impl<'a, 's> Verify<'a, 's> {
                 }
                 "abort" => {
                     let lambda = self.lambda();
-                    InstCall::Local(IType::Var(self.vars().var(span, lambda)).tr(span))
+                    InstCall::Local(IType::Var(self.vars().var(span)).tr(span))
                 }
                 "transmute" => {
                     let lambda = self.lambda();
-                    let param = IType::Var(self.vars().var(span, lambda));
+                    let param = IType::Var(self.vars().var(span));
                     let ptypes = vec![param];
-                    let ret = IType::Var(self.vars().var(span, lambda));
+                    let ret = IType::Var(self.vars().var(span));
                     InstCall::LocalCall(span, ptypes, ret, FuncKind::FnPointer)
                 }
                 "val_to_ref" => {
                     let lambda = self.lambda();
-                    let any = IType::Var(self.vars().var(span, lambda));
+                    let any = IType::Var(self.vars().var(span));
                     let ptr = Container::Pointer(Box::new(any.clone())).into();
                     let ptypes = vec![any];
                     let ret = ptr;
@@ -738,7 +734,7 @@ impl<'a, 's> Verify<'a, 's> {
         let forall = &self.fdef.lambdas.foralls.borrow()[lkey];
         let typing = &self.fdef.lambdas.typings[lkey];
 
-        let inst = ForeignInst::<Var>::new(&mut self.tenvs[self.current.fkey], self.current.lambda)
+        let inst = ForeignInst::<Var>::new(&mut self.tenvs[self.current.fkey])
             .forall(span, &forall)
             .iforall_cons(&forall)
             .build();
@@ -751,7 +747,9 @@ impl<'a, 's> Verify<'a, 's> {
         let returns = inst.applyi(&typing.returns).tr(typing.returns.span);
 
         let module = self.module();
-        InstInfo::new(module, inst, ptypes, returns.clone())
+        let iinfo = InstInfo::new(module, inst, ptypes, returns.clone());
+
+        iinfo
     }
 
     pub fn type_of_nfunc(
@@ -789,7 +787,7 @@ impl<'a, 's> Verify<'a, 's> {
             hir::FuncDefKind::TraitHeader(trait_, forall, typing) => {
                 let vars = &mut self.tenvs[self.current.fkey];
                 let pforall = &self.hir.traits[*trait_].1;
-                let finst = ForeignInst::<Var>::new(vars, self.current.lambda)
+                let finst = ForeignInst::<Var>::new(vars)
                     .with_self(span)
                     .parent(span, pforall)
                     .parent_cons(pforall)
@@ -812,7 +810,7 @@ impl<'a, 's> Verify<'a, 's> {
                 Ok(_) => {
                     let typing = self.funcs[func].as_typing();
                     let vars = &mut self.tenvs[self.current.fkey];
-                    let finst = ForeignInst::<Var>::new(vars, self.current.lambda);
+                    let finst = ForeignInst::<Var>::new(vars);
                     let forall = &typing.forall;
 
                     // Attach the impl blocks `forall` to the instantiation of this function is

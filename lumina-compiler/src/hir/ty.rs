@@ -253,7 +253,6 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
 
         let span = apath.span;
         let path = apath.path.as_slice();
-        let lambda = self.type_info.lambda();
 
         match path {
             ["_"] => match self.type_info.inference.as_mut() {
@@ -268,7 +267,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                     return T::from(Prim::Poison);
                 }
                 Some(vars) => {
-                    let ty = T::var(vars.var(span, lambda));
+                    let ty = T::var(vars.var(span));
                     return self.forbid_params(span, ty, params);
                 }
             },

@@ -25,12 +25,11 @@ use tenv::RecordVarField;
 pub use tenv::{IntConstraint, RecordAssignment, RecordError, RecordVar, TEnv, Var, VarInfo};
 
 mod iquery;
-pub use iquery::{Compatibility, ImplIndex};
+pub use iquery::{Compatibility, ConcreteType, ImplIndex};
 
 #[derive(new)]
 pub struct TypeSystem<'a, 's> {
     pub env: &'a mut TEnv<'s>,
-    pub lambda: Option<key::Lambda>,
     pub records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Type>)>,
     pub ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
     pub fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
@@ -155,13 +154,9 @@ pub struct ForeignInst<T> {
 }
 
 impl<T> ForeignInst<T> {
-    pub fn new<'a, 's>(
-        env: &'a mut TEnv<'s>,
-        lambda: Option<key::Lambda>,
-    ) -> ForeignInstBuilder<'a, 's> {
+    pub fn new<'a, 's>(env: &'a mut TEnv<'s>) -> ForeignInstBuilder<'a, 's> {
         ForeignInstBuilder {
             env,
-            lambda,
             inst: ForeignInst { self_: None, generics: Map::new(), pgenerics: Map::new() },
         }
     }
@@ -183,7 +178,6 @@ impl ForeignInst<Var> {
 }
 
 pub struct ForeignInstBuilder<'a, 's> {
-    lambda: Option<key::Lambda>,
     env: &'a mut TEnv<'s>,
 
     inst: ForeignInst<Var>,
@@ -191,7 +185,7 @@ pub struct ForeignInstBuilder<'a, 's> {
 
 impl<'a, 's> ForeignInstBuilder<'a, 's> {
     pub fn with_self(mut self, span: Span) -> Self {
-        self.inst.self_ = Some(self.env.var(span, self.lambda));
+        self.inst.self_ = Some(self.env.var(span));
         self
     }
 
@@ -202,14 +196,14 @@ impl<'a, 's> ForeignInstBuilder<'a, 's> {
 
     pub fn forall<T>(mut self, span: Span, forall: &Forall<'s, T>) -> Self {
         for k in forall.keys() {
-            debug_assert_eq!(k, self.inst.generics.push(self.env.var(span, self.lambda)));
+            debug_assert_eq!(k, self.inst.generics.push(self.env.var(span)));
         }
         self
     }
 
     pub fn parent<T>(mut self, span: Span, forall: &Forall<'s, T>) -> Self {
         for k in forall.keys() {
-            debug_assert_eq!(k, self.inst.pgenerics.push(self.env.var(span, self.lambda)));
+            debug_assert_eq!(k, self.inst.pgenerics.push(self.env.var(span)));
         }
         self
     }

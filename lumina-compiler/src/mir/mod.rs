@@ -158,7 +158,7 @@ pub struct Current {
     pub lambda: Option<key::Lambda>,
     pub fkey: M<key::Func>,
     pub binds: HashMap<key::Bind, Tr<IType>>,
-    pub insts: HashMap<Option<key::Lambda>, VecDeque<InstInfo>>,
+    pub insts: HashMap<Option<key::Lambda>, VecDeque<Tr<InstInfo>>>,
     pub type_dependent_lookup: VecDeque<M<ast::NFunc>>,
     pub casts: VecDeque<Tr<IType>>,
 }
@@ -172,14 +172,9 @@ struct RSolver<'a, 's> {
 }
 
 impl<'a, 's> RSolver<'a, 's> {
-    pub fn as_typesystem<'t>(
-        &'t mut self,
-        env: &'t mut TEnv<'s>,
-        lambda: Option<key::Lambda>,
-    ) -> TypeSystem<'t, 's> {
+    pub fn as_typesystem<'t>(&'t mut self, env: &'t mut TEnv<'s>) -> TypeSystem<'t, 's> {
         TypeSystem::new(
             env,
-            lambda,
             self.records,
             self.ftypes,
             self.fnames,
@@ -207,12 +202,22 @@ impl Current {
         }
     }
 
-    fn push_inst(&mut self, finst: InstInfo) {
-        self.insts.get_mut(&self.lambda).unwrap().push_back(finst);
+    fn push_inst(&mut self, span: Span, finst: InstInfo) {
+        self.insts
+            .get_mut(&self.lambda)
+            .unwrap()
+            .push_back(Tr::new(span, finst));
     }
 
     #[track_caller]
-    pub(crate) fn pop_inst(&mut self) -> InstInfo {
+    pub(crate) fn pop_inst(&mut self, span: Span) -> InstInfo {
+        let inst = self.pop_inst_without_assertion();
+        assert_eq!(inst.span, span);
+        inst.value
+    }
+
+    #[track_caller]
+    pub(crate) fn pop_inst_without_assertion(&mut self) -> Tr<InstInfo> {
         self.insts
             .get_mut(&self.lambda)
             .unwrap()

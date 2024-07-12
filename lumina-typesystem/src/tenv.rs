@@ -58,7 +58,6 @@ pub struct VarInfo {
     #[new(default)]
     pub(crate) assignment: Option<Tr<IType>>,
     pub(crate) span: Span,
-    pub(crate) is_from_lambda: Option<key::Lambda>,
     #[new(default)]
     pub(crate) int_constraint: Option<IntConstraint>,
     #[new(default)]
@@ -151,18 +150,13 @@ impl<'s> TEnv<'s> {
         })
     }
 
-    pub fn var(&mut self, span: Span, is_from_lambda: Option<key::Lambda>) -> Var {
-        self.vars.push(VarInfo::new(span, is_from_lambda))
+    pub fn var(&mut self, span: Span) -> Var {
+        trace!("spawning {}", self.vars.next_key());
+        self.vars.push(VarInfo::new(span))
     }
 
-    pub fn touch(&mut self, lambda: Option<key::Lambda>, var: Var) {
-        if lambda < self.vars[var].is_from_lambda {
-            self.vars[var].is_from_lambda = lambda;
-        }
-    }
-
-    pub fn int(&mut self, span: Span, is_from_lambda: Option<key::Lambda>) -> Var {
-        let var = self.var(span, is_from_lambda);
+    pub fn int(&mut self, span: Span) -> Var {
+        let var = self.var(span);
         self.vars[var].int_constraint = Some(IntConstraint::new(None));
         var
     }

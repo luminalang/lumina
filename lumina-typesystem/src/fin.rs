@@ -135,8 +135,8 @@ impl<'a, 'f, 's> Finalizer<'a, 'f, 's> {
         }
     }
 
-    pub fn forall(&mut self) -> (GenericKind, &mut Forall<'s, IType>) {
-        match self.ts.lambda {
+    pub fn forall(&mut self, lambda: Option<key::Lambda>) -> (GenericKind, &mut Forall<'s, IType>) {
+        match lambda {
             None => (GenericKind::Entity, &mut *self.forall),
             Some(lkey) => (GenericKind::Lambda(lkey), &mut self.lforalls[lkey]),
         }
@@ -161,10 +161,7 @@ impl<'a, 'f, 's> Finalizer<'a, 'f, 's> {
                 prim.into()
             }
             None if self.implicits => {
-                let (kind, forall) = match self.ts.env.vars[var].is_from_lambda {
-                    Some(lkey) => (GenericKind::Lambda(lkey), &mut self.lforalls[lkey]),
-                    None => (GenericKind::Entity, &mut *self.forall),
-                };
+                let (kind, forall) = (GenericKind::Entity, &mut *self.forall);
 
                 let (generic, _) = implicitly_declare_generic(forall);
 

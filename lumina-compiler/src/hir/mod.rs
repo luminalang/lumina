@@ -556,9 +556,9 @@ impl<'s> Typing<IType> {
     ) -> Self {
         Self {
             params: (0..params)
-                .map(|i| IType::Var(vars.var(span(i), is_from_lambda)).tr(span(i)))
+                .map(|i| IType::Var(vars.var(span(i))).tr(span(i)))
                 .collect(),
-            returns: IType::Var(vars.var(ret_span, is_from_lambda)).tr(ret_span),
+            returns: IType::Var(vars.var(ret_span)).tr(ret_span),
         }
     }
 }
@@ -686,15 +686,14 @@ fn lower_func_typing<'a, 's, T: Ty>(
             tlower.ty_spanned(typing.returns.as_ref()),
         ),
         None => {
-            let lambda = tinfo.lambda();
             let vars = tinfo.inference_mut().unwrap();
             (
                 header
                     .params
                     .iter()
-                    .map(|p| T::var(vars.var(p.span, lambda)).tr(p.span))
+                    .map(|p| T::var(vars.var(p.span)).tr(p.span))
                     .collect(),
-                T::var(vars.var(header.name.span, lambda)).tr(header.name.span),
+                T::var(vars.var(header.name.span)).tr(header.name.span),
             )
         }
     };

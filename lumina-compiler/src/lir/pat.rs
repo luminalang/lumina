@@ -192,8 +192,8 @@ impl<'f, 'a> PatLower<'f, 'a> {
         let on = self.f.ensure_no_scope_escape(on);
 
         let mut morph = to_morphization!(self.f, &mut self.f.current.tmap);
-        let ty = morph.apply_weak(ty);
         let listmt = morph.apply(&ty);
+        let list = morph.apply_weak(&ty);
         let (_, inner) = match &ty {
             Type::Defined(kind, params) | Type::List(kind, params) => {
                 let inner = params[0].clone();
@@ -204,6 +204,7 @@ impl<'f, 'a> PatLower<'f, 'a> {
         };
 
         let innermt = morph.apply(&inner);
+        let inner = morph.apply_weak(&inner);
 
         let mut tmap = TypeMap::new();
         [GenericKind::Entity, GenericKind::Parent].map(|kind| {
@@ -215,7 +216,7 @@ impl<'f, 'a> PatLower<'f, 'a> {
 
         let ikey = self
             .f
-            .find_implementation(self.f.info.listable, &[inner], &ty);
+            .find_implementation(self.f.info.listable, &[inner.clone()], &list);
 
         let split = FuncOrigin::Method(ikey, LISTABLE_SPLIT);
         let (split, ret) = self.f.call_to_mfunc(split, tmap);

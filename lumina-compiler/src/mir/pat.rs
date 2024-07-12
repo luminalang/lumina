@@ -10,10 +10,7 @@ impl<'a, 's> Verify<'a, 's> {
 
         match pat.value {
             hir::Pattern::Int(_, nvar) => IType::Var(*nvar),
-            hir::Pattern::Any => {
-                let lambda = self.lambda();
-                IType::Var(self.vars().var(pat.span, lambda))
-            }
+            hir::Pattern::Any => IType::Var(self.vars().var(pat.span)),
             hir::Pattern::Bind(bind, inner) => {
                 let ty = self.type_check_pat((&**inner).tr(pat.span));
                 self.new_bind_as(*bind, ty.clone());
@@ -26,8 +23,9 @@ impl<'a, 's> Verify<'a, 's> {
                     .collect::<Vec<_>>();
                 let (finst, ptypes, returns) = self.type_of_variant(pat.span, *type_, *var);
                 let instinfo = InstInfo::new(type_.module, finst, ptypes, returns.clone());
+                dbg!(&instinfo, &params);
                 self.type_check_and_emit_application(pat.span, &params, &instinfo.ptypes);
-                self.push_inst(instinfo);
+                self.current.push_inst(pat.span, instinfo);
                 returns.value
             }
             hir::Pattern::Record(var, ty, fields) => {

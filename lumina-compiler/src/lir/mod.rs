@@ -442,19 +442,22 @@ impl<'a> FuncLower<'a> {
 
         for (key, hty) in &inst.pgenerics {
             let ty = morph.apply(hty);
+            let weak = morph.apply_weak(hty);
             let generic = Generic::new(key, kinds[0]);
-            tmap.generics.push((generic, (hty.clone(), ty)));
+            tmap.generics.push((generic, (weak, ty)));
         }
 
         for (key, hty) in &inst.generics {
             let ty = morph.apply(hty);
+            let weak = morph.apply_weak(hty);
             let generic = Generic::new(key, kinds[1]);
-            tmap.generics.push((generic, (hty.clone(), ty)));
+            tmap.generics.push((generic, (weak, ty)));
         }
 
         if let Some(hty) = inst.self_.as_ref() {
             let ty = morph.apply(hty);
-            tmap.self_ = Some((hty.clone(), ty));
+            let weak = morph.apply_weak(hty);
+            tmap.self_ = Some((weak, ty));
         }
 
         tmap
@@ -552,9 +555,10 @@ impl<'a> FuncLower<'a> {
             }
             FuncOrigin::Method(imp, m) => {
                 let origin = FuncOrigin::Lambda(Box::new(origin.clone()), lambda);
-                todo!("new api for impls");
-                // let captures = &self.hir.entities[*imp].methods[*m].lambdas[lambda].captures;
-                // (origin, captures)
+                let fkey = self.mir.imethods[*imp][*m].unwrap();
+                let func = self.mir.funcs[imp.module.m(*fkey)].as_done();
+                let captures = &func.lcaptures[lambda];
+                (origin, captures)
             }
             FuncOrigin::Lambda(origin, _) => self.get_lambda_origin((**origin).clone(), lambda),
         }

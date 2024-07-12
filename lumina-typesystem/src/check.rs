@@ -105,11 +105,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
             }
 
             // TVar direct checks
-            (Ty::Var(gvar), Ty::Var(evar)) if gvar == evar => {
-                self.env.touch(self.lambda, *gvar);
-                self.env.touch(self.lambda, *evar);
-                ok
-            }
+            (Ty::Var(gvar), Ty::Var(evar)) if gvar == evar => ok,
             (Ty::InferringRecord(grvar), Ty::InferringRecord(ervar)) if grvar == ervar => ok,
             (Ty::Field(gvar, gfvar), Ty::Field(evar, efvar)) if evar == gvar && gfvar == efvar => {
                 ok
@@ -119,16 +115,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
             (Ty::Var(g), Ty::Var(e)) => {
                 let [gdata, edata] = self.env.vars.get_many_mut([*g, *e]).unwrap();
 
-                let is_from_lambda = Self::lambda_hint_from_lowest(&[
-                    gdata.is_from_lambda,
-                    edata.is_from_lambda,
-                    self.lambda,
-                ]);
-
-                gdata.is_from_lambda = is_from_lambda;
-                edata.is_from_lambda = is_from_lambda;
-
-                match (gdata.assignment.clone(), edata.assignment.clone()) {
+                match dbg!((gdata.assignment.clone(), edata.assignment.clone())) {
                     (None, None) => match (gdata.int_constraint, edata.int_constraint) {
                         (_, None) => self.assign_var(true, *e, got),
                         (None, _) => self.assign_var(false, *g, exp),
@@ -529,7 +516,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
                         let params = self.records[key]
                             .1
                             .keys()
-                            .map(|_| IType::Var(self.env.var(span, self.lambda)))
+                            .map(|_| IType::Var(self.env.var(span)))
                             .collect::<Vec<_>>();
                         self.env.records[var].assignment = RecordAssignment::Ok(key, params);
                     }
@@ -554,16 +541,14 @@ impl<'a, 's> TypeSystem<'a, 's> {
     }
 
     fn generate_closure(&mut self, span: Span, params: usize) -> (Vec<IType>, IType) {
-        let lambda = self.lambda;
         let ptypes = (0..params)
-            .map(|_| IType::Var(self.env.var(span, lambda)))
+            .map(|_| IType::Var(self.env.var(span)))
             .collect::<Vec<_>>();
-        let returns = IType::Var(self.env.var(span, lambda));
+        let returns = IType::Var(self.env.var(span));
         (ptypes, returns)
     }
 
     fn assign_var(&mut self, flip: bool, var: Var, other: Tr<&IType>) -> CheckResult<'s> {
-        self.env.touch(self.lambda, var);
         let vdata = &mut self.env.vars[var];
         let vspan = vdata.span;
 

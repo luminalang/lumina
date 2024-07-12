@@ -1,10 +1,10 @@
-use super::{CallTypes, ConcreteInst, ConcreteTyping, Expr, InstInfo, Lower, Verify};
+use super::{CallTypes, ConcreteInst, Expr, Lower};
 use crate::prelude::*;
 use derive_new::new;
 use ibig::IBig;
 use lumina_key::{entity_impl, keys};
 use lumina_parser::pat::Bound;
-use lumina_typesystem::{Bitsize, Container, Forall, ForeignInst, GenericKind, IType, Prim, Type};
+use lumina_typesystem::{Bitsize, Prim, Type};
 use lumina_util::Highlighting;
 use std::fmt;
 
@@ -189,7 +189,7 @@ impl<'p, 'l, 'a, 's> TreeBuilder<'p, 'l, 'a, 's> {
             }
             hir::Pattern::Constructor(sum, variant, params) => {
                 extend_untr(&mut self.queue, params);
-                let instinfo = self.l.current.pop_inst();
+                let instinfo = self.l.current.pop_inst_without_assertion();
                 let inst = self.l.fin_inst(&instinfo.inst);
                 let next = self.from_queue();
                 let variant_typings = self.l.vtypes[*sum]

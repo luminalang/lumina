@@ -186,7 +186,7 @@ impl<'a, 's> Verify<'a, 's> {
                 self.type_check_and_emit_application(span, &params, &instinfo.ptypes);
 
                 let ret = instinfo.ret.value.clone();
-                self.push_inst(instinfo);
+                self.current.push_inst(span, instinfo);
 
                 ret
             }
@@ -195,7 +195,7 @@ impl<'a, 's> Verify<'a, 's> {
                 self.type_check_and_emit_application(span, &params, &instinfo.ptypes);
 
                 let ret = instinfo.ret.value.clone();
-                self.push_inst(instinfo);
+                self.current.push_inst(span, instinfo);
 
                 ret
             }

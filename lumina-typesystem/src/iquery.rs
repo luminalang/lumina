@@ -22,7 +22,7 @@ type IBlanked = Vec<M<key::Impl>>;
 type IConcrete = HashMap<ConcreteType, Vec<M<key::Impl>>>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-enum ConcreteType {
+pub enum ConcreteType {
     Prim(Prim),
     Defined(M<key::TypeKind>),
     Func(FuncKind),
@@ -79,16 +79,16 @@ impl ImplIndex {
     pub fn query<T>(
         &self,
         trait_: M<key::Trait>,
-        impltor: &Type,
+        impltor: Option<ConcreteType>,
         mut for_each: impl FnMut(M<key::Impl>) -> Option<T>,
     ) -> Option<T> {
         let (blanked, concrete) = self.traits.get(&trait_)?;
 
-        match ConcreteType::try_from(impltor) {
-            Ok(c) => concrete
+        match impltor {
+            Some(c) => concrete
                 .get(&c)
                 .and_then(|these| these.iter().copied().find_map(&mut for_each)),
-            Err(_) => None,
+            None => None,
         }
         .or_else(|| blanked.iter().copied().find_map(for_each))
     }
@@ -144,7 +144,7 @@ where
         }
 
         impls
-            .query(con.trait_, got, |ikey| {
+            .query(con.trait_, got.try_into().ok(), |ikey| {
                 let comp = Compatibility::new(impls, forall.clone(), recurse);
                 (recurse)(comp, got, ikey, &con.params).then_some(())
             })

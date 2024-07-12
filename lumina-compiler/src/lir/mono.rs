@@ -69,7 +69,7 @@ pub struct MonomorphisedRecord {
     pub autoboxed: HashSet<key::RecordField>,
 
     // Used to detect circular structure that need indirection
-    original: Option<M<key::TypeKind>>,
+    pub original: Option<M<key::TypeKind>>,
 }
 
 impl MonomorphisedRecord {
@@ -471,32 +471,32 @@ impl<'a> Monomorphization<'a> {
         forall.keys().for_each(|key| {
             self.tmap.generics.push((
                 Generic::new(key, GenericKind::Entity),
-                (
-                    Type::Container(lumina_typesystem::Container::Tuple(vec![])),
-                    MonoType::Monomorphised(unit),
-                ),
+                (Type::tuple(), MonoType::Monomorphised(unit)),
             ));
         });
     }
 
     fn get_or_monomorphise(
         &mut self,
-        key: M<impl Into<key::TypeKind>>,
+        kind: M<impl Into<key::TypeKind>>,
         params: &[Type],
         gkind: GenericKind,
         or: impl FnOnce(&mut Self, TypeMap) -> MonomorphisedRecord,
     ) -> MonoTypeKey {
-        let key = key.map(Into::into);
-        let (mut tmap, params) = self.new_type_map_by(params, gkind);
+        let kind = kind.map(Into::into);
+        let (mut tmap, mparams) = self.new_type_map_by(params, gkind);
 
-        let key = (key, params);
+        let key = (kind, mparams);
 
         match self.mono.resolve.get(&key) {
             Some(key) => *key,
             None => {
                 let mk = self.mono.types.push(MonomorphisedRecord::placeholder());
                 self.mono.resolve.insert(key, mk);
-                tmap.self_ = Some((Type::Self_, MonoType::Monomorphised(mk)));
+                tmap.self_ = Some((
+                    Type::defined(kind, params.to_vec()),
+                    MonoType::Monomorphised(mk),
+                ));
                 let record = or(self, tmap);
                 assert_eq!(self.mono.types[mk].size, u32::MAX);
                 self.mono.types[mk] = record;
@@ -553,6 +553,9 @@ impl<'a> Monomorphization<'a> {
     //
     // Those arrays of bytes are then casted into the appropriate types dynamically in
     // the switch onto the tag.
+    //
+    //  (^ the above is planned but not currently true. For convenience sake we just always heap
+    //  allocate sumtype data payloads so that we can use pointer offsets. Which is terrible)
     pub fn sum(&mut self, key: M<key::Sum>, params: &[Type]) -> MonoTypeKey {
         self.get_or_monomorphise(key, params, GenericKind::Entity, |this, mut tmap| {
             let mut morph = fork!(this, &mut tmap);
@@ -585,6 +588,7 @@ impl<'a> Monomorphization<'a> {
 
     pub fn trait_object(&mut self, trait_: M<key::Trait>, params: &[Type]) -> MonoTypeKey {
         let mparams = self.applys(params);
+        let params: Vec<_> = self.applys_weak(params);
         let key = (trait_.map(key::TypeKind::Trait), mparams);
 
         if let Some(&key) = self.mono.resolve.get(&key) {
@@ -617,10 +621,7 @@ impl<'a> Monomorphization<'a> {
             // Create a tmap to monomorphise the generics from the `trait` decl when creating fnpointers
             let mut tmap = TypeMap::new();
             tmap.self_ = Some((Type::u8_ptr(), MonoType::u8_pointer()));
-            for (i, (ty, weak)) in key.1.iter().zip(params).enumerate() {
-                let generic = Generic::new(key::Generic(i as u32), GenericKind::Parent);
-                tmap.generics.push((generic, (weak.clone(), ty.clone())));
-            }
+            tmap.extend(GenericKind::Parent, params.into_iter().zip(key.1));
 
             methods
                 .values()
@@ -729,13 +730,15 @@ impl<'a> Monomorphization<'a> {
     fn new_type_map_by(&mut self, params: &[Type], gkind: GenericKind) -> (TypeMap, Vec<MonoType>) {
         let mut map = TypeMap::new();
         let mut elems = Vec::with_capacity(params.len());
-        for (i, ty) in params.iter().cloned().enumerate() {
-            let p = self.apply(&ty);
-            let generic = key::Generic(i as u32);
-            map.generics
-                .push((Generic::new(generic, gkind), (ty, p.clone())));
-            elems.push(p);
-        }
+        map.extend(
+            gkind,
+            params.iter().map(|ty| {
+                let mono = self.apply(ty);
+                let ty = self.apply_weak(ty);
+                elems.push(mono.clone());
+                (ty, mono)
+            }),
+        );
         (map, elems)
     }
 
@@ -744,6 +747,13 @@ impl<'a> Monomorphization<'a> {
         tys: impl IntoIterator<Item = &'t Type>,
     ) -> F {
         tys.into_iter().map(|ty| self.apply(ty)).collect::<F>()
+    }
+
+    pub fn applys_weak<'t, F: FromIterator<Type>>(
+        &mut self,
+        tys: impl IntoIterator<Item = &'t Type>,
+    ) -> F {
+        tys.into_iter().map(|ty| self.apply_weak(ty)).collect::<F>()
     }
 
     pub fn apply_typing(&mut self, origin: FuncOrigin, typing: &mir::ConcreteTyping) -> MonoTyping {
@@ -766,6 +776,13 @@ impl TypeMap {
     pub fn new() -> Self {
         Self { generics: Vec::new(), self_: None }
     }
+
+    pub fn extend(&mut self, kind: GenericKind, tys: impl IntoIterator<Item = (Type, MonoType)>) {
+        for (i, ty) in tys.into_iter().enumerate() {
+            let generic = Generic::new(key::Generic(i as u32), kind);
+            self.generics.push((generic, ty));
+        }
+    }
 }
 
 impl fmt::Debug for MonoType {
@@ -786,6 +803,29 @@ impl fmt::Debug for MonoType {
             MonoType::Float => write!(f, "f64"),
             MonoType::Unreachable => write!(f, "!"),
             MonoType::Monomorphised(key) => write!(f, "{key}"),
+        }
+    }
+}
+
+use lumina_typesystem as ts;
+
+impl TryInto<ts::ConcreteType> for MonoType {
+    type Error = ();
+
+    fn try_into(self) -> Result<ts::ConcreteType, Self::Error> {
+        // TODO: `bool` isn't the same thing as `u8` in contexts like this
+        //
+        // we need to re-introduce bool
+        match self {
+            MonoType::Int(bit) => Ok(ts::ConcreteType::Prim(Prim::Int(true, bit))),
+            MonoType::UInt(bit) => Ok(ts::ConcreteType::Prim(Prim::Int(false, bit))),
+            MonoType::Pointer(_) => Ok(ts::ConcreteType::Pointer),
+            MonoType::FnPointer(_, _) => Ok(ts::ConcreteType::Func(FuncKind::FnPointer)),
+            MonoType::Float => Ok(ts::ConcreteType::Prim(Prim::Float)),
+            MonoType::Monomorphised(_) => todo!("ALSO: we ened to be able to check for tuple ehre"),
+            MonoType::SumDataCast { largest } => todo!(),
+            MonoType::Array(_, _) => todo!(),
+            MonoType::Unreachable => todo!(),
         }
     }
 }

@@ -54,11 +54,7 @@ impl<'a, 's> PatLower<'a, 's> {
             }
             parser::Pattern::Int(bound) => {
                 let lambda = self.type_info.lambda();
-                let var = self
-                    .type_info
-                    .inference_mut()
-                    .unwrap()
-                    .int(pat.span, lambda);
+                let var = self.type_info.inference_mut().unwrap().int(pat.span);
                 Pattern::Int(*bound, var)
             }
             parser::Pattern::Float(_) => todo!(),
@@ -101,7 +97,7 @@ impl<'a, 's> PatLower<'a, 's> {
     fn list(&mut self, span: Span, elems: &[Tr<parser::Pattern<'s>>]) -> Pattern<'s> {
         let lambda = self.type_info.lambda();
         let inf = self.type_info.inference_mut().unwrap();
-        let ivar = inf.var(elems.get(0).map(|p| p.span).unwrap_or(span), lambda);
+        let ivar = inf.var(elems.get(0).map(|p| p.span).unwrap_or(span));
 
         if elems.is_empty() {
             return Pattern::Nil(ivar);

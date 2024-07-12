@@ -81,7 +81,7 @@ impl<'a, 's> Lower<'a, 's> {
     where
         F: FnOnce(Finalizer<'_, '_, 's>) -> (T, Vec<lumina_typesystem::FinError<'s>>),
     {
-        let system = self.rsolver.as_typesystem(self.env, self.current.lambda);
+        let system = self.rsolver.as_typesystem(self.env);
         let fin = Finalizer::new(system, self.forall, self.lforalls, self.implicits);
         let (value, errors) = and_then(fin);
         self.errors.extend(errors.into_iter().map(FinError::TS));
@@ -159,22 +159,19 @@ impl<'a, 's> Lower<'a, 's> {
     ) -> ConcreteTyping {
         assert_eq!(lambda, self.current.lambda);
 
-        self.implicits = true;
-        let typing = self.finalizer(|mut fin| {
+        self.finalizer(|mut fin| {
             (
                 ConcreteTyping {
                     params: typing.params.values().map(|ty| fin.apply(&*ty)).collect(),
                     returns: fin.apply(&typing.returns),
                     forall: {
-                        let cons = fin.forall().1.clone();
+                        let cons = fin.forall(lambda).1.clone();
                         fin.lower_constraints_of(&cons, |_| "_")
                     },
                 },
                 fin.errors,
             )
-        });
-        self.implicits = false;
-        typing
+        })
     }
 
     // TODO: remove wrapper

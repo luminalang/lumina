@@ -98,7 +98,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         match expr.value {
             parser::Expr::Lit(parser::Literal::Int(neg, n)) => {
                 let lambda = self.type_info.lambda();
-                let var = self.vars().int(expr.span, lambda);
+                let var = self.vars().int(expr.span);
                 self.vars().hint_min_int(var, *neg, *n);
 
                 Expr::Lit(Literal::Int(*neg, *n, var))
@@ -154,10 +154,9 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             parser::Expr::List(elems) => {
                 let elems = self.exprs(elems);
                 let lambda = self.type_info.lambda();
-                let ivar = self.vars().var(
-                    elems.get(0).map(|elem| elem.span).unwrap_or(expr.span),
-                    lambda,
-                );
+                let ivar = self
+                    .vars()
+                    .var(elems.get(0).map(|elem| elem.span).unwrap_or(expr.span));
                 Expr::List(elems, ivar)
             }
             parser::Expr::Tuple(elems) => {
@@ -314,10 +313,8 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         typing: Option<parser::func::Typing<'s>>,
         body: Tr<&parser::Expr<'s>>,
     ) -> key::Lambda {
-        let mut tvar = |span| {
-            let lambda = Some(self.lambdas.next_key());
-            IType::Var(self.type_info.inference_mut().unwrap().var(span, lambda)).tr(span)
-        };
+        let mut tvar =
+            |span| IType::Var(self.type_info.inference_mut().unwrap().var(span)).tr(span);
 
         let forall = Forall::new();
 

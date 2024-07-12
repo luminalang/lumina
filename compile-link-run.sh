@@ -28,7 +28,7 @@ if [[ $platform == *"linux"* ]]; then
     nasm -f elf64 -o libs/$target.o assembly/$target.asm
 fi
 
-cargo run -- build --target $target -o app.o $src_dir \
+cargo run -- build --epanic --target $target -o app.o $src_dir \
 
 if [[ $platform == "linux-musl" ]]; then
 /usr/bin/x86_64-linux-musl-gcc -z noexecstack -flto -static -no-pie -o a.out \
@@ -49,5 +49,5 @@ set +e
 
 
 
-RUST_LOG=trace ./a.out
+./a.out
 echo $?

@@ -467,7 +467,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             VField::Struct(fields) => fields.values().fold(offset, |offset, field| {
                 self.write_field_to_ptr(ptr, offset, field)
             }),
-            VField::SumPayload { largest, ptr } => todo!(),
+            VField::SumPayload { ptr: payload, .. } => {
+                let size = self.f.type_of_value(*payload);
+                self.ins().store(MemFlags::new(), *payload, ptr, offset);
+                offset + size.bytes() as i32
+            }
             VField::ZST => offset,
         }
     }

@@ -60,13 +60,13 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Expr::Call(call, tanot, params) => match call {
                 hir::Callable::Func(nfunc) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst();
+                    let instinfo = self.current.pop_inst(expr.span);
                     let (inst, _) = (&mut *self).fin_typing(&instinfo);
                     Expr::CallFunc(nfunc.module.m(nfunc.key), inst, params)
                 }
                 hir::Callable::Lambda(lambda) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst();
+                    let instinfo = self.current.pop_inst(expr.span);
                     let (inst, _) = self.fin_typing(&instinfo);
                     Expr::CallLambda(*lambda, inst, params)
                 }
@@ -85,7 +85,7 @@ impl<'a, 's> Lower<'a, 's> {
                 }
                 hir::Callable::TypeDependentLookup(name) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst();
+                    let instinfo = self.current.pop_inst(expr.span);
                     let inst = self.fin_inst(&instinfo.inst);
                     let nfunc = self.current.type_dependent_lookup.pop_front().unwrap();
                     Expr::CallFunc(nfunc, inst, params)
@@ -118,18 +118,18 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Expr::Pass(call, _, params) => match call {
                 hir::Callable::Func(nfunc) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst();
+                    let instinfo = self.current.pop_inst(expr.span);
                     let (inst, _) = (&mut *self).fin_typing(&instinfo);
                     Expr::PartialFunc(nfunc.module.m(nfunc.key), inst, params)
                 }
                 hir::Callable::Lambda(lambda) if params.is_empty() => {
-                    let instinfo = self.current.pop_inst();
+                    let instinfo = self.current.pop_inst(expr.span);
                     let inst = (&mut *self).fin_inst(&instinfo.inst);
                     Expr::YieldLambda(*lambda, inst)
                 }
                 hir::Callable::Lambda(lambda) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst();
+                    let instinfo = self.current.pop_inst(expr.span);
                     let (inst, _) = (&mut *self).fin_typing(&instinfo);
                     Expr::PartialLambda(*lambda, inst, params)
                 }

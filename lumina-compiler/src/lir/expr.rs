@@ -208,27 +208,27 @@ impl<'a> FuncLower<'a> {
                 let expr = self.expr_to_value(expr);
                 let impltor = self.type_of_value(expr);
 
-                // TODO: aren't we meant to use the morphization on trait_params first then
-                // downgrade for this resolve?
-                //
-                // The weak types could possibly be ambigious while monomorphised types aren't.
-                let impl_ = self.find_implementation(*trait_, trait_params, weak_impltor);
-
                 let mut morph = to_morphization!(self, &mut self.current.tmap);
+                let weak_impltor = morph.apply_weak(weak_impltor);
+                let weak_trait_params = morph.applys_weak::<Vec<_>>(trait_params);
+                let trait_params = morph.applys::<Vec<_>>(trait_params);
+
+                let impl_ = self.find_implementation(*trait_, &weak_trait_params, &weak_impltor);
+
                 let mut tmap = TypeMap::new();
-                tmap.self_ = Some((weak_impltor.clone(), impltor.clone()));
-                for (i, ty) in trait_params.iter().enumerate() {
-                    let mty = morph.apply(ty);
-                    let key = key::Generic(i as u32);
-                    let generic = Generic::new(key, GenericKind::Parent);
-                    tmap.generics.push((generic, (ty.clone(), mty)));
-                }
+                tmap.self_ = Some((weak_impltor, impltor.clone()));
+                tmap.extend(
+                    GenericKind::Parent,
+                    weak_trait_params.into_iter().zip(trait_params),
+                );
 
                 let methods = self.mir.imethods[impl_]
                     .keys()
                     .map(|method| match self.mir.imethods[impl_][method] {
                         None => todo!("default method instantiation"),
                         Some(func) => {
+                            // If the methods have generics then this isn't trait-safe therefore
+                            // this would've already been stopped.
                             let mut tmap = tmap.clone();
                             let mut morph = to_morphization!(self, &mut tmap);
                             let typing = self.mir.funcs[func].as_typing();
@@ -378,6 +378,8 @@ impl<'a> FuncLower<'a> {
     }
 
     fn callable_to_mfunc(&mut self, func: M<ast::NFunc>, inst: &ConcreteInst) -> MonoFunc {
+        todo!("what's the difference between this function and `resolve_nfunc`? this seems overcomplicated");
+        // Think we just accidentally wrote about the same function twice -.-
         match func.value {
             ast::NFunc::Key(key) => {
                 let func = FuncOrigin::Defined(func.module.m(key));
@@ -392,20 +394,19 @@ impl<'a> FuncLower<'a> {
 
                 let self_ = inst.self_.as_ref().unwrap();
 
-                let weak_impltor = morph.apply_weak(self_);
+                todo!();
+                // let trtp = inst
+                //     .pgenerics
+                //     .values()
+                //     .map(|ty| morph.apply_weak(ty))
+                //     .collect::<Vec<_>>();
 
-                let trtp = inst
-                    .pgenerics
-                    .values()
-                    .map(|ty| morph.apply_weak(ty))
-                    .collect::<Vec<_>>();
+                // let ikey = self.find_implementation(trait_, &trtp, &weak_impltor);
 
-                let ikey = self.find_implementation(trait_, &trtp, &weak_impltor);
+                // let forigin = FuncOrigin::Method(ikey, method);
+                // let tmap = self.morphise_inst([GenericKind::Parent, GenericKind::Entity], inst);
 
-                let forigin = FuncOrigin::Method(ikey, method);
-                let tmap = self.morphise_inst([GenericKind::Parent, GenericKind::Entity], inst);
-
-                self.call_to_mfunc(forigin, tmap).0
+                // self.call_to_mfunc(forigin, tmap).0
             }
             ast::NFunc::SumVar(sum, var) => {
                 // let params = self.params_to_values(params);
@@ -447,8 +448,17 @@ impl<'a> FuncLower<'a> {
             "conflicting implementations is not fully implemented. Weird auto-selections may occur"
         );
 
+        let concrete_impltor = weak_impltor.try_into().ok();
+
+        info!(
+            "attempting to find `impl {trait_} {} for {}` in {}",
+            trtp.iter().format(" "),
+            weak_impltor,
+            self.current.origin.name(self.mir)
+        );
+
         self.iquery
-            .query(trait_, &weak_impltor, |imp| {
+            .query(trait_, concrete_impltor, |imp| {
                 let iforall = &self.mir.impls[imp];
                 let (_, trait_params) = &self.mir.itraits[imp];
                 let impltor = &self.mir.impltors[imp];

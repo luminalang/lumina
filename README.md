@@ -2,11 +2,9 @@
 
 # Running
 
-Currently there's two native targets with basic support. Glibc and statically linked Linux with raw syscalls. The default as glibc. 
+Currently there's two native targets with basic support. Glibc and statically linked Linux with raw syscalls. The default is glibc. 
 
-See `compile-then-link-to-libc-and-run.sh` for help. 
-
-To use the syscall backend, you need to assemble the appropriate file(s) in `assembly/` to object files with the same name. `nasm -o x86_64-linux-syscall.o x86_64-linux-syscall.asm`
+See `compile-link-run.sh` for help. 
 
 # Logging
 
@@ -25,7 +23,8 @@ Lumina's own ABI is currently a transparent representation of the data given. So
 
 ### Known remaining major tasks for public release
 
- - [ ] Garbage Collector
+ - [ ] Garbage Collector (We now do allocation through the GC. But; we don't actually collect. For that we need a stronger runtime)
+ - [ ] Make `pub` actually have an effect. Our resolver has a system for visibility but we aren't using it. 
  - [ ] Basic guide/showcase
  - [ ] Replace all remaining `todo!("ET: ");`s with proper error messages
  - [ ] Give the compiler the ability to detect and use system linkers

@@ -16,6 +16,7 @@ lto = true
 
 [dependencies]
 mmtk = "0.26.0"
+log = "*"
 
 [features]
 default = []

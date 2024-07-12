@@ -4,6 +4,7 @@
 use crate::mmtk;
 use crate::DummyVM;
 use crate::GC;
+use log::info;
 use mmtk::memory_manager;
 use mmtk::scheduler::GCWorker;
 use mmtk::util::opaque_pointer::*;
@@ -86,6 +87,8 @@ pub extern "C" fn mmtk_alloc(
     offset: usize,
     mut semantics: AllocationSemantics,
 ) -> Address {
+    info!("allocating size={size} align={align} offset={offset}");
+
     // This just demonstrates that the binding should check against `max_non_los_default_alloc_bytes` to allocate large objects.
     // In pratice, a binding may want to lift this code to somewhere in the runtime where the allocated bytes is constant so
     // they can statically know if a normal allocation or a large object allocation is needed.

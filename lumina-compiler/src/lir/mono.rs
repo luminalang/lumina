@@ -806,26 +806,3 @@ impl fmt::Debug for MonoType {
         }
     }
 }
-
-use lumina_typesystem as ts;
-
-impl TryInto<ts::ConcreteType> for MonoType {
-    type Error = ();
-
-    fn try_into(self) -> Result<ts::ConcreteType, Self::Error> {
-        // TODO: `bool` isn't the same thing as `u8` in contexts like this
-        //
-        // we need to re-introduce bool
-        match self {
-            MonoType::Int(bit) => Ok(ts::ConcreteType::Prim(Prim::Int(true, bit))),
-            MonoType::UInt(bit) => Ok(ts::ConcreteType::Prim(Prim::Int(false, bit))),
-            MonoType::Pointer(_) => Ok(ts::ConcreteType::Pointer),
-            MonoType::FnPointer(_, _) => Ok(ts::ConcreteType::Func(FuncKind::FnPointer)),
-            MonoType::Float => Ok(ts::ConcreteType::Prim(Prim::Float)),
-            MonoType::Monomorphised(_) => todo!("ALSO: we ened to be able to check for tuple ehre"),
-            MonoType::SumDataCast { largest } => todo!(),
-            MonoType::Array(_, _) => todo!(),
-            MonoType::Unreachable => todo!(),
-        }
-    }
-}

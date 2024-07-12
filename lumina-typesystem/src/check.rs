@@ -115,7 +115,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
             (Ty::Var(g), Ty::Var(e)) => {
                 let [gdata, edata] = self.env.vars.get_many_mut([*g, *e]).unwrap();
 
-                match dbg!((gdata.assignment.clone(), edata.assignment.clone())) {
+                match (gdata.assignment.clone(), edata.assignment.clone()) {
                     (None, None) => match (gdata.int_constraint, edata.int_constraint) {
                         (_, None) => self.assign_var(true, *e, got),
                         (None, _) => self.assign_var(false, *g, exp),

@@ -7,11 +7,11 @@ edition = "2021"
 crate-type = ["staticlib"]
 
 [profile.dev]
-panic='abort'
+# panic='abort'
 lto = true
 
 [profile.release]
-panic='abort'
+# panic='abort'
 lto = true
 
 [dependencies]

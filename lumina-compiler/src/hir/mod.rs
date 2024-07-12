@@ -33,7 +33,7 @@ pub use pat::Pattern;
 mod scope;
 mod ty;
 pub use ty::TypeAnnotation;
-use ty::{Ty, TypeEnvInfo};
+use ty::{SelfHandler, Ty, TypeEnvInfo};
 
 pub struct HIR<'s> {
     pub funcs: ModMap<key::Func, FuncDefKind<'s>>,
@@ -269,7 +269,7 @@ fn lower_func<'a, 's>(
             let to_kind = |k| FuncDefKind::TraitDefaultMethod(*tr, k);
             let mut tinfo = tinfo.inference(TEnv::new());
             tinfo.enter_type_or_impl_or_method(tforalls[*tr].1.clone(), GenericKind::Parent);
-            tinfo.allow_self = true;
+            tinfo.self_handler = SelfHandler::Direct;
             ExprLower::new(module, ast, &mut tinfo, &body.where_binds)
                 .lower_func(&header, &body, string, to_kind)
         }
@@ -280,12 +280,12 @@ fn lower_func<'a, 's>(
             env.set_self(self_);
             let mut tinfo = tinfo.inference(env);
             tinfo.enter_type_or_impl_or_method(iforalls[*imp].clone(), GenericKind::Parent);
-            tinfo.allow_self = true;
+            tinfo.self_handler = SelfHandler::Direct;
             ExprLower::new(module, ast, &mut tinfo, &body.where_binds)
                 .lower_func(&header, &body, string, to_kind)
         }
         ast::FuncBody::TraitMethod(None, trait_) => {
-            tinfo.allow_self = true;
+            tinfo.self_handler = SelfHandler::Direct;
             let tforall = tforalls[*trait_].clone().1;
             tinfo.enter_type_or_impl_or_method(tforall, GenericKind::Parent);
             tinfo.enter_type_or_impl_or_method(Forall::new(), GenericKind::Entity);
@@ -308,9 +308,12 @@ fn lower_extern_func<'s>(
     typing
 }
 
-fn tydef_type_env<'s>(generics: &Map<key::Generic, &'s str>) -> TypeEnvInfo<'s> {
+fn tydef_type_env<'s, K: Into<key::TypeKind>>(
+    kind: M<K>,
+    generics: &Map<key::Generic, &'s str>,
+) -> TypeEnvInfo<'s> {
     let mut tinfo = TypeEnvInfo::new(false);
-    tinfo.allow_self = true;
+    tinfo.self_handler = SelfHandler::Substituted(kind.map(Into::into));
     let forall = generics
         .values()
         .map(|&name| GenericData::new(name))
@@ -340,7 +343,8 @@ fn lower_sum<'s>(
 
     let tlangs = lower_langitems(ast, sum.module, &ty.attributes.shared.lang_items);
 
-    let mut tinfo = tydef_type_env(&ty.header.type_params).list(from_langs("list", &tlangs, lang));
+    let mut tinfo =
+        tydef_type_env(sum, &ty.header.type_params).list(from_langs("list", &tlangs, lang));
 
     let mut tlower = ty::TypeLower::new(sum.module, ast, &mut tinfo);
 
@@ -367,7 +371,8 @@ fn lower_record<'s>(
 
     let tlangs = lower_langitems(ast, rec.module, &ty.attributes.shared.lang_items);
 
-    let mut tinfo = tydef_type_env(&ty.header.type_params).list(from_langs("list", &tlangs, lang));
+    let mut tinfo =
+        tydef_type_env(rec, &ty.header.type_params).list(from_langs("list", &tlangs, lang));
 
     let mut tlower = ty::TypeLower::new(rec.module, ast, &mut tinfo);
 
@@ -406,7 +411,7 @@ fn lower_trait<'s>(
         .map(|&name| GenericData::new(name))
         .collect();
     tinfo.enter_type_or_impl_or_method(forall, GenericKind::Parent);
-    tinfo.allow_self = true;
+    tinfo.self_handler = SelfHandler::Direct;
 
     tinfo.declare_generics = true;
 
@@ -738,7 +743,7 @@ fn lower_impl<'a, 's>(
         _ => panic!("ET: not a trait"),
     };
 
-    tinfo.allow_self = true;
+    tinfo.self_handler = SelfHandler::Direct;
     let mut tlower = ty::TypeLower::new(module, ast, &mut tinfo);
 
     tlower.type_info.declare_generics = false;

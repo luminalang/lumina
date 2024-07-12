@@ -55,7 +55,7 @@ pub struct ReadOnlyBytes(pub Box<[u8]>);
 
 pub fn run<'a, 'h, 's>(
     pinfo: ProjectInfo,
-    mut hir: hir::HIR<'s>,
+    hir: hir::HIR<'s>,
     mut tenvs: ModMap<key::Func, TEnv<'s>>,
     iquery: &mut ImplIndex,
 ) -> (MIR, bool) {

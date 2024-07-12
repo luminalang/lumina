@@ -21,9 +21,14 @@ pub struct TypeEnvInfo<'s> {
 
     pub declare_generics: bool,
     pub list: Option<M<key::TypeKind>>,
-    pub allow_self: bool,
-    pub self_params: usize,
+    pub self_handler: SelfHandler,
     inference: Option<TEnv<'s>>,
+}
+
+pub enum SelfHandler {
+    Direct,
+    Substituted(M<key::TypeKind>),
+    Disallowed,
 }
 
 impl<'s> TypeEnvInfo<'s> {
@@ -31,10 +36,9 @@ impl<'s> TypeEnvInfo<'s> {
         Self {
             list: None,
             declare_generics,
-            allow_self: false,
+            self_handler: SelfHandler::Disallowed,
             iforalls: SmallVec::new(),
             cforalls: SmallVec::new(),
-            self_params: usize::MAX,
             inference: None,
         }
     }
@@ -285,10 +289,18 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
             ["float"] => {
                 return self.forbid_params(span, T::from(Prim::Float), params);
             }
-            ["self"] => {
-                if self.type_info.allow_self {
-                    return T::self_();
-                } else {
+            ["self"] => match self.type_info.self_handler {
+                SelfHandler::Substituted(kind) => {
+                    let (forall, gkind) = &self.type_info.cforalls.last().unwrap();
+                    assert_eq!(*gkind, GenericKind::Entity);
+                    let params = forall
+                        .keys()
+                        .map(|generic| T::generic(Generic::new(generic, *gkind)))
+                        .collect();
+                    return T::defined(kind, params);
+                }
+                SelfHandler::Direct => return T::self_(),
+                SelfHandler::Disallowed => {
                     self.ast
                         .sources
                         .error("invalid type")
@@ -301,7 +313,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
 
                     return T::from(Prim::Poison);
                 }
-            }
+            },
             [name] if name.starts_with('u') => {
                 if let Ok(n) = name[1..].parse::<u8>() {
                     let int = T::from(Prim::Int(false, Bitsize(n)));

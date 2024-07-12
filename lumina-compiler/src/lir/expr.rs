@@ -287,11 +287,15 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    pub fn heap_alloc(&mut self, value: lir::Value, ty: MonoType) -> V {
+    pub fn heap_alloc(&mut self, value: lir::Value, ty: MonoType) -> Value {
         let size = self.lir.types.types.size_of(&ty);
-        let ptr = self.current.ssa.alloc(size, ty);
-        self.current.ssa.write(ptr.value(), value);
-        ptr
+        if size == 0 {
+            Value::UInt(0, Bitsize::default()) // TODO: target-dependent pointer size
+        } else {
+            let ptr = self.current.ssa.alloc(size, ty);
+            self.current.ssa.write(ptr.value(), value);
+            Value::V(ptr)
+        }
     }
 
     fn call_nfunc(
@@ -489,6 +493,8 @@ impl<'a> FuncLower<'a> {
         );
 
         let fdef = func.get_root_fdef(self.mir);
+
+        println!("{tmap:#?}\nFOR: {}", &fdef.typing);
 
         trace!(
             "monomorphising typing of call fn {func} as {}\n  with mapping {tmap:?}",

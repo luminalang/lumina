@@ -22,10 +22,7 @@ impl<'a> FuncLower<'a> {
 
         self.current
             .ssa
-            .construct(
-                vec![data_ptr.value(), vtable_ptr.into()],
-                vtable.object.into(),
-            )
+            .construct(vec![data_ptr, vtable_ptr.into()], vtable.object.into())
             .value()
     }
 

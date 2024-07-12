@@ -455,6 +455,33 @@ impl<'a> FuncLower<'a> {
         if let Some(hty) = inst.self_.as_ref() {
             let ty = morph.apply(hty);
             let weak = morph.apply_weak(hty);
+
+            // HACK: if finding the implementation of `self` lands us at one with generics then
+            // we need to add those generics now since they weren't known during the MIR lower.
+            match &weak {
+                Type::Defined(_, params) | Type::List(_, params) => {
+                    for (i, p) in params.iter().enumerate() {
+                        let key = key::Generic(i as u32);
+                        let kind = GenericKind::Parent;
+
+                        let already_defined = tmap
+                            .generics
+                            .iter()
+                            .any(|(gen, _)| gen.kind == kind && gen.key == key);
+
+                        if !already_defined {
+                            // TODO: Is it valid to just throw it *back* into monomorphisation?
+                            //
+                            // It shouldn't contain any generics so I guess so
+                            let mty = morph.apply(p);
+                            tmap.generics
+                                .push((Generic::new(key, kind), (p.clone(), mty)));
+                        }
+                    }
+                }
+                _ => {}
+            }
+
             tmap.self_ = Some((weak, ty));
         }
 

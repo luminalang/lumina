@@ -108,7 +108,11 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             parser::Expr::Call(apath, params, _) => {
                 self.callable(apath.as_ref(), params, Expr::Call)
             }
-            parser::Expr::Lambda(_, _, _, _) => todo!(),
+            parser::Expr::Lambda(patterns, params, body, _seal) => {
+                let lambda = self.lambda(patterns, None, (**body).as_ref());
+                let params = self.exprs(params);
+                Expr::Call(lambda.into(), TypeAnnotation::new(), params)
+            }
 
             // (f 0) 1
             // -------

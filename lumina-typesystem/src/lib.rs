@@ -4,6 +4,7 @@ use key::{Map, ModMap, M};
 use lumina_key as key;
 use lumina_util::{Span, Tr};
 use std::collections::HashMap;
+use tracing::error;
 
 mod bitsize;
 pub use bitsize::Bitsize;
@@ -112,12 +113,6 @@ impl<T> Container<T> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct DoesNotHaveField<'s> {
-    span: Span,
-    field: Tr<&'s str>,
-}
-
 type FInst = ForeignInst<Var>;
 
 impl<'a, 's> TypeSystem<'a, 's> {
@@ -213,7 +208,7 @@ impl<'a, 's> ForeignInstBuilder<'a, 's> {
             let var = self.inst.generics[k];
             for con in &forall[k].trait_constraints {
                 let con = map_con(con, |t| self.inst.apply(t));
-                self.env.vars[var].traits.push(con);
+                self.env.constraint_checks.push((var, con));
             }
         }
         self
@@ -224,7 +219,7 @@ impl<'a, 's> ForeignInstBuilder<'a, 's> {
             let var = self.inst.generics[k];
             for con in &forall[k].trait_constraints {
                 let con = map_con(con, |t| self.inst.applyi(t));
-                self.env.vars[var].traits.push(con);
+                self.env.constraint_checks.push((var, con));
             }
         }
         self
@@ -235,7 +230,7 @@ impl<'a, 's> ForeignInstBuilder<'a, 's> {
             let var = self.inst.pgenerics[k];
             for con in &forall[k].trait_constraints {
                 let con = map_con(con, |t| self.inst.apply(t));
-                self.env.vars[var].traits.push(con);
+                self.env.constraint_checks.push((var, con));
             }
         }
         self

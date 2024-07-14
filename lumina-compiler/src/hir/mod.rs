@@ -18,7 +18,9 @@ use crate::ProjectInfo;
 use ast::{Mod, AST};
 use derive_new::new;
 use lumina_parser as parser;
-use lumina_typesystem::{Forall, GenericData, GenericKind, IType, ImplIndex, Prim, TEnv, Type};
+use lumina_typesystem::{
+    Constraint, Forall, GenericData, GenericKind, IType, ImplIndex, Prim, TEnv, Type,
+};
 use lumina_util::Highlighting;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -576,7 +578,14 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         string: Option<M<key::TypeKind>>,
         to_kind: impl FnOnce(FuncDef<'s>) -> FuncDefKind<'s>,
     ) -> (FuncDefKind<'s>, TEnv<'s>) {
-        self.type_info.enter_function(Forall::new());
+        let forall = generics_from_con(&header.when);
+        self.type_info.enter_function(forall);
+
+        include_constraints(
+            (self.ast, self.module, self.type_info),
+            &header.when,
+            |tinfo, key, cons| tinfo.iforalls.last_mut().unwrap().0[key].trait_constraints = cons,
+        );
 
         let typing = lower_func_typing(self.ast, self.module, &header, self.type_info);
         info!("typing lowered to: {typing}");
@@ -585,12 +594,12 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         let (params, expr) = self.lower_func_body(header, body);
 
-        let forall = RefCell::new(self.type_info.leave_function());
-        info!("forall lowered to: {}", forall.borrow().keys().format(" "));
+        let forall = self.type_info.leave_function();
+        info!("forall lowered to: {}", forall.keys().format(" "));
 
         let list = self.type_info.list;
 
-        let mut func = FuncDef::new(forall, typing, list, string, params, expr);
+        let mut func = FuncDef::new(RefCell::new(forall), typing, list, string, params, expr);
         func.lambdas = self.lambdas;
 
         info!(
@@ -668,19 +677,6 @@ fn lower_func_typing<'a, 's, T: Ty>(
 ) -> Typing<T> {
     let mut tlower = ty::TypeLower::new(module, ast, tinfo);
 
-    for (_, name, types) in header.when.generics.iter() {
-        let generic = tlower.type_info.declare_generic(*name, 0).unwrap();
-        for ty in types {
-            if let Err(ty::NotATrait(_)) = tlower.add_constraint::<T>(generic, ty.as_ref()) {
-                ast.sources
-                    .error("invalid constraint")
-                    .m(module)
-                    .eline(ty.span, "must be a trait")
-                    .emit();
-            }
-        }
-    }
-
     let (params, returns) = match header.typing.as_ref() {
         Some(typing) => (
             typing
@@ -729,7 +725,8 @@ fn lower_impl<'a, 's>(
 
     let mut tinfo = TypeEnvInfo::new(true).list(from_langs("list", langitems, &HashMap::new()));
 
-    tinfo.enter_type_or_impl_or_method(Forall::new(), GenericKind::Parent);
+    let impl_forall = generics_from_con(&imp.header.when);
+    tinfo.enter_type_or_impl_or_method(impl_forall, GenericKind::Parent);
 
     let mut tlower = ty::TypeLower::new(module, ast, &mut tinfo);
 
@@ -744,6 +741,13 @@ fn lower_impl<'a, 's>(
     };
 
     tinfo.self_handler = SelfHandler::Direct;
+
+    include_constraints(
+        (ast, module, &mut tinfo),
+        &imp.header.when,
+        |tinfo, key, cons| tinfo.cforalls[0].0[key].trait_constraints = cons,
+    );
+
     let mut tlower = ty::TypeLower::new(module, ast, &mut tinfo);
 
     tlower.type_info.declare_generics = false;
@@ -792,8 +796,60 @@ impl ast::Sources {
     }
 }
 
+fn generics_from_con<'s, T>(when: &parser::when::Constraints<'s>) -> Forall<'s, T> {
+    when.generics
+        .iter()
+        .map(|(_, generic, _)| GenericData::new(*generic))
+        .collect()
+}
+
+fn include_constraints<'s, T: ty::Ty>(
+    (ast, module, tinfo): (&AST<'s>, key::Module, &mut TypeEnvInfo<'s>),
+    when: &parser::when::Constraints<'s>,
+    mut attach: impl FnMut(&mut TypeEnvInfo<'s>, key::Generic, Vec<Constraint<T>>),
+) {
+    let generic_iter = (0..when.generics.len()).map(|i| key::Generic(i as u32));
+
+    for key in generic_iter {
+        let (_, _, constraints) = &when.generics[key.0 as usize];
+        let cons = constraints
+            .iter()
+            .filter_map(|ty| {
+                let con_ty: T = ty::TypeLower::new(module, ast, tinfo).ty(ty.as_ref());
+
+                match con_ty.as_trait() {
+                    Ok((trait_, params)) => Some(Constraint { span: ty.span, trait_, params }),
+                    Err(_) => {
+                        ast.sources
+                            .error("invalid constraint")
+                            .m(module)
+                            .eline(ty.span, "must be a trait")
+                            .emit();
+
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        attach(tinfo, key, cons)
+    }
+}
+
 impl<'s> fmt::Display for FuncDef<'s> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let forall = self.forall.borrow();
+        if !forall.is_empty() {
+            writeln!(f, "{}", "when".keyword())?;
+            for (key, gdata) in forall.iter() {
+                writeln!(
+                    f,
+                    "  {key} {} {:?}",
+                    "can".keyword(),
+                    gdata.trait_constraints
+                )?;
+            }
+        }
         write!(f, "{} {}\n  {}", &self.typing, '='.symbol(), self.expr)?;
 
         if self.lambdas.is_empty() {

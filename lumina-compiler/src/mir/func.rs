@@ -399,7 +399,8 @@ impl<'a, 's> Verify<'a, 's> {
                     .eline(
                         span,
                         format!(
-                            "does not implement {}",
+                            "`{}` does not implement `{}`",
+                            self.ty_formatter().fmt(&ty),
                             self.ty_formatter().fmt((con.trait_, con.params.as_slice()))
                         ),
                     )
@@ -678,25 +679,21 @@ impl<'a, 's> Verify<'a, 's> {
             }
             hir::Callable::Builtin(name) => match *name {
                 "plus" | "minus" | "mul" | "div" => {
-                    let lambda = self.lambda();
                     let any = IType::Var(self.vars().var(span));
                     let ptypes = vec![any.clone(), any.clone()];
                     InstCall::LocalCall(span, ptypes, any, FuncKind::FnPointer)
                 }
                 "eq" | "lt" | "gt" => {
-                    let lambda = self.lambda();
                     let any = IType::Var(self.vars().var(span));
                     let ptypes = vec![any.clone(), any];
                     InstCall::LocalCall(span, ptypes, Prim::Bool.into(), FuncKind::FnPointer)
                 }
                 "deref" => {
-                    let lambda = self.lambda();
                     let any = IType::Var(self.vars().var(span));
                     let ptypes = vec![Container::Pointer(Box::new(any.clone())).into()];
                     InstCall::LocalCall(span, ptypes, any, FuncKind::FnPointer)
                 }
                 "write" => {
-                    let lambda = self.lambda();
                     let any = IType::Var(self.vars().var(span));
                     let ptypes = vec![
                         Container::Pointer(Box::new(any.clone())).into(),
@@ -706,7 +703,6 @@ impl<'a, 's> Verify<'a, 's> {
                     InstCall::LocalCall(span, ptypes, ret, FuncKind::FnPointer)
                 }
                 "offset" => {
-                    let lambda = self.lambda();
                     let any = IType::Var(self.vars().var(span));
                     let ptr: IType = Container::Pointer(Box::new(any.clone())).into();
                     let ptypes = vec![ptr.clone(), Prim::Int(true, Bitsize::default()).into()];
@@ -715,19 +711,14 @@ impl<'a, 's> Verify<'a, 's> {
                 "reflect_type" => {
                     InstCall::Local(IType::defined(self.items.reflect_type, vec![]).tr(span))
                 }
-                "abort" => {
-                    let lambda = self.lambda();
-                    InstCall::Local(IType::Var(self.vars().var(span)).tr(span))
-                }
+                "abort" => InstCall::Local(IType::Var(self.vars().var(span)).tr(span)),
                 "transmute" => {
-                    let lambda = self.lambda();
                     let param = IType::Var(self.vars().var(span));
                     let ptypes = vec![param];
                     let ret = IType::Var(self.vars().var(span));
                     InstCall::LocalCall(span, ptypes, ret, FuncKind::FnPointer)
                 }
                 "val_to_ref" => {
-                    let lambda = self.lambda();
                     let any = IType::Var(self.vars().var(span));
                     let ptr = Container::Pointer(Box::new(any.clone())).into();
                     let ptypes = vec![any];
@@ -814,9 +805,9 @@ impl<'a, 's> Verify<'a, 's> {
                 let finst = ForeignInst::<Var>::new(vars)
                     .with_self(span)
                     .parent(span, pforall)
-                    .parent_cons(pforall)
                     .forall(span, forall)
                     .forall_cons(forall)
+                    .parent_cons(pforall)
                     .build();
 
                 let (ptypes, returns) = apply_finst(

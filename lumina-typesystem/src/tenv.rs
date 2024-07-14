@@ -15,7 +15,7 @@ pub struct TEnv<'s> {
     pub(crate) records: Map<RecordVar, RecordVarInfo<'s>>,
     pub(crate) vars: Map<Var, VarInfo>,
     pub(crate) constraint_checks: Vec<(Var, Constraint<IType>)>,
-    pub(crate) concrete_constraint_checks: Vec<(Span, Type, Constraint<Type>)>,
+    pub(crate) concrete_constraint_checks: Vec<(Tr<Type>, Constraint<Type>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,8 +39,6 @@ pub struct RecordVarInfo<'s> {
     pub(crate) assignment: RecordAssignment<'s>,
     pub(crate) fields: Map<RecordVarField, Tr<&'s str>>,
     pub(crate) verified: bool,
-    // pub(crate) traits: Map<VarTraitConstraint, Constraint<IType>>, // we might not need this
-    // since we more eagerly resolve
 }
 
 #[derive(Debug, Clone)]
@@ -60,8 +58,6 @@ pub struct VarInfo {
     pub(crate) span: Span,
     #[new(default)]
     pub(crate) int_constraint: Option<IntConstraint>,
-    #[new(default)]
-    pub(crate) traits: Map<VarTraitConstraint, Constraint<IType>>,
 }
 
 #[derive(new, Debug, Clone, Copy)]
@@ -76,9 +72,8 @@ impl<'s> TEnv<'s> {
             records: Map::new(),
             vars: Map::new(),
 
-            // errors: Vec::new(),
-            constraint_checks: Vec::new(),
-            concrete_constraint_checks: Vec::new(),
+            constraint_checks: vec![],
+            concrete_constraint_checks: vec![],
         }
     }
 
@@ -137,8 +132,7 @@ impl<'s> TEnv<'s> {
     }
 
     pub fn push_constraint(&mut self, ty: Tr<Type>, con: Constraint<Type>) {
-        self.concrete_constraint_checks
-            .push((ty.span, ty.value, con))
+        self.concrete_constraint_checks.push((ty, con))
     }
 
     pub fn record(&mut self, span: Span) -> RecordVar {

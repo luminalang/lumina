@@ -227,20 +227,17 @@ impl<'a, 'f, 's> Finalizer<'a, 'f, 's> {
 
     pub fn constraints(&mut self) -> Vec<(Span, Type, Constraint<Type>)> {
         let cons = std::mem::take(&mut self.ts.env.constraint_checks);
-        let extras = std::mem::take(&mut self.ts.env.concrete_constraint_checks);
         cons.into_iter()
             .map(|(var, con)| {
-                (
-                    self.ts.env.vars[var].span,
-                    self.var(var),
-                    Constraint {
-                        params: self.apply_types(&con.params),
-                        span: con.span,
-                        trait_: con.trait_,
-                    },
-                )
+                let span = self.ts.env.vars[var].span;
+                let type_ = self.var(var);
+                let constraint = Constraint {
+                    params: self.apply_types(&con.params),
+                    span: con.span,
+                    trait_: con.trait_,
+                };
+                (span, type_, constraint)
             })
-            .chain(extras)
             .collect()
     }
 

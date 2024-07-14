@@ -494,8 +494,6 @@ impl<'a> FuncLower<'a> {
 
         let fdef = func.get_root_fdef(self.mir);
 
-        println!("{tmap:#?}\nFOR: {}", &fdef.typing);
-
         trace!(
             "monomorphising typing of call fn {func} as {}\n  with mapping {tmap:?}",
             &fdef.typing

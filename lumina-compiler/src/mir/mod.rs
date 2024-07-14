@@ -158,7 +158,7 @@ pub struct Current {
     pub lambda: Option<key::Lambda>,
     pub fkey: M<key::Func>,
     pub binds: HashMap<key::Bind, Tr<IType>>,
-    pub insts: HashMap<Option<key::Lambda>, VecDeque<Tr<InstInfo>>>,
+    pub insts: HashMap<Option<key::Lambda>, VecDeque<Tr<Option<InstInfo>>>>,
     pub type_dependent_lookup: VecDeque<M<ast::NFunc>>,
     pub casts: VecDeque<Tr<IType>>,
 }
@@ -202,7 +202,7 @@ impl Current {
         }
     }
 
-    fn push_inst(&mut self, span: Span, finst: InstInfo) {
+    fn push_inst(&mut self, span: Span, finst: Option<InstInfo>) {
         self.insts
             .get_mut(&self.lambda)
             .unwrap()
@@ -210,14 +210,14 @@ impl Current {
     }
 
     #[track_caller]
-    pub(crate) fn pop_inst(&mut self, span: Span) -> InstInfo {
+    pub(crate) fn pop_inst(&mut self, span: Span) -> Option<InstInfo> {
         let inst = self.pop_inst_without_assertion();
         assert_eq!(inst.span, span);
         inst.value
     }
 
     #[track_caller]
-    pub(crate) fn pop_inst_without_assertion(&mut self) -> Tr<InstInfo> {
+    pub(crate) fn pop_inst_without_assertion(&mut self) -> Tr<Option<InstInfo>> {
         self.insts
             .get_mut(&self.lambda)
             .unwrap()

@@ -190,7 +190,7 @@ impl<'p, 'l, 'a, 's> TreeBuilder<'p, 'l, 'a, 's> {
             hir::Pattern::Constructor(sum, variant, params) => {
                 extend_untr(&mut self.queue, params);
                 let instinfo = self.l.current.pop_inst_without_assertion();
-                let inst = self.l.fin_inst(&instinfo.inst);
+                let inst = self.l.fin_inst(&instinfo.value.as_ref().unwrap().inst);
                 let next = self.from_queue();
                 let variant_typings = self.l.vtypes[*sum]
                     .keys()

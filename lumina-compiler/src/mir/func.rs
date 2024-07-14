@@ -611,7 +611,7 @@ impl<'a, 's> Verify<'a, 's> {
             .map(|t| t.value.clone())
             .collect();
 
-        self.current.push_inst(span, instinfo);
+        self.current.push_inst(span, Some(instinfo));
 
         // let kind = if params.len() == 0 {
         //     FuncKind::FnPointer

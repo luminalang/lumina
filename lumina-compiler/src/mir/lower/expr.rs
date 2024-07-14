@@ -55,20 +55,34 @@ impl Expr {
 }
 
 impl<'a, 's> Lower<'a, 's> {
+    fn fin_inst_or_poison(
+        &mut self,
+        span: Span,
+        f: impl FnOnce(&mut Self, ConcreteInst) -> Expr,
+    ) -> Expr {
+        match self.current.pop_inst(span) {
+            Some(instinfo) => {
+                let (inst, _) = (&mut *self).fin_typing(&instinfo);
+                f(self, inst)
+            }
+            None => Expr::Poison,
+        }
+    }
+
     pub fn lower_expr(&mut self, expr: Tr<&hir::Expr<'s>>) -> Expr {
         match &expr.value {
             hir::Expr::Call(call, tanot, params) => match call {
                 hir::Callable::Func(nfunc) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst(expr.span);
-                    let (inst, _) = (&mut *self).fin_typing(&instinfo);
-                    Expr::CallFunc(nfunc.module.m(nfunc.key), inst, params)
+                    self.fin_inst_or_poison(expr.span, |_, inst| {
+                        Expr::CallFunc(nfunc.module.m(nfunc.key), inst, params)
+                    })
                 }
                 hir::Callable::Lambda(lambda) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst(expr.span);
-                    let (inst, _) = self.fin_typing(&instinfo);
-                    Expr::CallLambda(*lambda, inst, params)
+                    self.fin_inst_or_poison(expr.span, |_, inst| {
+                        Expr::CallLambda(*lambda, inst, params)
+                    })
                 }
                 hir::Callable::Binding(bind) => {
                     let ty = self.current.binds[bind].clone();
@@ -83,12 +97,12 @@ impl<'a, 's> Lower<'a, 's> {
                         _ => Expr::Poison,
                     }
                 }
-                hir::Callable::TypeDependentLookup(name) => {
+                hir::Callable::TypeDependentLookup(_) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst(expr.span);
-                    let inst = self.fin_inst(&instinfo.inst);
-                    let nfunc = self.current.type_dependent_lookup.pop_front().unwrap();
-                    Expr::CallFunc(nfunc, inst, params)
+                    self.fin_inst_or_poison(expr.span, |this, inst| {
+                        let nfunc = this.current.type_dependent_lookup.pop_front().unwrap();
+                        Expr::CallFunc(nfunc, inst, params)
+                    })
                 }
                 hir::Callable::Builtin(name) => match *name {
                     "plus" => self.lower_builtin(params, |p| Expr::Num("plus", Box::new(p))),
@@ -118,20 +132,18 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Expr::Pass(call, _, params) => match call {
                 hir::Callable::Func(nfunc) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst(expr.span);
-                    let (inst, _) = (&mut *self).fin_typing(&instinfo);
-                    Expr::PartialFunc(nfunc.module.m(nfunc.key), inst, params)
+                    self.fin_inst_or_poison(expr.span, |_, inst| {
+                        Expr::PartialFunc(nfunc.module.m(nfunc.key), inst, params)
+                    })
                 }
                 hir::Callable::Lambda(lambda) if params.is_empty() => {
-                    let instinfo = self.current.pop_inst(expr.span);
-                    let inst = (&mut *self).fin_inst(&instinfo.inst);
-                    Expr::YieldLambda(*lambda, inst)
+                    self.fin_inst_or_poison(expr.span, |_, inst| Expr::YieldLambda(*lambda, inst))
                 }
                 hir::Callable::Lambda(lambda) => {
                     let params = self.lower_exprs(params);
-                    let instinfo = self.current.pop_inst(expr.span);
-                    let (inst, _) = (&mut *self).fin_typing(&instinfo);
-                    Expr::PartialLambda(*lambda, inst, params)
+                    self.fin_inst_or_poison(expr.span, |_, inst| {
+                        Expr::PartialLambda(*lambda, inst, params)
+                    })
                 }
                 hir::Callable::Binding(bind) if params.is_empty() => {
                     Expr::Yield(Local::Binding(*bind))

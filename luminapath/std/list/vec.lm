@@ -1,5 +1,6 @@
 use std:ptr
 use std:list [Listable]
+use std:math [Compare [>=]]
 
 // An immutable heap-allocated array
 type Vec a {
@@ -7,9 +8,26 @@ type Vec a {
   len uint
 }
 
-fn get i {ptr, len} as uint, Vec a -> a =
+fn slice vec as Vec a -> Slice a =
+  { vec, start = 0 }
+
+fn get i vec as uint, Vec a -> Maybe a =
+  if i >= vec.len
+    then Nothing
+    else Just (unsafe_get i vec)
+
+fn unsafe_get i {ptr, len} as uint, Vec a -> a =
   ptr:offset ptr (i as int) . ptr:deref
 
 fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
    let at = ptr:offset ptr (i as int) in
     ptr:write at v
+
+type Slice a {
+  vec   Vec a
+  start uint
+}
+
+fn split {vec, start} as Slice a -> Maybe (a, Slice a) =
+  get start vec
+  . map #(\v -> (v, {Slice a | vec, start = start + 1}))

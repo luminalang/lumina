@@ -11,6 +11,10 @@ trait Num
   fn / as self, self -> self
 
   fn zero as self
+  fn one  as self
+
+  fn succ n as self -> self = n + Num:one
+  fn pred n as self -> self = n - Num:one
 
 trait Compare
   @[precedence 4000]
@@ -19,6 +23,14 @@ trait Compare
   fn <  as self, self -> bool
   @[precedence 4000]
   fn >  as self, self -> bool
+
+  @[precedence 4000]
+  fn >= x y as self, self -> bool =
+    if x == y then true else x > y
+
+  @[precedence 4000]
+  fn <= x y as self, self -> bool =
+    if x == y then true else x < y
 
   fn max x y as self, self -> self =
     if y > x then y else x
@@ -33,6 +45,7 @@ impl Num for u8
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
+  fn one  = 1
 
 impl Compare for u8
   fn == a b as self, self -> bool = builtin:eq a b
@@ -46,6 +59,7 @@ impl Num for u16
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
+  fn one  = 1
 
 impl Compare for u16
   fn == a b as self, self -> bool = builtin:eq a b
@@ -59,6 +73,7 @@ impl Num for u32
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
+  fn one  = 1
 
 impl Compare for u32
   fn == a b as self, self -> bool = builtin:eq a b
@@ -72,6 +87,7 @@ impl Num for u64
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
+  fn one  = 1
 
 impl Compare for u64
   fn == a b as self, self -> bool = builtin:eq a b
@@ -85,6 +101,7 @@ impl Num for i8
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
+  fn one  = 1
 
 impl Compare for i8
   fn == a b as self, self -> bool = builtin:eq a b
@@ -98,6 +115,7 @@ impl Num for i16
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
+  fn one  = 1
 
 impl Compare for i16
   fn == a b as self, self -> bool = builtin:eq a b
@@ -111,6 +129,7 @@ impl Num for i32
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
+  fn one  = 1
 
 impl Compare for i32
   fn == a b as self, self -> bool = builtin:eq a b
@@ -124,6 +143,7 @@ impl Num for i64
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
   fn zero = 0
+  fn one  = 1
 
 impl Compare for i64
   fn == a b as self, self -> bool = builtin:eq a b

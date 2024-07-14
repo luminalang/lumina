@@ -14,7 +14,7 @@ trait Listable a
   fn with_capacity as int -> self
   fn split as self -> Maybe (a, self)
 
-type List a = Slice uint (Vec a) | Concat self self | Singleton a | Nil
+type List a = Slice (vec:Slice a) | Concat self self | Singleton a | Nil
 
 impl Listable a for List a
   fn : x xs as a, List a -> List a =
@@ -25,15 +25,16 @@ impl Listable a for List a
 
   fn split list as List a -> Maybe (a, List a) = 
     match list
-    | Slice start vec -> 
-      Just (vec . get start, Slice (start + 1) vec)
+    | Slice slice -> 
+      vec:split slice
+      . map #(\(v, right) -> (v, Slice right))
+
+    | Singleton a -> Just (a, Nil)
+    | Nil         -> Nothing
 
     | Concat left right -> 
       split left 
       . map #(preventConcatNil right)
-
-    | Singleton a -> Just (a, Nil)
-    | Nil         -> Nothing
 
 // TODO: we wouldn't need this if we specialised the split in `Concat`
 fn preventConcatNil right (v, leftright) as [a], (a, [a]) -> (a, [a]) =
@@ -49,6 +50,7 @@ fn ++ left right as [a], [a] -> [a] =
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
 fn fold f acc list as fn(b, a -> b), b, [a] -> b =
   match list
+  // | Slice slice -> 0
   | [x : xs] -> fold #f (f acc x) xs
   | []       -> acc
 

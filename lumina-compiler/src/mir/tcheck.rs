@@ -48,8 +48,6 @@ impl<'a, 's> Verify<'a, 's> {
             .filter(|(_, _, result)| !result.is_ok())
             .collect::<Vec<_>>();
 
-        let tyfmt = self.ty_formatter();
-
         match (errors.as_slice(), len_ok) {
             ([], true) => true,
             ([], false) => {
@@ -240,6 +238,11 @@ impl<'s> SameAsCheck<'s> {
 
                         if result.is_ok() {
                             self.prioritised = Some(i);
+                            // Mark all the previous types (which didn't match against `i`) as errors
+                            self.mismatches = vec![];
+                            for (i, got) in self.types.iter().enumerate().take(i) {
+                                self.mismatches.push((got.clone(), exp.clone(), "", i));
+                            }
                             self.types.push(ty);
                             return;
                         } else if kept_result.is_none() {
@@ -277,44 +280,44 @@ impl<'s> SameAsCheck<'s> {
 
         let mut err = sources.error("type mismatch").m(module);
 
+        let prio = self.prioritised.unwrap_or(0);
+        let exp = &self.types[prio];
+
         match self.mismatches.as_slice() {
             [] => {}
-            [(got, exp, ctx, _)] => err
-                .eline(got.span, *ctx)
-                .text(format!(
-                    "{}      {}",
-                    "got".purple(),
-                    tfmt.clone().fmt(&**got)
-                ))
-                .text(format!("{} {}", "expected".purple(), tfmt.fmt(&**exp)))
-                .emit(),
+            [(_, _, ctx, i)] => {
+                let got = &self.types[*i];
+                err = err
+                    .eline(got.span, *ctx)
+                    .text(format!(
+                        "{}      {}",
+                        "got".purple(),
+                        tfmt.clone().fmt(&**got)
+                    ))
+                    .text(format!(
+                        "{} {}",
+                        "expected".purple(),
+                        tfmt.clone().fmt(&**exp)
+                    ))
+            }
+
             many => {
-                let pri = &self.types[self.prioritised.unwrap_or(0)];
-                err = err.iline(
-                    pri.span,
-                    format!("expected type is {}", tfmt.clone().fmt(&**pri)),
-                );
-                many.iter()
-                    .fold(err, |err, (got, _, _, _)| {
+                err = many
+                    .iter()
+                    .fold(err, |err, (_, _, _, i)| {
+                        let got = &self.types[*i];
                         err.eline(got.span, format!("{}", tfmt.clone().fmt(&**got)))
                     })
                     .text(match self.kind {
                         "" => "all must be of the same type".into(),
                         kind => format!("{kind} must be of the same type"),
                     })
-                    .emit()
             }
-        }
+        };
 
-        // match self.kind {
-        //     "match patterns" if self.errors.len() > 1 => {
-        //         err = err.eline();
-        //     }
-        //     "match expressions" if self.errors.len() > 1 => todo!(),
-        //     _ => {
-        //         todo!();
-        //     }
-        // }
+        if !self.mismatches.is_empty() {
+            err.iline(exp.span, "expected type set here").emit();
+        }
 
         return self.types.remove(self.prioritised.unwrap_or(0));
     }

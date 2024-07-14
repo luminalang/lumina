@@ -205,7 +205,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
                     .ty_spanned(ty.as_ref());
                 hir::Expr::Cast(Box::new(expr), ty)
             }
-            parser::Expr::Poison => dbg!(Expr::Poison),
+            parser::Expr::Poison => Expr::Poison,
         }
         .tr(expr.span)
     }

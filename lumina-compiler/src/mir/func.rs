@@ -331,7 +331,7 @@ impl<'a, 's> Verify<'a, 's> {
             let minbit = min
                 .map(|(i, num)| Bitsize::minimum_for(i, num).max(Bitsize::default()))
                 .unwrap_or_else(Bitsize::default);
-            let exp = Type::Prim(Prim::Int(true, minbit));
+            let num_type = Type::Prim(Prim::Int(true, minbit));
 
             match ty.value {
                 Type::Prim(Prim::Int(signed, bitsize)) => {
@@ -369,8 +369,8 @@ impl<'a, 's> Verify<'a, 's> {
                 _ => self.emit_type_mismatch(
                     span,
                     "",
+                    self.ty_formatter().fmt(&num_type),
                     self.ty_formatter().fmt(&*ty),
-                    self.ty_formatter().fmt(&exp),
                 ),
             }
         }

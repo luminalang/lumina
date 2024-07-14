@@ -73,6 +73,7 @@ impl Error {
             }
             _ => {
                 let line = Line {
+                    hide_file: self.hide_file_name(&file),
                     file,
                     linenr,
                     content: content.into(),
@@ -88,11 +89,14 @@ impl Error {
         self
     }
 
-    fn should_show(&self, file: &Path) -> bool {
-        self.contexts.iter().rev().all(|context| match context {
-            Context::Line(line) => line.file != file,
-            _ => true,
-        })
+    fn hide_file_name(&self, file: &Path) -> bool {
+        for ctx in self.contexts.iter().rev() {
+            match ctx {
+                Context::Line(previous) => return &previous.file == file,
+                Context::Text(_) => continue,
+            }
+        }
+        false
     }
 
     #[must_use]
@@ -114,6 +118,7 @@ enum Context {
 
 #[derive(Clone, Debug)]
 struct Line {
+    hide_file: bool,
     file: PathBuf,
     linenr: usize,
     content: String,
@@ -152,7 +157,7 @@ impl fmt::Display for Error {
     }
 }
 
-fn arrows_to_marker(arrows: &[std::ops::Range<usize>]) -> String {
+fn arrows_to_marker(linelen: usize, arrows: &[std::ops::Range<usize>]) -> String {
     let end = arrows.iter().map(|r| r.end).max().unwrap();
 
     let mut buf: Vec<u8> = vec![b' '; end];
@@ -167,18 +172,27 @@ fn arrows_to_marker(arrows: &[std::ops::Range<usize>]) -> String {
         }
     }
 
+    if buf.len() > linelen {
+        buf.truncate(linelen - 1);
+        buf.extend(b"...");
+    }
+
     String::from_utf8(buf).unwrap()
 }
 
 impl fmt::Display for Line {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let marker = arrows_to_marker(&self.arrow);
-        writeln!(
-            f,
-            "{}  {}",
-            " ".repeat(self.linenr.to_string().len()),
-            self.file.display().purple()
-        )?;
+        let marker = arrows_to_marker(self.content.len(), &self.arrow);
+        if self.hide_file {
+            writeln!(f)?;
+        } else {
+            writeln!(
+                f,
+                "{}  {}",
+                " ".repeat(self.linenr.to_string().len()),
+                self.file.display().purple()
+            )?;
+        }
 
         match self.mode {
             LineMode::Main => {
@@ -204,7 +218,7 @@ impl fmt::Display for Line {
                     " {}\n{}{} {}",
                     self.source_line(),
                     self.arrow_spacing(1),
-                    marker,
+                    marker.bright_blue(),
                     self.message.bright_blue()
                 )
             }

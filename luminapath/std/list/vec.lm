@@ -8,6 +8,13 @@ type Vec a {
   len uint
 }
 
+fn empty as Vec a = { Vec a | ptr = ptr:null, len = 0 }
+
+fn singleton v as a -> Vec a = 
+  let ptr = alloc Size(self as a):of in
+    do ptr:write ptr v then
+      { ptr, len = 1 }
+
 fn slice vec as Vec a -> Slice a =
   { vec, start = 0 }
 
@@ -31,3 +38,8 @@ type Slice a {
 fn split {vec, start} as Slice a -> Maybe (a, Slice a) =
   get start vec
   . map #(\v -> (v, {Slice a | vec, start = start + 1}))
+
+fn forEach f slice as fn(a -> ()), Slice a -> () =
+  list:itimes #perform (slice.vec.len - slice.start)
+ where
+  fn perform i as int -> () = ptr:offset slice.vec.ptr (slice.start + i) . ptr:deref . f

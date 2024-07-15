@@ -146,11 +146,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         // codegen instead.
         self.f.builder.seal_all_blocks();
 
-        println!(
-            "{}\n{}",
-            &self.f.builder.func,
-            lir::MonoFormatter { types: &self.ctx.lir.types, v: self.f.func }
-        );
         self.f.builder.finalize();
     }
 

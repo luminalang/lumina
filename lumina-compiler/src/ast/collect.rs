@@ -10,7 +10,7 @@ use lumina_parser as parser;
 use lumina_parser::{func, r#use, ty, val, when, Error as ParseError, Parser};
 use lumina_util::{Spanned, Tr};
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::info;
 
 const DEFAULT_OPERATOR_PRECEDENCE: u32 = 1000;
@@ -40,8 +40,19 @@ impl<'s> Collector<'s> {
         }
     }
 
+    // HACK: this modules is already registered to exist so we
+    // need to make sure the buffer lenghts are up to sync even
+    // though this one won't be used.
+    fn reserve_module_and_err(&mut self, module: key::Module, path: &Path, err: Error) -> Error {
+        self.sources.push(module, String::new(), path.to_path_buf());
+        self.uses.push_as(module, vec![]);
+        err
+    }
+
     pub fn include_dir(&mut self, module: key::Module, path: PathBuf) -> Result<(), Error> {
-        let dir = std::fs::read_dir(&path).map_err(|err| Error::Dir(err, path.clone()))?;
+        let dir = std::fs::read_dir(&path).map_err(|err| {
+            self.reserve_module_and_err(module, &path, Error::Dir(err, path.clone()))
+        })?;
         let is_entrypoint = module == self.lookups.project;
 
         let root_name = is_entrypoint.then_some("main.lm").unwrap_or("lib.lm");
@@ -51,7 +62,13 @@ impl<'s> Collector<'s> {
             info!("opening {} as {module}", trim_display(&root));
             let source = match std::fs::read_to_string(&root) {
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-                Err(err) => return Err(Error::File(err, path.clone())),
+                Err(err) => {
+                    return Err(self.reserve_module_and_err(
+                        module,
+                        &path,
+                        Error::File(err, path.clone()),
+                    ))
+                }
                 Ok(str) => str,
             };
 
@@ -339,13 +356,13 @@ impl<'s> Collector<'s> {
         k
     }
 
-    fn include_use(&mut self, module: key::Module, import: r#use::Declaration<'s>) {
+    fn include_use(&mut self, from: key::Module, import: r#use::Declaration<'s>) {
         if let Some((lib, _)) = self.lookups.lib_should_be_included(import.path.as_slice()) {
             info!("implicitly including standard library {lib}");
-            self.parse_lib("std", lib);
+            self.parse_lib(import.path.span, from, "std", lib);
         }
 
-        self.uses[module].push(import);
+        self.uses[from].push(import);
     }
 
     fn include_val(&mut self, module: key::Module, val: val::Declaration<'s>) {
@@ -389,12 +406,12 @@ impl<'s> Collector<'s> {
         }
     }
 
-    pub fn parse_lib(&mut self, header: &'static str, lib: &'s str) {
+    pub fn parse_lib(&mut self, span: Span, from: key::Module, header: &'static str, lib: &'s str) {
         let path = self.std_lib_directory.join(lib);
         let module = self.lookups.new_lib(header, lib.to_string());
         self.entities.add_module(module);
         if let Err(err) = self.include_dir(module, path) {
-            self.emit_stdlib_err(err);
+            self.emit_stdlib_err(span, from, err);
         }
     }
 
@@ -444,16 +461,21 @@ impl<'s> Collector<'s> {
         .emit()
     }
 
-    pub fn emit_stdlib_err(&mut self, err: Error) {
+    pub fn emit_stdlib_err(&mut self, span: Span, module: key::Module, err: Error) {
+        let error = self
+            .sources
+            .error("could not load standard library")
+            .m(module)
+            .eline(span, "");
+
         match err {
-            Error::Dir(ioerr, path) => self
-                .sources
-                .error("could not load standard library")
-                .text(format!("{} not accessible: {ioerr}", path.display()))
+            Error::Dir(ioerr, path) => error
+                .text(format!(
+                    "directory {} not accessible: {ioerr}",
+                    path.display()
+                ))
                 .emit(),
-            Error::File(ioerr, path) => self
-                .sources
-                .error("could not load standard library")
+            Error::File(ioerr, path) => error
                 .text(format!("file {} not accessible: {ioerr}", path.display()))
                 .emit(),
         }

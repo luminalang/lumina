@@ -8,3 +8,14 @@ fn deref ptr as *a -> a = builtin:deref ptr
 fn offset ptr by as *a, int -> *a = builtin:offset ptr by
 
 fn null as *a = builtin:transmute 0
+
+when t can Size
+fn alloc as *t = std:prelude:alloc Size(self as t):of as *t
+
+when t can Size
+fn dealloc ptr as *t -> () = std:prelude:free (ptr as *u8)
+
+when t can Size
+fn box v as t -> *t =
+  let ptr = alloc(t as t) in
+    do write ptr v then ptr

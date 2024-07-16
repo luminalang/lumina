@@ -318,14 +318,14 @@ impl<'a, 's> Verify<'a, 's> {
         let num_cons = fin.num_constraints();
         let constraints = fin.constraints();
 
-        for error in errors
-            .into_iter()
-            .chain(fin.errors.into_iter().map(lower::FinError::TS))
-        {
-            lower::emit_fin_error(&self.hir.sources, self.module(), &self.hir.records, error);
-        }
-
+        let finerrors = fin.errors.into_iter();
         drop(forall);
+
+        for error in errors.into_iter().chain(finerrors.map(lower::FinError::TS)) {
+            let tfmt = self.ty_formatter();
+            let sources = &self.hir.sources;
+            lower::emit_fin_error(sources, self.module(), tfmt, &self.hir.records, error);
+        }
 
         for (span, min, ty) in num_cons {
             let minbit = min
@@ -519,11 +519,32 @@ impl<'a, 's> Verify<'a, 's> {
                 }
             }
             IType::Field(rvar, rfield) => {
-                todo!("check if it's been assigned");
-                // if it has then use whatever helper we need to instantiate the field
-                // if not then fall back to using the unknown field map
+                let fname = self.tenvs[self.current.fkey].name_of_field(*rvar, *rfield);
+                self.module_of_field_by_name(ty.span, *rvar, fname)
             }
             _ => None,
+        }
+    }
+
+    fn module_of_field_by_name(
+        &mut self,
+        span: Span,
+        rvar: RecordVar,
+        fname: Tr<&'s str>,
+    ) -> Option<key::Module> {
+        let env = &mut self.tenvs[self.current.fkey];
+
+        match env.get_record(rvar).clone() {
+            lumina_typesystem::RecordAssignment::Ok(key, params) => self
+                .type_system()
+                .inst_field_by_type_params(key, fname, &params)
+                .and_then(|field_ty| self.module_of_type((&field_ty).tr(span))),
+            lumina_typesystem::RecordAssignment::Redirect(var) => {
+                self.module_of_field_by_name(span, var, fname)
+            }
+            lumina_typesystem::RecordAssignment::NotRecord(_) => None,
+            lumina_typesystem::RecordAssignment::Unknown(_) => None,
+            lumina_typesystem::RecordAssignment::None => None,
         }
     }
 

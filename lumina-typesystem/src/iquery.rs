@@ -3,6 +3,7 @@ use derive_new::new;
 use lumina_key as key;
 use std::collections::HashMap;
 use std::fmt;
+use tracing::info;
 
 // TODO: Specialisation via explicit default notation
 
@@ -133,6 +134,8 @@ where
         got: &Type,
         con: &Constraint<Type>,
     ) -> bool {
+        info!("checking if {got} implements {con:?}");
+
         match got {
             Type::Generic(generic) => {
                 let mut this = Compatibility::new(impls, forall.clone(), recurse);
@@ -182,7 +185,8 @@ where
                 _ => false,
             },
             (_, Type::Generic(generic)) => {
-                assert_eq!(generic.kind, GenericKind::Parent);
+                // TODO: why did this assertion exist? it breaks function constraints
+                // assert_eq!(generic.kind, GenericKind::Parent);
                 self.map(got, *generic)
             }
             _ => false,
@@ -194,11 +198,7 @@ where
         Compatibility::check_constraints(self.impls, self.forall.clone(), self.recurse, got, cons);
 
         match self.mapping.iter().find(|(gen, _)| *gen == exp.key) {
-            Some((_, ty)) => {
-                got == ty
-                // todo!("`this should be direct eq`");
-                // self.cmp(got, &ty)
-            }
+            Some((_, ty)) => got == ty,
             None => {
                 self.mapping.push((exp.key, got.clone()));
                 true
@@ -207,7 +207,11 @@ where
     }
 
     fn check_direct_constraint(&mut self, got: Generic, con: &Constraint<Type>) -> bool {
-        todo!();
+        let gcons = (self.forall)(got);
+
+        gcons
+            .iter()
+            .any(|gcon| gcon.trait_ == con.trait_ && self.cmps(&gcon.params, &con.params))
     }
 
     pub fn cmps(&mut self, gots: &[Type], exps: &[Type]) -> bool {

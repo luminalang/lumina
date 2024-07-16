@@ -39,5 +39,5 @@ pub struct ProjectInfo {
     allocator: (M<key::Func>, M<key::Func>),
     reflect_type: M<key::Sum>,
     listable: M<key::Trait>,
-    string: M<key::TypeKind>,
+    string: M<key::Record>,
 }

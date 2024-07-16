@@ -211,7 +211,7 @@ fn project_info<'s>(
     })?;
 
     let string = resolve_or_error(lookups, &["std", "prelude", "string"], |k| match k {
-        ast::Entity::Type(kind) => Some(kind),
+        ast::Entity::Type(key::TypeKind::Record(key)) => Some(key),
         _ => None,
     })?;
 

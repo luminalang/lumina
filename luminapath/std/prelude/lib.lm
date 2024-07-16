@@ -1,5 +1,5 @@
 use std:math [Num [..], Compare [..]]
-use std:maybe [Maybe [..], or]
+use std:maybe [Maybe [..]]
 use std:string [string]
 use std:nothing [nothing]
 use std:ptr

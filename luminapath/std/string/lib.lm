@@ -1,5 +1,6 @@
+use std:ptr
 use std:list [List]
-use std:vec  [Vec]
+use std:list:vec [Vec]
 
 @![langItem(list as List)]
 
@@ -7,8 +8,10 @@ type string {
   inner [u8]
 }
 
-fn toByteVec str as string -> Vec a =
+fn len {inner} as string -> uint = inner . len
+
+fn toByteVec str as string -> Vec u8 =
   let len = len str in
-  let ptr = alloc len in
+  let ptr = alloc (len as int) in
     do str.inner . forEach #(ptr:write ptr)
-    then { Vec a | ptr, len }
+    then { Vec u8 | ptr, len }

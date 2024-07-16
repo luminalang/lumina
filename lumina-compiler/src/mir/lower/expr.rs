@@ -269,7 +269,8 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Literal::Float(f) => Expr::Float(*f),
             hir::Literal::String(str) => {
                 let key = self.str_to_ro(*str);
-                Expr::ReadOnly(key)
+                todo!("construct record");
+                // Expr::ReadOnly(key)
             }
         }
     }
@@ -302,7 +303,10 @@ impl<'a, 's> Lower<'a, 's> {
                 // TODO: this cast does nothing. But; we still put it here because we need an expression
                 Expr::IntCast(expr, (false, Bitsize(64)), (false, Bitsize(64)))
             }
-            _ => panic!("ET: "),
+            (_, to) => {
+                self.errors.push(FinError::InvalidCast(ty_of_expr, to));
+                Expr::Poison
+            }
         }
     }
 

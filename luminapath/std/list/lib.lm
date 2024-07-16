@@ -75,7 +75,7 @@ fn min list as [n] -> Maybe n =
   | [] -> Nothing
   | [x : xs] -> Just (fold #Compare:min x xs)
 
-fn len list as [a] -> int =
+fn len list as [a] -> uint =
   match list
   | Slice slice -> slice.vec.len - slice.start
   | Singleton a -> 1
@@ -89,5 +89,5 @@ fn forEach f list as fn(a -> ()), [a] -> () =
   | Concat left right -> do forEach #f left then forEach #f right
   | Nil -> ()
 
-fn itimes f n as fn(int -> ()), int -> () = 
+fn itimes f n as fn(uint -> ()), uint -> () = 
   if n == 0 then () else do f n then itimes #f (n - 1)

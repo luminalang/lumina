@@ -231,7 +231,7 @@ struct LangItems {
     list_default: Option<M<key::TypeKind>>,
     listable: M<key::Trait>,
     reflect_type: M<key::Sum>,
-    string: M<key::TypeKind>,
+    string: M<key::Record>,
 }
 
 fn verify_impl_headers<'s>(

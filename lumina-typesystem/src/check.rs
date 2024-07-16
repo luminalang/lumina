@@ -480,7 +480,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
         }
     }
 
-    fn inst_field_by_type_params(
+    pub fn inst_field_by_type_params(
         &self,
         key: M<key::Record>,
         fname: Tr<&'s str>,

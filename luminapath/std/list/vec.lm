@@ -1,4 +1,4 @@
-use std:ptr
+use std:ptr 
 use std:list [Listable]
 use std:math [Compare [>=]]
 
@@ -11,9 +11,7 @@ type Vec a {
 fn empty as Vec a = { Vec a | ptr = ptr:null, len = 0 }
 
 fn singleton v as a -> Vec a = 
-  let ptr = alloc Size(self as a):of in
-    do ptr:write ptr v then
-      { ptr, len = 1 }
+  { ptr = ptr:box v, len = 1 }
 
 fn slice vec as Vec a -> Slice a =
   { vec, start = 0 }
@@ -42,4 +40,4 @@ fn split {vec, start} as Slice a -> Maybe (a, Slice a) =
 fn forEach f slice as fn(a -> ()), Slice a -> () =
   list:itimes #perform (slice.vec.len - slice.start)
  where
-  fn perform i as int -> () = ptr:offset slice.vec.ptr (slice.start + i) . ptr:deref . f
+  fn perform i as uint -> () = ptr:offset slice.vec.ptr ((slice.start + i) as int) . ptr:deref . f

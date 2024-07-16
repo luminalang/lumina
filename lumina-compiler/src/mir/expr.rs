@@ -132,7 +132,9 @@ impl<'a, 's> Verify<'a, 's> {
                 hir::Literal::Bool(_) => Prim::Bool.into(),
                 hir::Literal::Int(_, _, var) => IType::Var(*var),
                 hir::Literal::Float(_) => Prim::Float.into(),
-                hir::Literal::String(_) => IType::u8_ptr(),
+                hir::Literal::String(_) => {
+                    todo!("string type");
+                }
             },
             hir::Expr::Poison => Prim::Poison.into(),
         }

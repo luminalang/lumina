@@ -1,5 +1,6 @@
 use super::func::{InstInfo, Local};
 use super::tcheck::emit_record_error;
+use super::tyfmt::TyFmtState;
 use super::{Current, LangItems, RSolver, ReadOnlyBytes, Verify};
 use crate::prelude::*;
 
@@ -74,6 +75,7 @@ pub struct Lower<'a, 's> {
 pub enum FinError<'s> {
     TS(lumina_typesystem::FinError<'s>),
     MissingPatterns(Span, Vec<pat::FmtPattern>),
+    InvalidCast(Tr<Type>, Type),
 }
 
 impl<'a, 's> Lower<'a, 's> {
@@ -223,6 +225,7 @@ impl<'a, 's> Lower<'a, 's> {
 pub fn emit_fin_error<'s, T>(
     sources: &ast::Sources,
     module: key::Module,
+    tfmt: TyFmtState<'_, 's>,
     records: &ModMap<key::Record, (Tr<&'s str>, T)>,
     error: FinError<'s>,
 ) {
@@ -251,6 +254,20 @@ pub fn emit_fin_error<'s, T>(
             missing
                 .into_iter()
                 .fold(init, |err, pat| err.text(format!("  {pat}")))
+                .emit();
+        }
+        FinError::InvalidCast(from, to) => {
+            sources
+                .error("invalid cast")
+                .m(module)
+                .eline(
+                    from.span,
+                    format!(
+                        "cannot cast a value of type `{}` to `{}`",
+                        tfmt.clone().fmt(&*from),
+                        tfmt.fmt(to)
+                    ),
+                )
                 .emit();
         }
     }

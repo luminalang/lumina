@@ -11,7 +11,7 @@ lumina-util = { path = "../lumina-util/" }
 lumina-key = { path = "../lumina-key" }
 itertools = "0.10.*" 
 logos = { git = "https://github.com/simvux/logos" }
-insta = "1.26.*"
+insta = "1.39.*"
 # cranelift-entity = "0.92.*"
 smallvec = "*"
 tracing = "0.1.40"

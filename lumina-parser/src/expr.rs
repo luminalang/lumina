@@ -461,6 +461,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
 
                     match self.parser.lexer.peek() {
                         (T::Dot, _) if self.parser.take(span.end()) == "." => {
+                            self.parser.progress();
                             return self.expr_path_field_accessors(false, expr);
                         }
                         _ => Some(expr),

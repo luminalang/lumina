@@ -133,6 +133,8 @@ expr!(
     expr_type_annotated_call,
     "Functor(self as Option):map(a as int, b as Option float)"
 );
+expr!(expr_multiple_accessors, "a.b.c.d");
+expr!(expr_multiple_accessors_as_param, "f a.b.c.d 0");
 
 expr!(expr_pipe_lambda, "1 >> (\\n -> 1)");
 expr!(expr_pipe_eval_of_lambda, "1 >> ((\\ -> 0))");

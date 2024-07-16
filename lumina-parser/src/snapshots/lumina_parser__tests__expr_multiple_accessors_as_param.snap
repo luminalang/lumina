@@ -1,0 +1,5 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"f a.b.c.d 0\"; format! (\"\\n{}\", ast) }"
+---
+(f a.b.c.d 0)

@@ -10,6 +10,7 @@ pub enum Error {
     BadIndentation(Span),
     BadDefault(Span, Token),
     BadIndentForMatch(Span, DiffConflict),
+    BadHeaderForWhere(Span, Token),
     Unmatched(Span, String),
     InvalidTraitMember(Span),
     InvalidNestedMatch { previous: Span, new: Span },
@@ -36,6 +37,10 @@ impl<'a> Parser<'a> {
     ) {
         self.errors
             .push(Error::ExpectedTokenButGot(span, exp.into(), token));
+    }
+
+    pub(crate) fn err_bad_header_for_where(&mut self, span: Span, header: Token) {
+        self.errors.push(Error::BadHeaderForWhere(span, header));
     }
 
     pub(crate) fn err_bad_indentation(&mut self, span: Span) {

@@ -4,7 +4,7 @@ use std:list:vec [Vec]
 
 @![langItem(list as List)]
 
-type string {
+pub type string {
   inner [u8]
 }
 
@@ -12,6 +12,6 @@ fn len {inner} as string -> uint = inner . len
 
 fn toByteVec str as string -> Vec u8 =
   let len = len str in
-  let ptr = alloc (len as int) in
+  let ptr = std:prelude:alloc (len as int) in
     do str.inner . forEach #(ptr:write ptr)
     then { Vec u8 | ptr, len }

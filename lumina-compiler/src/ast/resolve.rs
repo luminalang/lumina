@@ -6,7 +6,7 @@ use lumina_key::{Map, M};
 use lumina_util::{Highlighting, Span};
 use std::collections::HashMap;
 use std::fmt;
-use tracing::trace;
+use tracing::{error, trace};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Mod<K> {
@@ -27,9 +27,18 @@ impl<K> Mod<K> {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Visibility {
-    Module(key::Module),
     Project(key::Module),
     Public,
+}
+
+impl Visibility {
+    pub fn from_public_flag(module: key::Module, public: bool) -> Self {
+        if public {
+            Visibility::Public
+        } else {
+            Visibility::Project(module)
+        }
+    }
 }
 
 pub struct Lookups<'s> {
@@ -126,7 +135,7 @@ impl<'s> Lookups<'s> {
         from: key::Module,
         path: &[&'s str],
     ) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
-        self.resolve(from, Namespace::Functions, path)
+        self.resolve(from, Namespace::Functions, path, false)
     }
     /// Resolve an entity and prioritise the type namespace
     pub fn resolve_type(
@@ -134,7 +143,7 @@ impl<'s> Lookups<'s> {
         from: key::Module,
         path: &[&'s str],
     ) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
-        self.resolve(from, Namespace::Types, path)
+        self.resolve(from, Namespace::Types, path, false)
     }
     /// Resolve an entity and prioritise the module/imports namespace
     pub fn resolve_module(
@@ -142,7 +151,7 @@ impl<'s> Lookups<'s> {
         from: key::Module,
         path: &[&'s str],
     ) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
-        self.resolve(from, Namespace::Modules, path)
+        self.resolve(from, Namespace::Modules, path, false)
     }
     pub fn resolve_import(&self, from: key::Module, name: &'s str) -> Option<Mod<key::Module>> {
         self.modules[from]
@@ -155,16 +164,27 @@ impl<'s> Lookups<'s> {
             })
     }
 
+    pub fn resolve_langitem(&self, names: &[&'s str]) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
+        self.resolve(self.project, Namespace::Functions, names, true)
+    }
+
     fn resolve(
         &self,
         from: key::Module,
         namespace: Namespace,
         mut path: &[&'s str],
+        mut ignore_vis: bool,
     ) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
         trace!(
             "attempting to resolve {} from {from} in namespace {namespace:?}",
             path.iter().format(":")
         );
+
+        // If we access prelude via absolute path, we want to ignore namespace rules
+        // This is mainly so that standard library modules can directly call private langitems
+        if Some(["std", "prelude"].as_slice()) == path.get(..2) {
+            ignore_vis = true;
+        }
 
         let start_at = match self.libs.get(path[0]) {
             Some(libs) => {
@@ -183,11 +203,11 @@ impl<'s> Lookups<'s> {
             None => from,
         };
 
-        self.resolve_in(from, namespace, start_at, path)
+        self.resolve_in(from, namespace, start_at, path, ignore_vis)
             .or_else(|err| match err {
                 ImportError::BadAccess(..) | ImportError::LibNotInstalled(..) => Err(err),
                 err => self
-                    .resolve_in(from, namespace, key::PRELUDE, path)
+                    .resolve_in(from, namespace, key::PRELUDE, path, ignore_vis)
                     .map_err(|_| err),
             })
     }
@@ -197,8 +217,9 @@ impl<'s> Lookups<'s> {
         origin: key::Module,
         module: key::Module,
         name: &'a str,
+        igv: bool,
     ) -> Result<Mod<Entity<'a>>, ImportError<'a>> {
-        self.resolve_in(origin, Namespace::Types, module, &[name])
+        self.resolve_in(origin, Namespace::Types, module, &[name], igv)
     }
 
     fn resolve_in<'a>(
@@ -207,6 +228,7 @@ impl<'s> Lookups<'s> {
         namespace: Namespace,
         module: key::Module,
         path: &[&'a str],
+        ignore_vis: bool,
     ) -> Result<Mod<Entity<'a>>, ImportError<'a>> {
         let entity = match path {
             [] => Ok(Mod {
@@ -225,18 +247,13 @@ impl<'s> Lookups<'s> {
                     .ok_or(ImportError::NotFound(module, *x)),
             },
             [x, xs @ ..] => {
-                match self
-                    .resolve_import(module, x)
-                    .or_else(|| match self.modules[module].kind {
-                        ModuleKind::Member { root } => self.resolve_import(root, x),
-                        _ => None,
-                    }) {
+                match self.resolve_import(module, x) {
                     Some(m) => {
-                        if !self.is_valid_reachability(origin, m.visibility) {
+                        if !self.is_valid_reachability(origin, m.visibility) && !ignore_vis {
                             return Err(ImportError::BadAccess(m.visibility, "module", x));
                         }
 
-                        self.resolve_in(origin, namespace, m.key, xs)
+                        self.resolve_in(origin, namespace, m.key, xs, ignore_vis)
                     }
 
                     // no module of this name found, but it could still be a type/trait
@@ -257,7 +274,7 @@ impl<'s> Lookups<'s> {
             }
         }?;
 
-        if !self.is_valid_reachability(module, entity.visibility) {
+        if !self.is_valid_reachability(origin, entity.visibility) && !ignore_vis {
             return Err(ImportError::BadAccess(
                 entity.visibility,
                 entity.key.describe(),
@@ -280,14 +297,8 @@ impl<'s> Lookups<'s> {
             .unwrap_or(&[])
     }
 
-    pub fn is_valid_reachability<'a>(
-        &self,
-        current: key::Module,
-        visibility: Visibility,
-        // of: key::Module,
-    ) -> bool {
+    pub fn is_valid_reachability<'a>(&self, current: key::Module, visibility: Visibility) -> bool {
         match visibility {
-            Visibility::Module(m) if m == current => true,
             Visibility::Project(m) if self.are_members_of_same_project(&[current, m]) => true,
             Visibility::Public => true,
             _ => false,
@@ -519,7 +530,6 @@ impl<K: fmt::Display> fmt::Display for Mod<K> {
 impl fmt::Display for Visibility {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Visibility::Module(m) => write!(f, "in({m})"),
             Visibility::Project(m) => write!(f, "project_of({m})"),
             Visibility::Public => "public".fmt(f),
         }

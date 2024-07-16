@@ -22,6 +22,9 @@ pub enum Token {
     #[regex("///[^\n]*")]
     LineDocComment,
 
+    #[token("pub")]
+    Pub,
+
     #[token("if")]
     If,
     #[token("|")]
@@ -134,6 +137,7 @@ impl Token {
             T::When,
             T::Default,
             T::When,
+            T::Pub,
             T::EOF,
         ]
         .contains(&self)
@@ -142,6 +146,7 @@ impl Token {
     pub fn describe(self) -> &'static str {
         use Token as T;
         match self {
+            T::Pub => "pub keyword",
             T::OpenAttribute => "start of attribute",
             T::OpenModuleAttribute => "start of attribute",
             T::Int | T::Float => "number",

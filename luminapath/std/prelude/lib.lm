@@ -1,7 +1,7 @@
-use std:math [Num [..], Compare [..]]
-use std:maybe [Maybe [..]]
-use std:string [string]
-use std:nothing [nothing]
+pub use std:math [Num [..], Compare [..]]
+pub use std:maybe [Maybe [..]]
+pub use std:string [string]
+pub use std:nothing [nothing]
 use std:ptr
 use std:list [Listable [:], List]
 
@@ -10,10 +10,10 @@ use std:list [Listable [:], List]
 trait Closure p r
   fn call as self, p -> r
 
-trait Size
+pub trait Size
   fn of as int
 
-type Type
+pub type Type
   = Int bool u8
   | Float
   | Bool

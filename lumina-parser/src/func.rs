@@ -174,8 +174,8 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
-                T::OpenAttribute if belongs_to_where(base_indent, indent) => {
-                    unimplemented!("ET: attributes for where bindings");
+                T::Pub | T::OpenAttribute | T::Default if belongs_to_where(base_indent, indent) => {
+                    self.err_bad_header_for_where(span, t);
                 }
                 _ if t.is_header() => break where_binds,
                 other => {
@@ -184,7 +184,6 @@ impl<'a> Parser<'a> {
                         "function or other top-level declaration",
                     );
                     self.recover_next_toplevel();
-                    continue;
                 }
             }
         }

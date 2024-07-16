@@ -158,7 +158,7 @@ fn project_info<'s>(
         f: impl FnOnce(ast::Entity<'s>) -> Option<T>,
     ) -> Result<M<T>, lumina_util::Error> {
         lookups
-            .resolve_func(lookups.project, names)
+            .resolve_langitem(names)
             .map_err(|_| {
                 lumina_util::Error::error("project error").with_text(format!(
                     "`{}` core item not found",

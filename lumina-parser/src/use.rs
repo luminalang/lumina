@@ -9,6 +9,7 @@ pub struct Declaration<'a> {
     pub module_forall_annotation: ForallAnnotation<'a>,
     pub assign_to: Option<Tr<&'a str>>,
     pub exposing: Vec<Tr<Exposed<'a>>>,
+    pub public: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -79,12 +80,8 @@ impl<'a> Parser<'a> {
             }
         });
 
-        Some(Declaration {
-            path,
-            module_forall_annotation,
-            assign_to,
-            exposing,
-        })
+        let public = false;
+        Some(Declaration { path, module_forall_annotation, assign_to, exposing, public })
     }
 
     fn exposing(&mut self, start: Span) -> Option<Vec<Tr<Exposed<'a>>>> {

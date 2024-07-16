@@ -7,14 +7,14 @@ use vec [Vec]
 // NOTE: DO NOT SWITCH PLACES OF METHODS.
 //
 // THEIR INDICES ARE CONSTANTS IN COMPILER. 
-trait Listable a
+pub trait Listable a
   @[precedence 1000]
   fn : as a, self -> self
   fn new as self = Listable(self as self, a as a):with_capacity 0
   fn with_capacity as int -> self
   fn split as self -> Maybe (a, self)
 
-type List a = Slice (vec:Slice a) | Concat self self | Singleton a | Nil
+pub type List a = Slice (vec:Slice a) | Concat self self | Singleton a | Nil
 
 impl Listable a for List a
   fn : x xs as a, List a -> List a =
@@ -42,52 +42,52 @@ fn preventConcatNil right (v, leftright) as [a], (a, [a]) -> (a, [a]) =
     | Nil -> (v, right)
     | _   -> (v, Concat leftright right)
 
-fn ++ left right as [a], [a] -> [a] =
+pub fn ++ left right as [a], [a] -> [a] =
   match left
   | Nil -> right
   | _   -> Concat left right
 
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
-fn fold f acc list as fn(b, a -> b), b, [a] -> b =
+pub fn fold f acc list as fn(b, a -> b), b, [a] -> b =
   match list
   | [x : xs] -> fold #f (f acc x) xs
   | []       -> acc
 
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
-fn map f list as fn(a -> b), [a] -> [b] =
+pub fn map f list as fn(a -> b), [a] -> [b] =
   match list
   | [x : xs] -> f x : map #f xs
   | []       -> []
 
 when n can Num
-fn sum list as [n] -> n =
+pub fn sum list as [n] -> n =
   fold #+ Num(self as n):zero list
 
 when n can Compare
-fn max list as [n] -> Maybe n = 
+pub fn max list as [n] -> Maybe n = 
   match list
   | [] -> Nothing
   | [x : xs] -> Just (fold #Compare:max x xs)
 
 when n can Compare
-fn min list as [n] -> Maybe n = 
+pub fn min list as [n] -> Maybe n = 
   match list
   | [] -> Nothing
   | [x : xs] -> Just (fold #Compare:min x xs)
 
-fn len list as [a] -> uint =
+pub fn len list as [a] -> uint =
   match list
   | Slice slice -> slice.vec.len - slice.start
   | Singleton a -> 1
   | Concat left right -> len left + len right
   | Nil -> 0
 
-fn forEach f list as fn(a -> ()), [a] -> () =
+pub fn forEach f list as fn(a -> ()), [a] -> () =
   match list
   | Slice slice -> slice . forEach #f
   | Singleton a -> f a
   | Concat left right -> do forEach #f left then forEach #f right
   | Nil -> ()
 
-fn itimes f n as fn(uint -> ()), uint -> () = 
+pub fn itimes f n as fn(uint -> ()), uint -> () = 
   if n == 0 then () else do f n then itimes #f (n - 1)

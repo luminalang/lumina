@@ -8,6 +8,7 @@ pub struct Declaration<'a> {
     pub name: &'a str,
     pub type_: Option<Tr<Type<'a>>>,
     pub value: Tr<Expr<'a>>,
+    pub public: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -34,6 +35,7 @@ impl<'a> Parser<'a> {
             type_,
             span: name.span.extend(value.span),
             value,
+            public: false,
         })
     }
 }

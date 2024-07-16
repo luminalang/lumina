@@ -1,23 +1,21 @@
 use std:math [Compare [..]]
 
-type Maybe a = Just a | Nothing
+pub type Maybe a = Just a | Nothing
 
-fn isJust m as Maybe a -> bool =
+pub fn isJust m as Maybe a -> bool =
   match m
   | Just _  -> true
   | Nothing -> false
 
-fn or f opt as fn(a), Maybe a -> a =
+pub fn or f opt as fn(a), Maybe a -> a =
   match opt
   | Just a  -> a
   | Nothing -> f
 
-fn map f m as fn(a -> b), Maybe a -> Maybe b = 
+pub fn map f m as fn(a -> b), Maybe a -> Maybe b = 
   match m
   | Just a  -> Just (f a)
   | Nothing -> Nothing
-
-fn identity a as a -> a = a
 
 when a can Compare
 impl Compare for Maybe a

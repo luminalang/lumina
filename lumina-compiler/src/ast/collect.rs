@@ -162,7 +162,7 @@ impl<'s> Collector<'s> {
     fn include_func(
         &mut self,
         module: key::Module,
-        mut func: parser::func::Declaration<'s>,
+        func: parser::func::Declaration<'s>,
         can_be_resolved: bool,
         to_body: impl FnOnce(Option<parser::func::Body<'s>>) -> Option<FuncBody<'s>>,
     ) -> Option<key::Func> {
@@ -173,6 +173,8 @@ impl<'s> Collector<'s> {
         if attributes.precedence.is_none() && is_op(*func.header.name) {
             attributes.precedence = Some(DEFAULT_OPERATOR_PRECEDENCE);
         }
+
+        let vis = Visibility::from_public_flag(module, attributes.shared.public);
 
         let poison_body = || {
             FuncBody::Func(func::Body {
@@ -214,8 +216,7 @@ impl<'s> Collector<'s> {
             self.entities.fattributes.push_as(fkey, attributes);
             if can_be_resolved {
                 let nfunc = NFunc::Key(fkey.value);
-                self.lookups
-                    .declare(module, Visibility::Public, *name, module, nfunc);
+                self.lookups.declare(module, vis, *name, module, nfunc);
             }
 
             Some(fkey.value)
@@ -237,6 +238,8 @@ impl<'s> Collector<'s> {
         }
 
         let attributes = attr::TypeAttr::parse(module, &self.sources, &ty.attributes);
+
+        let visiblity = Visibility::from_public_flag(module, attributes.shared.public);
 
         if is_targetted(&attributes.shared, &self.target) {
             let kind = match ty.body {
@@ -308,10 +311,9 @@ impl<'s> Collector<'s> {
                 }
             };
 
-            self.lookups
-                .declare(module, Visibility::Public, name, module, kind);
+            self.lookups.declare(module, visiblity, name, module, kind);
 
-            self.include_tydef_members(module, kind);
+            self.include_tydef_members(module, visiblity, kind);
 
             Some(kind)
         } else {
@@ -370,16 +372,15 @@ impl<'s> Collector<'s> {
         let key = self.entities.vals[module].next_key();
         let (header, body, attributes) = val_to_func(key, val);
         let fkey = self.entities.fheaders.push(module, header);
+        let visibility = Visibility::from_public_flag(module, attributes.shared.public);
         self.entities.fattributes.push_as(fkey, attributes);
         self.entities.fbodies.push_as(fkey, body);
         self.entities.vals.push_as(module.m(key), fkey);
         self.lookups
-            .declare(module, Visibility::Public, name, module, NFunc::Val(key));
+            .declare(module, visibility, name, module, NFunc::Val(key));
     }
 
-    fn include_tydef_members(&mut self, module: key::Module, kind: key::TypeKind) {
-        let vis = Visibility::Module(module);
-
+    fn include_tydef_members(&mut self, module: key::Module, vis: Visibility, kind: key::TypeKind) {
         match kind {
             key::TypeKind::Record(rkey) => self.entities.field_names[module.m(rkey)]
                 .iter()
@@ -457,6 +458,10 @@ impl<'s> Collector<'s> {
             ParseError::NestedWhere { previous, kw } => error
                 .eline(kw, "unexpected `where`")
                 .iline(previous, "function may only have one set of where-bindings"),
+            ParseError::BadHeaderForWhere(span, token) => error.eline(
+                span,
+                format!("where bindings can not be prefixed by {}", token.describe()),
+            ),
         }
         .emit()
     }
@@ -502,6 +507,8 @@ impl<'s> Collector<'s> {
     fn link_up_import(&mut self, module: key::Module, import: r#use::Declaration<'s>) {
         let path = import.path.as_slice();
 
+        let vis = Visibility::from_public_flag(module, import.public);
+
         match self.lookups.resolve_module(module, path) {
             Ok(Mod { key: Entity::Module(dst), .. }) => {
                 let name = import
@@ -509,7 +516,6 @@ impl<'s> Collector<'s> {
                     .map(|v| v.value)
                     .unwrap_or_else(|| path.last().unwrap());
 
-                let vis = Visibility::Module(module);
                 self.lookups
                     .declare_module_link(module, vis, name.to_string(), dst);
 
@@ -517,7 +523,7 @@ impl<'s> Collector<'s> {
                     panic!("module import parameter syntax has been deprecated in favor of project-wide type parameters");
                 }
 
-                self.resolve_exposed_entities(module, dst, import.exposing);
+                self.resolve_exposed_entities(module, dst, vis, import.exposing);
             }
             Ok(_) => panic!("ET: this is not a module, but something else"),
             Err(err) => self
@@ -530,14 +536,16 @@ impl<'s> Collector<'s> {
         &mut self,
         module: key::Module,
         dst: key::Module,
+        v: Visibility,
         exposing: Vec<Tr<r#use::Exposed<'s>>>,
     ) {
         for exposed in exposing {
             let span = exposed.span;
 
-            let v = Visibility::Module(module);
-
-            match self.lookups.resolve_entity_in(module, dst, exposed.name) {
+            match self
+                .lookups
+                .resolve_entity_in(module, dst, exposed.name, false)
+            {
                 Ok(entity) => match entity.key {
                     Entity::Func(nfunc) => {
                         self.forbid_members(module, "function", &exposed);
@@ -706,7 +714,7 @@ fn val_to_func<'s>(
         ast::FuncAttr {
             inline: false,
             precedence: None,
-            shared: ast::SharedAttr::new(),
+            shared: ast::SharedAttr { public: val.public, ..ast::SharedAttr::new() },
             extern_: None,
         },
     )

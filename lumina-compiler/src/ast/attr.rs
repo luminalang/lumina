@@ -1,16 +1,13 @@
 use crate::ast::Sources;
+use derive_new::new;
 use lumina_key as key;
 use lumina_parser as parser;
 use lumina_util::{Span, Spanned, Tr};
 
+#[derive(new)]
 pub struct ModuleAttr<'s> {
+    #[new(default)]
     pub lang_items: Vec<(Tr<&'s str>, parser::Type<'s>)>,
-}
-
-impl<'s> ModuleAttr<'s> {
-    pub fn new() -> Self {
-        Self { lang_items: vec![] }
-    }
 }
 
 impl<'s> ModuleAttr<'s> {
@@ -36,11 +33,16 @@ impl<'s> ModuleAttr<'s> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, new)]
 pub struct SharedAttr<'s> {
+    #[new(default)]
     pub platforms: Vec<&'s str>,
+    #[new(default)]
     pub lang_items: Vec<(Tr<&'s str>, parser::Type<'s>)>,
+    #[new(default)]
     pub deprecated: Option<&'s str>,
+    #[new(default)]
+    pub public: bool,
 }
 
 #[derive(Debug, Default)]
@@ -139,10 +141,6 @@ impl<'s> FuncAttr<'s> {
 }
 
 impl<'s> SharedAttr<'s> {
-    pub fn new() -> Self {
-        Self { platforms: vec![], lang_items: vec![], deprecated: None }
-    }
-
     fn parse_attr(
         &mut self,
         span: Span,
@@ -153,7 +151,11 @@ impl<'s> SharedAttr<'s> {
             ["langItem"] => lang_item(entry, &mut self.lang_items),
             ["platform"] => {
                 self.platforms = strings(params, "one or more platform names")?;
-                return Ok(());
+                Ok(())
+            }
+            ["pub"] => {
+                self.public = true;
+                Ok(())
             }
             _ => Err(Error::Unknown(span)),
         }

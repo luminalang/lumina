@@ -155,6 +155,22 @@ impl<'a> Parser<'a> {
                 self.attribute(span)
                     .and_then(|attribute| self.declaration().map(|decl| self.apply_attributes(attribute, decl)))
             },
+            T::Pub => {
+                let pub_expr = vec![Expr::name("pub".tr(span))];
+                self.declaration().map(|(span, decl)|
+                    match decl {
+                        Declaration::Use(mut r#use) => {
+                            r#use.public = true;
+                            Declaration::Use(r#use)
+                        }
+                        Declaration::Val(mut val) => {
+                            val.public = true;
+                            Declaration::Val(val)
+                        }
+                        decl => self.apply_attributes(pub_expr, (span, decl)),
+                    }
+                )
+            },
             T::OpenModuleAttribute => wrap(|attrs| Declaration::ModuleAttribute(span, attrs), self.attribute(span)),
             T::Fn => wrap(Declaration::Function, self.func(when::Constraints::empty(), None, vec![])),
             T::Type => wrap(Declaration::Type, self.type_decleration(vec![])),
@@ -169,10 +185,20 @@ impl<'a> Parser<'a> {
                     return self.declaration();
                 };
 
-                select! { self, "function or implementation declaration", span;
-                    T::Fn => wrap(Declaration::Function, self.func(when, None, vec![])),
-                    T::Default => self.handle_default(when),
-                    T::Impl => wrap(Declaration::Impl, self.r#impl(span, false, when, vec![]))
+                match self.declaration() {
+                    Some((_, Declaration::Function(mut decl))) => {
+                        decl.header.when.generics.extend(when.generics);
+                        Some(Declaration::Function(decl))
+                    },
+                    Some((_, Declaration::Impl(mut decl))) => {
+                        decl.header.when.generics.extend(when.generics);
+                        Some(Declaration::Impl(decl))
+                    },
+                    Some((span, _)) => {
+                        self.err_expected_but_got(span, "function or implementation declaration", "another declaration");
+                        None
+                    },
+                    None => todo!(),
                 }
             },
             T::EOF => None

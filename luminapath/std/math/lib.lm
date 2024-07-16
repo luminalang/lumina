@@ -1,4 +1,4 @@
-trait Num
+pub trait Num
   @[precedence 4500]
   fn ** as self, self -> self
   @[precedence 5000]
@@ -16,7 +16,7 @@ trait Num
   fn succ n as self -> self = n + Num:one
   fn pred n as self -> self = n - Num:one
 
-trait Compare
+pub trait Compare
   @[precedence 4000]
   fn == as self, self -> bool
   @[precedence 4000]
@@ -149,4 +149,3 @@ impl Compare for i64
   fn == a b as self, self -> bool = builtin:eq a b
   fn < a b  as self, self -> bool = builtin:lt a b
   fn > a b  as self, self -> bool = builtin:gt a b
-

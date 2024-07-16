@@ -1,21 +1,23 @@
 // Overwrite the data stored at pointer location with supplied value
-fn write ptr v as *a, a -> () = builtin:write ptr v
+pub fn write ptr v as *a, a -> () = builtin:write ptr v
 
 // Dereference the pointer
-fn deref ptr as *a -> a = builtin:deref ptr
+pub fn deref ptr as *a -> a = builtin:deref ptr
 
 // Offset the pointer by a set amount of bytes
-fn offset ptr by as *a, int -> *a = builtin:offset ptr by
+pub fn offset ptr by as *a, int -> *a = builtin:offset ptr by
 
-fn null as *a = builtin:transmute 0
-
-when t can Size
-fn alloc as *t = std:prelude:alloc Size(self as t):of as *t
+pub fn null as *a = builtin:transmute 0
 
 when t can Size
-fn dealloc ptr as *t -> () = std:prelude:free (ptr as *u8)
+pub fn alloc as *t = std:prelude:alloc Size(self as t):of as *t
 
 when t can Size
-fn box v as t -> *t =
+pub fn dealloc ptr as *t -> () = std:prelude:free (ptr as *u8)
+
+when t can Size
+pub fn box v as t -> *t =
   let ptr = alloc(t as t) in
     do write ptr v then ptr
+
+fn test = 20

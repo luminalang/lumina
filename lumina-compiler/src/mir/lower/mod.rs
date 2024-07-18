@@ -271,6 +271,18 @@ pub fn emit_fin_error<'s, T>(
                 )
                 .emit();
         }
+        FinError::TS(lumina_typesystem::FinError::NotRecord(span, ty, fields)) => sources
+            .error("type mismatch")
+            .m(module)
+            .eline(
+                span,
+                format!(
+                    "expected a record with the fields {{{}}}",
+                    fields.iter().format(", ")
+                ),
+            )
+            .text(format!("but got `{}`", tfmt.fmt(ty)))
+            .emit(),
     }
 }
 

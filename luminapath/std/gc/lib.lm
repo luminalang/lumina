@@ -1,5 +1,9 @@
 use std:ptr
 
+// used for internal debugging
+@[extern "mmtk_info_log_number", platform "linux"]
+pub fn logn as int -> ()
+
 @[extern "mmtk_init", platform "linux"]
 fn lumina_gc_init as uint -> ()
 

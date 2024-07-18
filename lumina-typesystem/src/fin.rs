@@ -27,6 +27,7 @@ pub struct Finalizer<'a, 'f, 's> {
 
 pub enum FinError<'s> {
     FieldNotFound(M<key::Record>, Tr<&'s str>),
+    NotRecord(Span, Type, Vec<Tr<&'s str>>),
     Record(RecordError<'s>),
 }
 
@@ -109,8 +110,12 @@ impl<'a, 'f, 's> Finalizer<'a, 'f, 's> {
                 Some((key, params))
             }
             tenv::RecordAssignment::Redirect(var) => self.record(var),
-            tenv::RecordAssignment::NotRecord(_) => {
-                todo!("i think we're meant to error on this as well? or is this just poison");
+            tenv::RecordAssignment::NotRecord(ty) => {
+                let fields = rdata.fields.values().cloned().collect();
+                let span = rdata.span;
+                let ty = self.apply(&ty);
+                self.errors.push(FinError::NotRecord(span, ty, fields));
+                None
             }
             tenv::RecordAssignment::Unknown(rerror) => {
                 if !rdata.verified {

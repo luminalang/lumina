@@ -8,7 +8,7 @@ use log::info;
 use mmtk::memory_manager;
 use mmtk::scheduler::GCWorker;
 use mmtk::util::opaque_pointer::*;
-use mmtk::util::{Address, ObjectReference};
+use mmtk::util::{constants, Address, ObjectReference};
 use mmtk::vm::ObjectModel;
 use mmtk::AllocationSemantics;
 use mmtk::MMTKBuilder;
@@ -80,9 +80,14 @@ pub extern "C" fn mmtk_destroy_mutator(mutator: *mut Mutator<DummyVM>) {
 }
 
 #[no_mangle]
+pub extern "C" fn mmtk_info_log_number(n: i64) {
+    info!("from lumina application: id {n}");
+}
+
+#[no_mangle]
 pub extern "C" fn mmtk_alloc(
     mutator: *mut Mutator<DummyVM>,
-    size: usize,
+    mut size: usize,
     align: usize,
     offset: usize,
     mut semantics: AllocationSemantics,
@@ -100,6 +105,14 @@ pub extern "C" fn mmtk_alloc(
     {
         semantics = AllocationSemantics::Los;
     }
+
+    // Temporary hack to respect MMTK's minimal allocation size.
+    //
+    // We should definitely be doing these sort of things statically.
+    if size < constants::MIN_OBJECT_SIZE {
+        size = constants::MIN_OBJECT_SIZE;
+    }
+
     let address =
         memory_manager::alloc::<DummyVM>(unsafe { &mut *mutator }, size, align, offset, semantics);
 

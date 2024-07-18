@@ -180,9 +180,13 @@ impl<'a, 's> PatLower<'a, 's> {
 
                 Ok(entity) => {
                     let name = path.last().unwrap();
-                    self.ast
-                        .sources
-                        .emit_wrong_entity(self.module, span, name, "type", entity.key);
+                    self.ast.sources.emit_wrong_entity(
+                        self.module,
+                        span,
+                        name,
+                        "variant",
+                        entity.key,
+                    );
 
                     Pattern::Poison
                 }

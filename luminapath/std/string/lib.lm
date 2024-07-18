@@ -1,6 +1,7 @@
 use std:ptr
-use std:list [List]
+use std:list [List, Slice]
 use std:list:vec [Vec]
+use std:gc [logn]
 
 pub type string {
   inner [u8]
@@ -9,7 +10,12 @@ pub type string {
 pub fn len {inner} as string -> uint = inner . len
 
 fn toByteVec str as string -> Vec u8 =
-  let len = len str in
-  let ptr = std:prelude:alloc (len as int) in
-    do str.inner . forEach #(ptr:write ptr)
-    then { Vec u8 | ptr, len }
+  match str.inner
+  | Slice {std:list:vec:Slice u8 | vec, start} -> vec
+  | _ -> 
+    let len = len str in
+    let ptr = std:prelude:alloc (len as int) in
+      do str.inner
+         . fold #(\i v -> do ptr:write (ptr:offset ptr i) v then i + 1) 0
+      then { Vec u8 | ptr, len }
+       

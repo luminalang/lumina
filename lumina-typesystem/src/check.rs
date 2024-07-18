@@ -202,7 +202,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 }
                 _ => {
                     warn!("Assuming we will error on the incorrect record assignment during type finalization");
-                    *assignment = RecordAssignment::None;
+                    *assignment = RecordAssignment::NotRecord(other.value.clone());
                     ok
                 }
             },
@@ -472,7 +472,8 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 self.call_field_as_function(span, var, fname, params)
             }
             RecordAssignment::Unknown(_) => {
-                todo!("poison");
+                None
+                // todo!("poison: {rerror:?}");
                 // but how will we actually poison?
                 //
                 // we probably need to make the call_*_as_function return type more special

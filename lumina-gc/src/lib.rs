@@ -30,6 +30,8 @@ impl VMBinding for DummyVM {
 
     /// Allowed maximum alignment in bytes.
     const MAX_ALIGNMENT: usize = 1 << 6;
+
+    const MIN_ALIGNMENT: usize = 4;
 }
 
 pub static GC: OnceLock<Box<MMTK<DummyVM>>> = OnceLock::new();

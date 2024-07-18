@@ -13,10 +13,10 @@
 // 
  
 @[platform "linux"]
-fn stdout = 1
+pub fn stdout = 1
 
 @[platform "linux"]
-fn stdin  = 0
+pub fn stdin  = 0
 
 @[platform "linux"]
 pub fn print str as string -> () =
@@ -24,12 +24,15 @@ pub fn print str as string -> () =
     do libc_write stdout ptr (len as int)
     then ()
 
-@[extern "write", platform "linux-gnu"]
-fn libc_write as int, *u8, int -> int
-@[extern "write", platform "linux-musl"]
-fn libc_write as int, *u8, int -> int
+@[extern "write", platform "linux"]
+pub fn libc_write as int, *u8, int -> int
 
-@[extern "read", platform "linux-gnu"]
-fn libc_read as int, *u8, int -> int
-@[extern "read", platform "linux-musl"]
-fn libc_read as int, *u8, int -> int
+@[extern "read", platform "linux"]
+pub fn libc_read as int, *u8, int -> int
+
+@[extern "raise", platform "linux"]
+pub fn libc_raise as int -> ()
+
+pub fn interupt = libc_raise sigint
+
+fn sigint = 2

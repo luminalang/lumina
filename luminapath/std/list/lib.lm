@@ -90,4 +90,7 @@ pub fn forEach f list as fn(a -> ()), [a] -> () =
   | Nil -> ()
 
 pub fn itimes f n as fn(uint -> ()), uint -> () = 
-  if n == 0 then () else do f n then itimes #f (n - 1)
+  next 0
+ where
+  fn next i as uint -> () =
+    if n == i then () else do f i then next (i + 1)

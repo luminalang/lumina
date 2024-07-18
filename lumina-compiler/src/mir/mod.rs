@@ -165,20 +165,24 @@ pub struct Current {
 
 #[derive(new, Clone, Copy)]
 struct RSolver<'a, 's> {
-    field_lookup: &'a HashMap<&'s str, Vec<M<key::Record>>>,
+    field_lookup: &'a Map<key::Module, HashMap<&'s str, Vec<M<key::Record>>>>,
     records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Type>)>,
     ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
     fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
 }
 
 impl<'a, 's> RSolver<'a, 's> {
-    pub fn as_typesystem<'t>(&'t mut self, env: &'t mut TEnv<'s>) -> TypeSystem<'t, 's> {
+    pub fn as_typesystem<'t>(
+        &'t mut self,
+        module: key::Module,
+        env: &'t mut TEnv<'s>,
+    ) -> TypeSystem<'t, 's> {
         TypeSystem::new(
             env,
             self.records,
             self.ftypes,
             self.fnames,
-            self.field_lookup,
+            &self.field_lookup[module],
         )
     }
 }
@@ -228,10 +232,8 @@ impl Current {
 
 #[derive(new, Clone, Copy)]
 struct LangItems {
-    list_default: Option<M<key::TypeKind>>,
-    listable: M<key::Trait>,
-    reflect_type: M<key::Sum>,
-    string: M<key::Record>,
+    list_default: M<key::TypeKind>,
+    pinfo: ProjectInfo,
 }
 
 fn verify_impl_headers<'s>(

@@ -1,6 +1,6 @@
 use std:maybe [Maybe [..]]
 use std:math [Compare, Num [+]]
-use vec [Vec]
+use vec [Vec, Slice]
 
 @![langItem(list as List)]
 
@@ -14,7 +14,7 @@ pub trait Listable a
   fn with_capacity as int -> self
   fn split as self -> Maybe (a, self)
 
-pub type List a = Slice (vec:Slice a) | Concat self self | Singleton a | Nil
+pub type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
 
 impl Listable a for List a
   fn : x xs as a, List a -> List a =

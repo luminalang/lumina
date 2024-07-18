@@ -109,9 +109,7 @@ impl<'a, 's> Verify<'a, 's> {
                 match_eval_ty.value
             }
             hir::Expr::List(elems, ivar) => {
-                let Some(list) = self.get_list(expr.span) else {
-                    return IType::poison().tr(expr.span);
-                };
+                let list = self.items.list_default;
 
                 let mut checker = SameAsCheck::new("list elements");
                 if elems.is_empty() {}
@@ -133,7 +131,8 @@ impl<'a, 's> Verify<'a, 's> {
                 hir::Literal::Int(_, _, var) => IType::Var(*var),
                 hir::Literal::Float(_) => Prim::Float.into(),
                 hir::Literal::String(_) => {
-                    todo!("string type");
+                    let record = self.items.pinfo.string;
+                    IType::defined(record, vec![])
                 }
             },
             hir::Expr::Poison => Prim::Poison.into(),

@@ -237,9 +237,8 @@ impl<'p, 'l, 'a, 's> TreeBuilder<'p, 'l, 'a, 's> {
                 DecTreeBranch::Tuple(elems.len(), Box::new(self.from_queue()))
             }
             hir::Pattern::Cons(elems, inner_var) => {
-                let Some(type_) = self.l.items.list_default else {
-                    return DecTree { point, branch: DecTreeBranch::Poison };
-                };
+                let type_ = self.l.items.list_default;
+
                 let inner = self
                     .l
                     .finalizer(|mut fin| (fin.var(*inner_var), fin.errors));
@@ -259,9 +258,7 @@ impl<'p, 'l, 'a, 's> TreeBuilder<'p, 'l, 'a, 's> {
                 )
             }
             hir::Pattern::Nil(inner_var) => {
-                let Some(type_) = self.l.items.list_default else {
-                    return DecTree { point, branch: DecTreeBranch::Poison };
-                };
+                let type_ = self.l.items.list_default;
                 let inner = self
                     .l
                     .finalizer(|mut fin| (fin.var(*inner_var), fin.errors));

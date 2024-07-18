@@ -11,7 +11,7 @@ impl<'a> FuncLower<'a> {
             // TODO: we also want to edge-case tail calls here
             _ => {
                 let value = self.expr_to_value(expr);
-                self.current.ssa.return_(value);
+                self.ssa().return_(value);
             }
         }
     }
@@ -36,7 +36,7 @@ impl<'a> FuncLower<'a> {
     fn yield_to_value(&mut self, local: mir::Local) -> Value {
         match local {
             mir::Local::Param(pid) if self.current.has_captures => {
-                assert_eq!(self.current.ssa.block(), ssa::Block::entry());
+                assert_eq!(self.ssa().block(), ssa::Block::entry());
                 Value::BlockParam(ssa::BlockParam(pid.0 + 1))
                 // We no longer use a tuple for the parameters
                 //
@@ -48,10 +48,10 @@ impl<'a> FuncLower<'a> {
 
                 // let fty = self.lir.types.types.type_of_field(mk, field);
 
-                // self.current.ssa.field(ptuple.into(), mk, field, fty).into()
+                // self.ssa().field(ptuple.into(), mk, field, fty).into()
             }
             mir::Local::Param(pid) => {
-                assert_eq!(self.current.ssa.block(), ssa::Block::entry());
+                assert_eq!(self.ssa().block(), ssa::Block::entry());
                 Value::BlockParam(ssa::BlockParam(pid.0))
             }
             mir::Local::Binding(bind) => self.current.bindmap[&bind],
@@ -70,7 +70,7 @@ impl<'a> FuncLower<'a> {
                 // Add the captures as the first parameter
                 params.insert(0, captures);
 
-                self.current.ssa.call(mfunc, params, returns).value()
+                self.ssa().call(mfunc, params, returns).value()
             }
             mir::Expr::PartialLambda(lambda, inst, partials) => {
                 let (mfunc, captures, _, _) = self.morphise_lambda(*lambda, inst);
@@ -111,11 +111,9 @@ impl<'a> FuncLower<'a> {
                 let to_call = self.yield_to_value(*local);
                 let ty = self.type_of_value(to_call);
                 match ty {
-                    MonoType::FnPointer(_, ret) => self
-                        .current
-                        .ssa
-                        .call(to_call, params, (*ret).clone())
-                        .into(),
+                    MonoType::FnPointer(_, ret) => {
+                        self.ssa().call(to_call, params, (*ret).clone()).into()
+                    }
                     MonoType::Monomorphised(mk) => self.call_closure(mk, to_call, params),
                     _ => panic!("attempted to call {ty:#?} as a function"),
                 }
@@ -124,10 +122,7 @@ impl<'a> FuncLower<'a> {
                 mir::Expr::CallFunc(M { value: ast::NFunc::Val(val), module }, _, _) => {
                     let key = module.m(*val);
                     let ty = self.lir.vals[key].clone();
-                    self.current
-                        .ssa
-                        .val_to_ref(key, MonoType::pointer(ty))
-                        .value()
+                    self.ssa().val_to_ref(key, MonoType::pointer(ty)).value()
                 }
                 other => panic!("non-val given to val_to_ref builtin: {other}"),
             },
@@ -144,7 +139,7 @@ impl<'a> FuncLower<'a> {
                 let mk = morph.record(*record, types);
 
                 let ty = self.lir.types.types.type_of_field(mk, *field);
-                let v = self.current.ssa.field(value, mk, *field, ty);
+                let v = self.ssa().field(value, mk, *field, ty);
 
                 Value::V(v)
             }
@@ -163,7 +158,7 @@ impl<'a> FuncLower<'a> {
                     .map(|field| values[fields.iter().position(|(f, _)| *f == field).unwrap()])
                     .collect();
 
-                self.current.ssa.construct(sorted, ty).into()
+                self.ssa().construct(sorted, ty).into()
             }
             mir::Expr::UInt(bitsize, n) => Value::UInt(*n, *bitsize),
             mir::Expr::Int(bitsize, n) => Value::Int(*n, *bitsize),
@@ -177,8 +172,7 @@ impl<'a> FuncLower<'a> {
 
                 let mt = self.lir.types.get_or_make_tuple(types);
 
-                self.current
-                    .ssa
+                self.ssa()
                     .construct(params, MonoType::Monomorphised(mt))
                     .into()
             }
@@ -191,18 +185,18 @@ impl<'a> FuncLower<'a> {
 
                 match from.1.cmp(&to.1) {
                     Ordering::Equal => inner,
-                    Ordering::Less => self.current.ssa.extend(inner, from.0, ty).into(),
-                    Ordering::Greater => self.current.ssa.reduce(inner, ty).into(),
+                    Ordering::Less => self.ssa().extend(inner, from.0, ty).into(),
+                    Ordering::Greater => self.ssa().reduce(inner, ty).into(),
                 }
             }
             mir::Expr::Deref(inner) => {
                 let inner = self.expr_to_value(&inner);
                 let ty = self.type_of_value(inner).deref();
-                self.current.ssa.deref(inner, ty).into()
+                self.ssa().deref(inner, ty).into()
             }
             mir::Expr::Write(elems) => {
                 let [ptr, value] = self.params_to_values(&**elems).try_into().unwrap();
-                self.current.ssa.write(ptr, value).into()
+                self.ssa().write(ptr, value).into()
             }
             mir::Expr::ObjectCast(expr, weak_impltor, trait_, trait_params) => {
                 let expr = self.expr_to_value(expr);
@@ -260,9 +254,9 @@ impl<'a> FuncLower<'a> {
                 };
 
                 match *cmp {
-                    "eq" => self.current.ssa.cmp(params, Ordering::Equal, bitsize),
-                    "lt" => self.current.ssa.cmp(params, Ordering::Less, bitsize),
-                    "gt" => self.current.ssa.cmp(params, Ordering::Greater, bitsize),
+                    "eq" => self.ssa().cmp(params, Ordering::Equal, bitsize),
+                    "lt" => self.ssa().cmp(params, Ordering::Less, bitsize),
+                    "gt" => self.ssa().cmp(params, Ordering::Greater, bitsize),
                     _ => panic!("unknown comparison operator: {cmp}"),
                 }
                 .value()
@@ -275,10 +269,10 @@ impl<'a> FuncLower<'a> {
 
                 let ty = self.type_of_value(left);
                 match *name {
-                    "plus" => self.current.ssa.add(left, right, ty).into(),
-                    "minus" => self.current.ssa.sub(left, right, ty).into(),
-                    "mul" => self.current.ssa.mul(left, right, ty).into(),
-                    "div" => self.current.ssa.div(left, right, ty).into(),
+                    "plus" => self.ssa().add(left, right, ty).into(),
+                    "minus" => self.ssa().sub(left, right, ty).into(),
+                    "mul" => self.ssa().mul(left, right, ty).into(),
+                    "div" => self.ssa().div(left, right, ty).into(),
                     _ => panic!("unknown num builtin: {name}"),
                 }
             }
@@ -292,8 +286,8 @@ impl<'a> FuncLower<'a> {
         if size == 0 {
             Value::UInt(0, Bitsize::default()) // TODO: target-dependent pointer size
         } else {
-            let ptr = self.current.ssa.alloc(size, ty);
-            self.current.ssa.write(ptr.value(), value);
+            let ptr = self.ssa().alloc(size, ty);
+            self.ssa().write(ptr.value(), value);
             Value::V(ptr)
         }
     }
@@ -307,27 +301,26 @@ impl<'a> FuncLower<'a> {
         match self.resolve_nfunc(func, inst) {
             ResolvedNFunc::Extern(key, ret) => {
                 let params = self.params_to_values(params);
-                self.current.ssa.call_extern(key, params, ret).into()
+                self.ssa().call_extern(key, params, ret).into()
             }
             ResolvedNFunc::Static(mfunc, ret) => {
                 let params = self.params_to_values(params);
-                self.current.ssa.call(mfunc, params, ret).into()
+                self.ssa().call(mfunc, params, ret).into()
             }
             ResolvedNFunc::Sum { tag, payload_size, ty } => {
                 let params = self.params_to_values(params);
 
                 let dataty = MonoType::SumDataCast { largest: payload_size };
-                let parameters = self.current.ssa.construct(params, dataty);
+                let parameters = self.ssa().construct(params, dataty);
 
-                self.current
-                    .ssa
+                self.ssa()
                     .construct(vec![tag, parameters.into()], MonoType::Monomorphised(ty))
                     .into()
             }
             ResolvedNFunc::Val(key, ty) => {
                 assert!(params.is_empty(), "giving parameters to the function returnt by a static value is not yet supported");
-                let v = self.current.ssa.val_to_ref(key, ty.clone());
-                self.current.ssa.deref(v.into(), ty).into()
+                let v = self.ssa().val_to_ref(key, ty.clone());
+                self.ssa().deref(v.into(), ty).into()
             }
         }
     }
@@ -343,15 +336,13 @@ impl<'a> FuncLower<'a> {
         debug_assert_eq!(MonoType::u8_pointer(), objptr_type);
 
         let objptr = self
-            .current
-            .ssa
+            .ssa()
             .field(obj, objty, TRAIT_OBJECT_DATA_FIELD, objptr_type);
         let vtableptr = self
-            .current
-            .ssa
+            .ssa()
             .field(obj, objty, VTABLE_FIELD, vtable_ptr_type.clone());
         let vtable_type = vtable_ptr_type.clone().deref();
-        let vtable = self.current.ssa.deref(vtableptr.into(), vtable_type);
+        let vtable = self.ssa().deref(vtableptr.into(), vtable_type);
 
         let (fnptr, ret) = {
             let call = key::RecordField(0);
@@ -360,23 +351,20 @@ impl<'a> FuncLower<'a> {
             let MonoType::FnPointer(_, ret) = ty.clone() else {
                 panic!("first field of vtable was not an FnPointer")
             };
-            let call_field =
-                self.current
-                    .ssa
-                    .field(vtable.into(), vtable_key, key::RecordField(0), ty);
+            let call_field = self
+                .ssa()
+                .field(vtable.into(), vtable_key, key::RecordField(0), ty);
             (call_field, *ret)
         };
 
         let ptypes = params.iter().map(|v| self.type_of_value(*v)).collect();
         let param_tuple_ty = self.lir.types.get_or_make_tuple(ptypes);
         let param_tuple = self
-            .current
-            .ssa
+            .ssa()
             .construct(params, MonoType::Monomorphised(param_tuple_ty));
         let call_method_params = vec![Value::V(objptr), Value::V(param_tuple)];
 
-        self.current
-            .ssa
+        self.ssa()
             .call(Value::from(fnptr), call_method_params, ret)
             .into()
     }
@@ -431,7 +419,7 @@ impl<'a> FuncLower<'a> {
 
                 todo!();
 
-                // let parameters = self.current.ssa.construct(params, ty);
+                // let parameters = self.ssa().construct(params, ty);
 
                 // self.current
                 //     .ssa
@@ -462,18 +450,16 @@ impl<'a> FuncLower<'a> {
         );
 
         self.iquery
-            .query(trait_, concrete_impltor, |imp| {
+            .for_each_relevant(trait_, concrete_impltor, |imp| {
                 let iforall = &self.mir.impls[imp];
                 let (_, trait_params) = &self.mir.itraits[imp];
                 let impltor = &self.mir.impltors[imp];
 
                 let mut comp = lumina_typesystem::Compatibility::new(
                     &self.iquery,
-                    |generic| match generic.kind {
-                        GenericKind::Parent => &iforall[generic.key].trait_constraints,
-                        _ => unreachable!(),
-                    },
-                    &|_, _, _, _| unreachable!(),
+                    &|_| panic!("un-monomorphised generic in LHS"),
+                    &iforall,
+                    &|_| unreachable!(),
                 );
 
                 (trtp

@@ -210,10 +210,24 @@ fn project_info<'s>(
         _ => None,
     })?;
 
+    let list_default = resolve_or_error(lookups, &["std", "prelude", "List"], |k| match k {
+        ast::Entity::Type(kind) => Some(kind),
+        _ => None,
+    })?;
+
     let string = resolve_or_error(lookups, &["std", "prelude", "string"], |k| match k {
         ast::Entity::Type(key::TypeKind::Record(key)) => Some(key),
         _ => None,
     })?;
+
+    let string_from_raw_parts = resolve_or_error(
+        lookups,
+        &["std", "prelude", "string_from_raw_parts"],
+        |k| match k {
+            ast::Entity::Func(ast::NFunc::Key(func)) => Some(func),
+            _ => None,
+        },
+    )?;
 
     Ok(compiler::ProjectInfo::new(
         main,
@@ -222,7 +236,9 @@ fn project_info<'s>(
         (alloc, dealloc),
         reflect_type,
         listable,
+        list_default,
         string,
+        string_from_raw_parts,
     ))
 }
 

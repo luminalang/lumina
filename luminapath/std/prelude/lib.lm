@@ -4,6 +4,7 @@ pub use std:string [string]
 pub use std:nothing [nothing]
 use std:ptr
 use std:list [Listable [:], List]
+use std:list:vec [Vec]
 
 @![langItem(list as List)]
 
@@ -27,6 +28,9 @@ pub type Type
 
 impl Size for a
   fn of as int = size_of_ty builtin:reflect_type(self as a)
+
+fn string_from_raw_parts ptr len as *u8, uint -> string =
+  { string | inner = List:Slice ({ std:list:vec:Vec u8 | ptr, len } . slice) }
 
 fn size_of_ty ty as Type -> int =
     match ty

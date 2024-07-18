@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use lumina_key as key;
 use lumina_key::{Map, M};
 use lumina_util::Span;
@@ -74,6 +75,16 @@ pub struct Constraint<T> {
     pub span: Span,
     pub trait_: M<key::Trait>,
     pub params: Vec<T>,
+}
+
+impl<T: fmt::Display> fmt::Display for Constraint<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.params.is_empty() {
+            self.trait_.fmt(f)
+        } else {
+            write!(f, "({} {})", self.trait_, self.params.iter().format(" "))
+        }
+    }
 }
 
 impl fmt::Display for Generic {

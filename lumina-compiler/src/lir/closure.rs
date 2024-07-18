@@ -7,7 +7,7 @@ impl<'a> FuncLower<'a> {
     pub fn partially_applicate_func(&mut self, target: MonoFunc, given: Vec<lir::Value>) -> Value {
         let given_types = given.iter().map(|v| self.type_of_value(*v)).collect();
         let vtable = self.partial_application_vtable(target, given_types);
-        let data = self.current.ssa.construct(given, vtable.object.into());
+        let data = self.ssa().construct(given, vtable.object.into());
         self.construct_dyn_object(&vtable, data.value())
     }
 
@@ -15,13 +15,9 @@ impl<'a> FuncLower<'a> {
     pub fn construct_dyn_object(&mut self, vtable: &VTable, data: Value) -> Value {
         let data_ptr = self.heap_alloc(data, vtable.data_type.clone());
 
-        let vtable_ptr = self
-            .current
-            .ssa
-            .val_to_ref(vtable.val, vtable.vtable_type.into());
+        let vtable_ptr = self.ssa().val_to_ref(vtable.val, vtable.vtable_type.into());
 
-        self.current
-            .ssa
+        self.ssa()
             .construct(vec![data_ptr, vtable_ptr.into()], vtable.object.into())
             .value()
     }
@@ -89,13 +85,12 @@ impl<'a> FuncLower<'a> {
                 // Call the target
                 blocks.jump(target, params);
 
-                let forwarding_func = Function {
-                    symbol: format!("VTable_{target}_{object_type}"),
+                // Define the forwarding function
+                self.lir.push_function(
+                    format!("VTable_{target}_{object_type}"),
                     blocks,
-                    returns: ret.clone(),
-                };
-
-                self.lir.push_function(forwarding_func)
+                    ret.clone(),
+                )
             })
             .collect::<Vec<_>>();
 
@@ -192,13 +187,12 @@ impl<'a> FuncLower<'a> {
             // Call the target
             blocks.jump(target, params);
 
-            let forwarding_func = Function {
-                symbol: format!("VTable_({})_Closure", self.lir.functions[target].symbol),
+            // Define the forwarding func
+            self.lir.push_function(
+                format!("VTable_({})_Closure", self.lir.functions[target].symbol),
                 blocks,
-                returns: ret.clone(),
-            };
-
-            self.lir.push_function(forwarding_func)
+                ret.clone(),
+            )
         };
 
         let fns = std::iter::once(forwarding_func);
@@ -228,17 +222,12 @@ impl<'a> FuncLower<'a> {
             let v = blocks.construct(fn_pointers, vtable.into());
             blocks.return_(v.value());
 
-            let init_func = Function {
-                symbol: format!(
-                    "VTable_{}_{}_initialiser",
-                    self.ty_symbol(&data_type),
-                    self.ty_symbol(&MonoType::Monomorphised(vtable)),
-                ),
-                blocks,
-                returns: vtable.into(),
-            };
-
-            self.lir.push_function(init_func)
+            let init_name = format!(
+                "VTable_{}_{}_initialiser",
+                self.ty_symbol(&data_type),
+                self.ty_symbol(&MonoType::Monomorphised(vtable)),
+            );
+            self.lir.push_function(init_name, blocks, vtable.into())
         };
 
         let val = self.lir.vals.push(module, vtable.into());

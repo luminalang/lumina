@@ -88,6 +88,8 @@ impl<'s> Collector<'s> {
                 continue;
             }
 
+            //
+
             // prelude has already been included as module key 0
             if path.file_name() == Some(OsStr::new("prelude")) {
                 continue;

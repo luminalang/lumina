@@ -54,7 +54,6 @@ impl<'s> Lookups<'s> {
         let mut libs = HashMap::new();
         libs.insert("std", HashMap::new());
         libs.insert("ext", HashMap::new());
-        libs.insert("prelude", HashMap::new());
 
         Lookups { libs, modules, project: key::Module(u32::MAX) }
     }
@@ -126,7 +125,22 @@ impl<'s> Lookups<'s> {
         dst: key::Module,
     ) {
         let m = Mod { module, visibility, key: dst };
-        self.modules[module].child_modules.insert(name, m);
+        let children = &mut self.modules[module].child_modules;
+
+        // If we're shadowing the same entity with itself then make sure we use the highest
+        // visibility of either version.
+        if let Some(previous) = children.get_mut(&name) {
+            if previous.key == dst && previous.module == module {
+                if matches!(visibility, Visibility::Public)
+                    || matches!(previous.visibility, Visibility::Public)
+                {
+                    previous.visibility = Visibility::Public;
+                    return;
+                }
+            }
+        }
+
+        children.insert(name, m);
     }
 
     /// Resolve an entity and prioritise the function namespace

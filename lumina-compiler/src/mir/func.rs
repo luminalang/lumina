@@ -170,11 +170,8 @@ impl<'a, 's> Verify<'a, 's> {
 
                 let current = Current::new(func, fdef.lambdas.keys());
 
-                let ProjectInfo { listable, reflect_type, string, .. } = pinfo;
-
-                let langs = LangItems::new(fdef.list, listable, reflect_type, string);
-                let flookup = &fields[func.module];
-                let rsolver = RSolver::new(flookup, &hir.records, &hir.field_types, &hir.fnames);
+                let langs = LangItems::new(fdef.list, pinfo);
+                let rsolver = RSolver::new(fields, &hir.records, &hir.field_types, &hir.fnames);
                 let mut lower = Verify::new(
                     &hir, iquery, tenvs, rsolver, langs, funcs, rotable, current, pforall, fdef,
                 );
@@ -187,7 +184,8 @@ impl<'a, 's> Verify<'a, 's> {
 
     pub fn type_system(&mut self) -> TypeSystem<'_, 's> {
         let fkey = self.current.fkey;
-        self.rsolver.as_typesystem(&mut self.tenvs[fkey])
+        self.rsolver
+            .as_typesystem(fkey.module, &mut self.tenvs[fkey])
     }
 
     // Returns `None` if already lowering
@@ -375,21 +373,37 @@ impl<'a, 's> Verify<'a, 's> {
             }
         }
 
+        let pforall = self.pforall;
+
+        // TODO: I think this API is causing us problems.
+        //
+        // Because; the foralls given by `|generic| (forall)` is specific to the current function.
+        //
+        // But; if we're recursing and checking multiple layers, then the foralls are actually
+        // suddenly different no??
+        //
+        // I suppose we can "fix" that by constructing a new `Compatbility` in the iquery checker
+        // for recursive stuff. But; there *must* be a smarter way of doing this. This API is
+        // absolutely cursed.
+        //
+        // oh right, the reason we use `recurse` is because it doesn't have access to hir.itraits
+        // and hir.impltors.
+
         for (span, ty, con) in constraints {
+            let get_forall = &|gkind| match gkind {
+                GenericKind::Lambda(lkey) => &lambdas[lkey].typing.forall,
+                GenericKind::Entity => &typing.forall,
+                GenericKind::Parent => &pforall,
+            };
             let hit = lumina_typesystem::Compatibility::constraint(
                 self.iquery,
-                |generic| match generic.kind {
-                    GenericKind::Lambda(lkey) => {
-                        &lambdas[lkey].typing.forall[generic.key].trait_constraints
-                    }
-                    GenericKind::Entity => &typing.forall[generic.key].trait_constraints,
-                    GenericKind::Parent => todo!("???"),
-                },
-                &|mut comp, exp, ikey, trtp| {
+                &|ikey| {
                     let impltor = &self.hir.impltors[ikey];
+                    let iforall = &self.hir.impls[ikey];
                     let (_, trait_params) = &self.hir.itraits[ikey];
-                    comp.cmps(trait_params, trtp) && comp.cmp(&*impltor, exp)
+                    (iforall, impltor, trait_params)
                 },
+                &get_forall,
                 &ty,
                 &con,
             );
@@ -477,16 +491,6 @@ impl<'a, 's> Verify<'a, 's> {
 
         let module = self.module();
         InstInfo::new(module, inst, ptypes, returns.clone())
-    }
-
-    pub fn get_list(&self, span: Span) -> Option<M<key::TypeKind>> {
-        self.fdef.list.or_else(|| {
-            self.error("missing list lang item")
-                .m(self.module())
-                .eline(span, "")
-                .emit();
-            None
-        })
     }
 
     pub fn module_of_type(&mut self, ty: Tr<&IType>) -> Option<key::Module> {
@@ -730,7 +734,7 @@ impl<'a, 's> Verify<'a, 's> {
                     InstCall::LocalCall(span, ptypes, ptr, FuncKind::FnPointer)
                 }
                 "reflect_type" => {
-                    InstCall::Local(IType::defined(self.items.reflect_type, vec![]).tr(span))
+                    InstCall::Local(IType::defined(self.items.pinfo.reflect_type, vec![]).tr(span))
                 }
                 "abort" => InstCall::Local(IType::Var(self.vars().var(span)).tr(span)),
                 "transmute" => {
@@ -1032,19 +1036,6 @@ impl<'a, 's> Verify<'a, 's> {
     pub fn assign_ty_to_rvar(&mut self, span: Span, var: RecordVar, ty: Tr<&IType>) {
         let result = self.type_system().ascribe_record(ty, span, var);
         self.emit_type_errors((ty, IType::InferringRecord(var).tr(span).as_ref(), result));
-    }
-
-    pub fn string_langitem(&mut self, span: Span) -> IType {
-        match self.fdef.string {
-            Some(key) => IType::Defined(key, vec![]),
-            None => {
-                self.error("missing lang item")
-                    .eline(span, "string lang item is not set for this module")
-                    .emit();
-
-                Prim::Poison.into()
-            }
-        }
     }
 }
 

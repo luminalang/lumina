@@ -5,7 +5,7 @@ use crate::{
     LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY, TRAIT_OBJECT_DATA_FIELD, VTABLE_FIELD,
 };
 use ast::NFunc;
-use lumina_typesystem::{Bitsize, Constraint, Container, Prim, Type, Var};
+use lumina_typesystem::{Bitsize, Constraint, Container, ForeignInst, Prim, Type, Var};
 use lumina_util::Highlighting;
 use std::fmt;
 
@@ -268,9 +268,15 @@ impl<'a, 's> Lower<'a, 's> {
             }
             hir::Literal::Float(f) => Expr::Float(*f),
             hir::Literal::String(str) => {
-                let key = self.str_to_ro(*str);
-                todo!("construct record");
-                // Expr::ReadOnly(key)
+                let ro_key = self.str_to_ro(*str);
+
+                let func = self.items.pinfo.string_from_raw_parts;
+                let ptr = Expr::ReadOnly(ro_key);
+                let len = Expr::UInt(Bitsize::default(), str.len() as u128); // TODO: 32-bit target
+                let finst =
+                    ForeignInst { generics: Map::new(), pgenerics: Map::new(), self_: None };
+
+                Expr::CallFunc(func.map(NFunc::Key), finst, vec![ptr, len])
             }
         }
     }
@@ -311,14 +317,12 @@ impl<'a, 's> Lower<'a, 's> {
     }
 
     fn lower_list(&mut self, elems: &[Tr<hir::Expr<'s>>], ivar: Var) -> Expr {
-        let Some(type_) = self.items.list_default else {
-            return Expr::Poison;
-        };
+        let type_ = self.items.list_default;
 
         let inner = self.finalizer(|mut fin| (fin.var(ivar), fin.errors));
         let list_type = Type::List(type_, vec![inner.clone()]);
 
-        let listable = self.items.listable;
+        let listable = self.items.pinfo.listable;
         let method = |m| listable.module.m(NFunc::Method(listable.value, m));
 
         let inst = || ConcreteInst {

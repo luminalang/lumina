@@ -95,21 +95,21 @@ pub fn run<'a, 's>(
         let litems = lower_langitems(&ast, module, ast.entities.get_langitems(module));
 
         ast.entities.sums.iter_module(module).for_each(|sum| {
-            let (variants, forall) = lower_sum(&ast, &litems, sum);
+            let (variants, forall) = lower_sum(&ast, &litems, sum, &info);
             let header = &ast.entities.sums[sum].header;
             sums.push(module, (header.name.tr(header.span), forall));
             variant_types.push_as(sum, variants);
         });
 
         ast.entities.records.iter_module(module).for_each(|record| {
-            let (fields, forall) = lower_record(&ast, &litems, record);
+            let (fields, forall) = lower_record(&ast, &litems, record, &info);
             let header = &ast.entities.records[record].header;
             records.push(module, (header.name.tr(header.span), forall));
             field_types.push_as(record, fields);
         });
 
         ast.entities.traits.iter_module(module).for_each(|trait_| {
-            let (tassoc, forall) = lower_trait(&ast, &litems, trait_);
+            let (tassoc, forall) = lower_trait(&ast, &litems, trait_, &info);
             let header = &ast.entities.traits[trait_].header;
             traits.push_as(trait_, (header.name.tr(header.span), forall));
             assoc.push_as(trait_, tassoc);
@@ -122,7 +122,7 @@ pub fn run<'a, 's>(
     for module in ast.sources.modules() {
         for impl_ in ast.entities.impls.iter_module(module) {
             let langitems = &langitems[module];
-            let parts = lower_impl(&ast, langitems, impl_);
+            let parts = lower_impl(&ast, langitems, impl_, &info);
             impls.push_as(impl_, parts.2);
             impltors.push_as(impl_, parts.3);
             iassoc.push_as(impl_, parts.4);
@@ -134,7 +134,7 @@ pub fn run<'a, 's>(
     for module in ast.sources.modules() {
         let langitems = &langitems[module];
         ast.entities.fheaders.iter_module(module).for_each(|func| {
-            let (fdef, tenv) = lower_func(&ast, &traits, &impls, &impltors, &langitems, func);
+            let (fdef, tenv) = lower_func(&ast, &traits, &impls, &impltors, &langitems, func, info);
             funcs.push_as(func, fdef);
             tenvs.push_as(func, tenv);
         });
@@ -196,6 +196,14 @@ pub fn from_langs(ty: &str, langs: &LangItems, mlangs: &LangItems) -> Option<M<k
     langs.get(ty).or_else(|| mlangs.get(ty)).copied()
 }
 
+pub fn list_from_langs(
+    langs: &LangItems,
+    mlangs: &LangItems,
+    pinfo: &ProjectInfo,
+) -> M<key::TypeKind> {
+    from_langs("list", langs, mlangs).unwrap_or(pinfo.global_list_default)
+}
+
 pub type RecordFields = Map<key::RecordField, Tr<Type>>;
 pub type SumVariants = Map<key::SumVariant, Vec<Tr<Type>>>;
 
@@ -236,6 +244,7 @@ fn lower_func<'a, 's>(
     impltors: &ModMap<key::Impl, Tr<Type>>,
     langitems: &LangItems<'s>,
     func: M<key::Func>,
+    pinfo: ProjectInfo,
 ) -> (FuncDefKind<'s>, TEnv<'s>) {
     let module = func.module;
     let header = &ast.entities.fheaders[func];
@@ -251,13 +260,15 @@ fn lower_func<'a, 's>(
 
     let flangitems = lower_langitems(ast, module, &attributes.shared.lang_items);
 
-    let mut tinfo = TypeEnvInfo::new(true).list(from_langs("list", &flangitems, &langitems));
+    let list = list_from_langs(&flangitems, &langitems, &pinfo);
+    let mut tinfo = TypeEnvInfo::new(true, list);
 
-    let string = from_langs("string", &flangitems, langitems);
+    let string = from_langs("string", &flangitems, langitems)
+        .unwrap_or_else(|| pinfo.string.map(key::TypeKind::Record));
 
     match &ast.entities.fbodies[func] {
         ast::FuncBody::Extern { link_name } => {
-            let typing = lower_extern_func(module, ast, header);
+            let typing = lower_extern_func(module, ast, header, list);
             let kind = FuncDefKind::Extern { link_name: link_name.clone(), typing };
             (kind, TEnv::new())
         }
@@ -303,8 +314,9 @@ fn lower_extern_func<'s>(
     module: key::Module,
     ast: &AST<'s>,
     header: &parser::func::Header<'s>,
+    list: M<key::TypeKind>,
 ) -> Typing<Type> {
-    let mut tinfo = TypeEnvInfo::new(false);
+    let mut tinfo = TypeEnvInfo::new(false, list);
     let typing = lower_func_typing::<Type>(ast, module, header, &mut tinfo);
     info!("typing lowered to: {typing}");
     typing
@@ -313,8 +325,9 @@ fn lower_extern_func<'s>(
 fn tydef_type_env<'s, K: Into<key::TypeKind>>(
     kind: M<K>,
     generics: &Map<key::Generic, &'s str>,
+    list: M<key::TypeKind>,
 ) -> TypeEnvInfo<'s> {
-    let mut tinfo = TypeEnvInfo::new(false);
+    let mut tinfo = TypeEnvInfo::new(false, list);
     tinfo.self_handler = SelfHandler::Substituted(kind.map(Into::into));
     let forall = generics
         .values()
@@ -332,6 +345,7 @@ fn lower_sum<'s>(
     ast: &AST<'s>,
     lang: &LangItems,
     sum: M<key::Sum>,
+    pinfo: &ProjectInfo,
 ) -> LoweredType<'s, key::SumVariant, Vec<Tr<Type>>> {
     let ty = &ast.entities.sums[sum];
 
@@ -345,8 +359,8 @@ fn lower_sum<'s>(
 
     let tlangs = lower_langitems(ast, sum.module, &ty.attributes.shared.lang_items);
 
-    let mut tinfo =
-        tydef_type_env(sum, &ty.header.type_params).list(from_langs("list", &tlangs, lang));
+    let list = list_from_langs(&tlangs, lang, pinfo);
+    let mut tinfo = tydef_type_env(sum, &ty.header.type_params, list);
 
     let mut tlower = ty::TypeLower::new(sum.module, ast, &mut tinfo);
 
@@ -361,6 +375,7 @@ fn lower_record<'s>(
     ast: &AST<'s>,
     lang: &LangItems,
     rec: M<key::Record>,
+    pinfo: &ProjectInfo,
 ) -> LoweredType<'s, key::RecordField, Tr<Type>> {
     let ty = &ast.entities.records[rec];
 
@@ -373,8 +388,8 @@ fn lower_record<'s>(
 
     let tlangs = lower_langitems(ast, rec.module, &ty.attributes.shared.lang_items);
 
-    let mut tinfo =
-        tydef_type_env(rec, &ty.header.type_params).list(from_langs("list", &tlangs, lang));
+    let list = list_from_langs(&tlangs, lang, pinfo);
+    let mut tinfo = tydef_type_env(rec, &ty.header.type_params, list);
 
     let mut tlower = ty::TypeLower::new(rec.module, ast, &mut tinfo);
 
@@ -392,6 +407,7 @@ fn lower_trait<'s>(
     ast: &AST<'s>,
     lang: &LangItems,
     trait_: M<key::Trait>,
+    pinfo: &ProjectInfo,
 ) -> (Map<key::AssociatedType, Option<Tr<Type>>>, Forall<'s, Type>) {
     let module = trait_.module;
     let ty = &ast.entities.traits[trait_];
@@ -405,7 +421,8 @@ fn lower_trait<'s>(
 
     let tlangs = lower_langitems(ast, module, &ty.attributes.shared.lang_items);
 
-    let mut tinfo = TypeEnvInfo::new(false).list(from_langs("list", &tlangs, lang));
+    let list = list_from_langs(&tlangs, lang, pinfo);
+    let mut tinfo = TypeEnvInfo::new(false, list);
     let forall = ty
         .header
         .type_params
@@ -487,8 +504,7 @@ impl<'s> FuncDefKind<'s> {
 pub struct FuncDef<'s> {
     pub forall: RefCell<Forall<'s, IType>>,
     pub typing: Typing<IType>,
-    pub list: Option<M<key::TypeKind>>,
-    pub string: Option<M<key::TypeKind>>,
+    pub list: M<key::TypeKind>,
     pub params: Vec<Tr<Pattern<'s>>>,
     pub expr: Tr<Expr<'s>>,
 
@@ -575,7 +591,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         mut self,
         header: &parser::func::Header<'s>,
         body: &parser::func::Body<'s>,
-        string: Option<M<key::TypeKind>>,
+        string: M<key::TypeKind>,
         to_kind: impl FnOnce(FuncDef<'s>) -> FuncDefKind<'s>,
     ) -> (FuncDefKind<'s>, TEnv<'s>) {
         let forall = generics_from_con(&header.when);
@@ -599,7 +615,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         let list = self.type_info.list;
 
-        let mut func = FuncDef::new(RefCell::new(forall), typing, list, string, params, expr);
+        let mut func = FuncDef::new(RefCell::new(forall), typing, list, params, expr);
         func.lambdas = self.lambdas;
 
         info!(
@@ -706,6 +722,7 @@ fn lower_impl<'a, 's>(
     ast: &'a AST<'s>,
     langitems: &LangItems<'s>,
     impl_: M<key::Impl>,
+    pinfo: &ProjectInfo,
 ) -> (
     M<key::Trait>,
     Vec<Type>,
@@ -723,7 +740,8 @@ fn lower_impl<'a, 's>(
         key = impl_.to_string()
     );
 
-    let mut tinfo = TypeEnvInfo::new(true).list(from_langs("list", langitems, &HashMap::new()));
+    let list = list_from_langs(langitems, &HashMap::new(), pinfo);
+    let mut tinfo = TypeEnvInfo::new(true, list);
 
     let impl_forall = generics_from_con(&imp.header.when);
     tinfo.enter_type_or_impl_or_method(impl_forall, GenericKind::Parent);

@@ -41,11 +41,11 @@ pub struct PatLower<'f, 'a> {
 
 impl<'f, 'a> PatLower<'f, 'a> {
     fn ssa(&mut self) -> &mut ssa::Blocks {
-        &mut self.f.current.ssa
+        self.f.ssa()
     }
 
     fn block(&self) -> Block {
-        self.f.current.ssa.block()
+        self.f.lir.functions[self.f.current.mfkey].blocks.block()
     }
 
     pub fn run(&mut self, on: ssa::Value, tree: &mir::DecTree) -> Value {

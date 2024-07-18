@@ -39,5 +39,7 @@ pub struct ProjectInfo {
     allocator: (M<key::Func>, M<key::Func>),
     reflect_type: M<key::Sum>,
     listable: M<key::Trait>,
+    global_list_default: M<key::TypeKind>,
     string: M<key::Record>,
+    string_from_raw_parts: M<key::Func>,
 }

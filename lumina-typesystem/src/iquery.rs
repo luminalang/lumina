@@ -1,8 +1,9 @@
-use super::{Constraint, Container, Forall, FuncKind, Generic, GenericKind, Prim, Type, M};
+use super::{
+    map_con, Constraint, Container, Forall, FuncKind, Generic, GenericKind, Prim, Type, M,
+};
 use derive_new::new;
 use lumina_key as key;
 use std::collections::HashMap;
-use std::fmt;
 use tracing::info;
 
 // TODO: Specialisation via explicit default notation
@@ -77,7 +78,7 @@ impl ImplIndex {
             .unwrap_or(&[])
     }
 
-    pub fn query<T>(
+    pub fn for_each_relevant<T>(
         &self,
         trait_: M<key::Trait>,
         impltor: Option<ConcreteType>,
@@ -95,61 +96,109 @@ impl ImplIndex {
     }
 }
 
-pub struct Compatibility<'a, F> {
+// Getter for the forall of a kind
+type GetForall<'a, 't, 's> = &'a dyn Fn(GenericKind) -> &'t Forall<'s, Type>;
+
+// Getter for implementor and trait parameters of specific implementation
+type GetImplData<'a, 't, 's> =
+    &'a dyn Fn(M<key::Impl>) -> (&'t Forall<'s, Type>, &'t Type, &'t [Type]);
+
+pub struct Compatibility<'a, 't, 's> {
     impls: &'a ImplIndex,
-    mapping: Vec<(key::Generic, Type)>,
+    mapping: Vec<Assignment>,
 
-    forall: F,
+    lhs_forall: GetForall<'a, 't, 's>,
+    rhs_forall: &'t Forall<'s, Type>,
 
-    recurse: &'a dyn Fn(Compatibility<'a, F>, &Type, M<key::Impl>, &[Type]) -> bool,
+    get_impl_data: GetImplData<'a, 't, 's>,
 }
 
-impl<'a, 'c, F> Compatibility<'a, F>
-where
-    F: FnMut(Generic) -> &'c [Constraint<Type>] + Clone,
-{
+#[derive(new)]
+struct Assignment {
+    key: key::Generic,
+    ty: Type,
+}
+
+impl<'a, 't, 's> Compatibility<'a, 't, 's> {
     pub fn new(
         impls: &'a ImplIndex,
-        forall: F,
-        recurse: &'a dyn Fn(Compatibility<'a, F>, &Type, M<key::Impl>, &[Type]) -> bool,
+        lhs_forall: GetForall<'a, 't, 's>,
+        rhs_forall: &'t Forall<'s, Type>,
+        get_impl_data: GetImplData<'a, 't, 's>,
     ) -> Self {
-        Self { impls, mapping: vec![], forall, recurse }
+        Self {
+            impls,
+            lhs_forall,
+            rhs_forall,
+            mapping: vec![],
+            get_impl_data,
+        }
     }
 
-    pub fn check_constraints(
-        impls: &'a ImplIndex,
-        forall: F,
-        recurse: &'a dyn Fn(Compatibility<'a, F>, &Type, M<key::Impl>, &[Type]) -> bool,
-        got: &Type,
-        cons: &[Constraint<Type>],
-    ) -> bool {
-        cons.iter()
-            .all(|con| Self::constraint(impls, forall.clone(), recurse, got, con))
+    pub fn check_all(self) -> bool {
+        self.mapping.iter().all(|assignment| {
+            self.rhs_forall[assignment.key]
+                .trait_constraints
+                .iter()
+                .all(|con| {
+                    // Since all types have already been visited and mapped, we
+                    // can instantiate the types in the constraint ahead of time so we don't need
+                    // to keep around multiple `mapping`.
+                    let con = map_con(con, |ty| apply_mapping(&self.mapping, ty));
+
+                    Compatibility::constraint(
+                        self.impls,
+                        self.get_impl_data,
+                        self.lhs_forall,
+                        &assignment.ty,
+                        &con,
+                    )
+                })
+        })
     }
 
+    /// Check whether `got` satisfies the constraint `con`.
+    ///
+    /// Types in both are assumed to be from the same type environment (represented by lhs_forall)
     pub fn constraint(
         impls: &'a ImplIndex,
-        forall: F,
-        recurse: &'a dyn Fn(Compatibility<'a, F>, &Type, M<key::Impl>, &[Type]) -> bool,
+        get_impl_data: GetImplData<'a, 't, 's>,
+        lhs_forall: GetForall<'a, 't, 's>,
         got: &Type,
         con: &Constraint<Type>,
     ) -> bool {
         info!("checking if {got} implements {con:?}");
 
+        // First check whether the constraint is directly satisfied by the given type being a
+        // generic with the same constraint.
         match got {
             Type::Generic(generic) => {
-                let mut this = Compatibility::new(impls, forall.clone(), recurse);
-                if this.check_direct_constraint(*generic, con) {
-                    return true;
+                for gcon in &lhs_forall(generic.kind)[generic.key].trait_constraints {
+                    if gcon.trait_ == con.trait_ {
+                        info!("checking if {gcon} is a direct_eq of {con}");
+                        debug_assert_eq!(gcon.params.len(), con.params.len());
+
+                        if gcon.params.iter().eq(&con.params) {
+                            return true;
+                        }
+                    }
                 }
             }
             _ => {}
         }
 
+        // If not then fall back to querying the implementations.
         impls
-            .query(con.trait_, got.try_into().ok(), |ikey| {
-                let comp = Compatibility::new(impls, forall.clone(), recurse);
-                (recurse)(comp, got, ikey, &con.params).then_some(())
+            .for_each_relevant::<()>(con.trait_, got.try_into().ok(), |ikey: _| {
+                let (iforall, iimpltor, itrtp) = get_impl_data(ikey);
+                let mut comp = Compatibility::new(impls, lhs_forall, iforall, get_impl_data);
+
+                // Return None if the types aren't compatible
+                comp.cmp(got, iimpltor).then(|| ())?;
+                comp.cmps(&con.params, itrtp).then(|| ())?;
+
+                // If they were compatible; then check any constraints that arose.
+                comp.check_all().then(|| ())
             })
             .is_some()
     }
@@ -184,37 +233,54 @@ where
                 (Container::Pointer(gp), Container::Pointer(ep)) => self.cmp(gp, ep),
                 _ => false,
             },
-            (_, Type::Generic(generic)) => {
-                // TODO: why did this assertion exist? it breaks function constraints
-                // assert_eq!(generic.kind, GenericKind::Parent);
-                self.map(got, *generic)
-            }
+            (_, Type::Generic(generic)) => self.map(got, *generic),
             _ => false,
         }
     }
 
     fn map(&mut self, got: &Type, exp: Generic) -> bool {
-        let cons = (self.forall)(exp);
-        Compatibility::check_constraints(self.impls, self.forall.clone(), self.recurse, got, cons);
-
-        match self.mapping.iter().find(|(gen, _)| *gen == exp.key) {
-            Some((_, ty)) => got == ty,
+        match self.mapping.iter().find(|asgn| asgn.key == exp.key) {
+            Some(asgn) => asgn.ty == *got,
             None => {
-                self.mapping.push((exp.key, got.clone()));
+                self.mapping.push(Assignment::new(exp.key, got.clone()));
                 true
             }
         }
     }
 
-    fn check_direct_constraint(&mut self, got: Generic, con: &Constraint<Type>) -> bool {
-        let gcons = (self.forall)(got);
-
-        gcons
-            .iter()
-            .any(|gcon| gcon.trait_ == con.trait_ && self.cmps(&gcon.params, &con.params))
-    }
-
     pub fn cmps(&mut self, gots: &[Type], exps: &[Type]) -> bool {
         gots.iter().zip(exps).all(|(g, e)| self.cmp(g, e))
+    }
+}
+
+fn apply_mapping(mapping: &[Assignment], ty: &Type) -> Type {
+    match ty {
+        Type::Generic(generic) => {
+            assert_eq!(
+                generic.kind,
+                GenericKind::Parent,
+                "apply_mapping should only be ran on the RHS"
+            );
+
+            // we *don't* want to call apply_mapping recursively because mapping[I].ty already
+            // belongs to the LHS.
+            mapping
+                .iter()
+                .find(|asgn| asgn.key == generic.key)
+                .expect("RHS not assigned when checking child constraints")
+                .ty
+                .clone()
+        }
+        Type::Container(cont) => Type::Container(cont.map(|ty| apply_mapping(mapping, ty))),
+        Type::Prim(prim) => Type::Prim(*prim),
+        Type::Defined(key, params) => {
+            let params = params.iter().map(|ty| apply_mapping(mapping, ty)).collect();
+            Type::Defined(*key, params)
+        }
+        Type::List(key, params) => {
+            let params = params.iter().map(|ty| apply_mapping(mapping, ty)).collect();
+            Type::List(*key, params)
+        }
+        Type::Self_ => unreachable!("Self in constriant wasn't substituted"),
     }
 }

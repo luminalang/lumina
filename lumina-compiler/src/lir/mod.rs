@@ -94,7 +94,7 @@ struct FuncLower<'a> {
 
 struct Current {
     origin: FuncOrigin,
-    ssa: ssa::Blocks,
+    mfkey: MonoFunc,
     tmap: TypeMap,
     bindmap: HashMap<key::Bind, ssa::Value>,
     has_captures: bool,
@@ -345,9 +345,18 @@ impl LIR {
                 }
 
                 // Reserve the key in case of recursion
-                let mfkey = self.push_function(Function::placeholder());
                 let origin = typing.origin.clone();
                 let returns = typing.returns.clone();
+                // HACK: If we need to generate a vtable that references this function; then the
+                // typing still needs to be available.
+                //
+                // FUCK: the symbol also needs to be available. The hack would still work but the
+                // symbol names will kinda suck.
+                //
+                // Perhaps we should access the ssa via `current` instead?
+                // we already use a helper
+                let symbol = func_symbol(mir, self.functions.next_key(), &origin);
+                let mfkey = self.push_function(symbol, ssa, returns);
                 self.mono_resolve.insert(typing, mfkey);
 
                 let lower = FuncLower {
@@ -355,17 +364,25 @@ impl LIR {
                     mir,
                     iquery,
                     info,
-                    current: Current { origin, ssa, tmap, bindmap, has_captures },
+                    current: Current { origin, mfkey, tmap, bindmap, has_captures },
                 };
 
-                lower.run(returns, mfkey)
+                lower.run();
+
+                mfkey
             }
         }
     }
 
-    fn push_function(&mut self, func: Function) -> MonoFunc {
+    fn push_function(
+        &mut self,
+        symbol: String,
+        blocks: ssa::Blocks,
+        returns: MonoType,
+    ) -> MonoFunc {
+        let func = Function { symbol, blocks, returns };
         let key = self.functions.push(func);
-        info!("pushing {key} as {}", &self.functions[key].symbol);
+        info!("reserving {key} as {}", &self.functions[key].symbol);
         key
     }
 }
@@ -392,6 +409,10 @@ impl FuncOrigin {
 }
 
 impl<'a> FuncLower<'a> {
+    fn ssa(&mut self) -> &mut ssa::Blocks {
+        &mut self.lir.functions[self.current.mfkey].blocks
+    }
+
     fn expr_of_origin(&mut self, f: FuncOrigin) -> &'a mir::Expr {
         match f {
             FuncOrigin::Defined(func) => &self.mir.funcs[func].as_done().expr,
@@ -410,23 +431,19 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    pub fn run(mut self, returns: MonoType, mfkey: MonoFunc) -> MonoFunc {
+    pub fn run(mut self) {
         let origin = self.current.origin.clone();
 
         let expr = self.expr_of_origin(origin.clone());
 
         self.expr_to_flow(&expr);
 
-        let symbol = self.func_symbol(mfkey, origin);
-
+        let func_slot = &mut self.lir.functions[self.current.mfkey];
         info!(
             "resulting blocks for {}:\n{}",
-            symbol,
-            self.lir.types.fmt(&self.current.ssa)
+            &func_slot.symbol,
+            self.lir.types.fmt(&func_slot.blocks)
         );
-
-        self.lir.functions[mfkey] = Function { blocks: self.current.ssa, returns, symbol };
-        mfkey
     }
 
     fn params_to_values(&mut self, params: &[mir::Expr]) -> Vec<ssa::Value> {
@@ -495,9 +512,9 @@ impl<'a> FuncLower<'a> {
     pub fn ensure_no_scope_escape(&mut self, value: ssa::Value) -> ssa::Value {
         match value {
             ssa::Value::BlockParam(bparam) => {
-                let block = self.current.ssa.block();
-                let ty = self.current.ssa.type_of_param(block, bparam).clone();
-                self.current.ssa.copy(value, ty).into()
+                let block = self.ssa().block();
+                let ty = self.ssa().type_of_param(block, bparam).clone();
+                self.ssa().copy(value, ty).into()
             }
             _ => value,
         }
@@ -555,13 +572,14 @@ impl<'a> FuncLower<'a> {
             .lir
             .func(self.mir, self.iquery, self.info, tmap, typing, ca);
 
-        let captures = self.current.ssa.construct(
-            captures
+        let captures = {
+            let values = captures
                 .iter()
                 .map(|bind| self.current.bindmap[bind].into())
-                .collect(),
-            MonoType::Monomorphised(capture_tuple_ty),
-        );
+                .collect();
+            self.ssa()
+                .construct(values, MonoType::Monomorphised(capture_tuple_ty))
+        };
 
         (mfunc, captures.into(), capture_tuple_ty, return_ty)
     }
@@ -592,14 +610,14 @@ impl<'a> FuncLower<'a> {
     fn type_of_value(&mut self, value: ssa::Value) -> MonoType {
         match value {
             ssa::Value::BlockParam(param) => {
-                let block = self.current.ssa.block();
-                self.current.ssa.type_of_param(block, param).clone()
+                let block = self.ssa().block();
+                self.ssa().type_of_param(block, param).clone()
             }
             ssa::Value::ReadOnly(ro) => {
                 let ty = &self.mir.read_only_table[ro].1;
                 to_morphization!(self, &mut self.current.tmap).apply(&ty)
             }
-            ssa::Value::V(v) => self.current.ssa.type_of(v).clone(),
+            ssa::Value::V(v) => self.ssa().type_of(v).clone(),
             ssa::Value::Int(_, bitsize) => MonoType::Int(bitsize),
             ssa::Value::UInt(_, bitsize) => MonoType::UInt(bitsize),
             ssa::Value::Float(_) => MonoType::Float,
@@ -677,13 +695,6 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    fn func_symbol(&self, key: MonoFunc, origin: FuncOrigin) -> String {
-        let module = origin.module();
-        let mname = &self.mir.module_names[module];
-        let fname = origin.name(self.mir);
-        format!("{module}:{mname}:{fname}:{key}")
-    }
-
     pub fn ty_symbol(&self, ty: &MonoType) -> String {
         match ty {
             MonoType::Array(inner, times) => format!("[{}; {times}]", self.ty_symbol(&inner)),
@@ -701,6 +712,13 @@ impl<'a> FuncLower<'a> {
             _ => MonoFormatter { types: &self.lir.types.types, v: ty }.to_string(),
         }
     }
+}
+
+fn func_symbol(mir: &mir::MIR, key: MonoFunc, origin: &FuncOrigin) -> String {
+    let module = origin.module();
+    let mname = &mir.module_names[module];
+    let fname = origin.name(mir);
+    format!("{module}:{mname}:{fname}:{key}")
 }
 
 #[derive(Debug)]

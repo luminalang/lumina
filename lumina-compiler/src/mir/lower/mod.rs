@@ -83,7 +83,8 @@ impl<'a, 's> Lower<'a, 's> {
     where
         F: FnOnce(Finalizer<'_, '_, 's>) -> (T, Vec<lumina_typesystem::FinError<'s>>),
     {
-        let system = self.rsolver.as_typesystem(self.env);
+        let module = self.current.fkey.module;
+        let system = self.rsolver.as_typesystem(module, self.env);
         let fin = Finalizer::new(system, self.forall, self.lforalls, self.implicits);
         let (value, errors) = and_then(fin);
         self.errors.extend(errors.into_iter().map(FinError::TS));
@@ -213,7 +214,7 @@ impl<'a, 's> Lower<'a, 's> {
             buffer.push(b);
         }
 
-        let ty = Type::defined(self.items.string, vec![]);
+        let ty = Type::defined(self.items.pinfo.string, vec![]);
 
         self.read_only_table.push(
             self.current.fkey.module,

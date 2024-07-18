@@ -20,7 +20,7 @@ pub struct TypeEnvInfo<'s> {
     pub(crate) cforalls: SmallVec<[(Forall<'s, Type>, GenericKind); 2]>,
 
     pub declare_generics: bool,
-    pub list: Option<M<key::TypeKind>>,
+    pub list: M<key::TypeKind>,
     pub self_handler: SelfHandler,
     inference: Option<TEnv<'s>>,
 }
@@ -32,20 +32,15 @@ pub enum SelfHandler {
 }
 
 impl<'s> TypeEnvInfo<'s> {
-    pub fn new(declare_generics: bool) -> Self {
+    pub fn new(declare_generics: bool, list: M<key::TypeKind>) -> Self {
         Self {
-            list: None,
+            list,
             declare_generics,
             self_handler: SelfHandler::Disallowed,
             iforalls: SmallVec::new(),
             cforalls: SmallVec::new(),
             inference: None,
         }
-    }
-
-    pub fn list(mut self, list: Option<M<key::TypeKind>>) -> Self {
-        self.list = list;
-        self
     }
 
     pub fn lambda(&self) -> Option<key::Lambda> {
@@ -210,22 +205,8 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
 
                     Prim::Poison.into()
                 } else {
-                    match self.type_info.list.clone() {
-                        None => {
-                            self.ast
-                                .sources
-                                .error("missing lang item")
-                                .m(self.module)
-                                .eline(ty.span, "no list type")
-                                .emit();
-
-                            Prim::Poison.into()
-                        }
-                        Some(constr) => {
-                            let params = self.tys(inner);
-                            T::defined(constr, params)
-                        }
-                    }
+                    let params = self.tys(inner);
+                    T::defined(self.type_info.list, params)
                 }
             }
             parser::Type::Poison => T::from(Prim::Poison),

@@ -62,9 +62,8 @@ impl<'a, 's> Verify<'a, 's> {
             // Since MIR is split into two steps. We could technically fix this?
             // no reason why we can't just lower it into a tree on the HIR -> MIR step instead.
             hir::Pattern::Cons(pats, inner_var) => {
-                let Some(list) = self.get_list(pat.span) else {
-                    return IType::poison().tr(pat.span);
-                };
+                let list = self.items.list_default;
+
                 let value = self.type_check_pat(pats[0].as_ref());
                 let exp = IType::Var(*inner_var).tr(pat.span);
                 self.type_check_and_emit(value.as_ref(), exp.as_ref());
@@ -77,14 +76,15 @@ impl<'a, 's> Verify<'a, 's> {
             }
 
             hir::Pattern::Nil(inner) => {
-                let Some(list) = self.get_list(pat.span) else {
-                    return IType::poison().tr(pat.span);
-                };
+                let list = self.items.list_default;
 
                 IType::List(list, vec![IType::Var(*inner)])
             }
             hir::Pattern::Bool(_) => Prim::Bool.into(),
-            hir::Pattern::String(_) => self.string_langitem(pat.span),
+            hir::Pattern::String(_) => {
+                let record = self.items.pinfo.string;
+                IType::defined(record, vec![])
+            }
             hir::Pattern::Poison => todo!(),
         }
         .tr(pat.span)

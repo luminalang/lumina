@@ -36,14 +36,6 @@ impl<'a, 's> Verify<'a, 's> {
             hir::Expr::Access(rvar, object, field) => {
                 let fieldvar = self.vars().add_field(*rvar, (**field).tr(field.span));
 
-                // `rvar` is assigned rvar0 -> var2
-                //
-                // we check against `objty` which is `str`
-                //
-                // `str` should be the var defined by the let bind, and that bind should've been
-                // checked against the roto expr `newString` which is instantiated to a var which
-                // points to the concrete string
-
                 let objty = self.type_check_expr((**object).as_ref());
                 let exp = IType::InferringRecord(*rvar).tr(field.span);
 

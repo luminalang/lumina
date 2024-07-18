@@ -12,7 +12,7 @@ trait Closure p r
   fn call as self, p -> r
 
 pub trait Size
-  fn of as int
+  fn of as uint
 
 // WARNING: Compiler assumes specific layout of `Type`
 pub type Type
@@ -41,7 +41,7 @@ pub type Type
 //   fn of as int = size_of_ty builtin:reflect_type(self as a)
 
 impl Size for a
-  fn of as int = builtin:size_of(self as a)
+  fn of as uint = builtin:size_of(self as a)
 
 // WARNING: Compiler assumes specific layout of `string_from_raw_parts`
 fn string_from_raw_parts ptr len as *u8, uint -> string =

@@ -722,6 +722,10 @@ impl<'a, 's> Verify<'a, 's> {
                 "reflect_type" => {
                     InstCall::Local(IType::defined(self.items.pinfo.reflect_type, vec![]).tr(span))
                 }
+                "size_of" => {
+                    // TODO: 32-bit
+                    InstCall::Local(IType::from(Prim::Int(false, Bitsize(64))).tr(span))
+                }
                 "abort" => InstCall::Local(IType::Var(self.vars().var(span)).tr(span)),
                 "transmute" => {
                     let param = IType::Var(self.vars().var(span));

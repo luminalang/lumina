@@ -224,6 +224,11 @@ impl<'a> FuncLower<'a> {
                 let ty = to_morphization!(self, &mut self.current.tmap).apply_weak(ty);
                 self.create_reflection(ty)
             }
+            mir::Expr::SizeOf(ty) => {
+                let ty = to_morphization!(self, &mut self.current.tmap).apply(ty);
+                let size = self.lir.types.types.size_of(&ty) / 8;
+                Value::Int(size as i128, Bitsize(64)) // TODO: 32-bit
+            }
             mir::Expr::Cmp(cmp, params) => {
                 let params = [
                     self.expr_to_value(&params[0]),

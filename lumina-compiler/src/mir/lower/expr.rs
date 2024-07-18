@@ -37,6 +37,7 @@ pub enum Expr {
     Deref(Box<Self>),
     Write(Box<[Self; 2]>),
     ReflectTypeOf(Type),
+    SizeOf(Type),
     Abort,
 
     Cmp(&'static str, Box<[Expr; 2]>),
@@ -125,6 +126,12 @@ impl<'a, 's> Lower<'a, 's> {
                         assert_eq!(*name, "self");
                         let ty = self.finalizer(|mut fin| (fin.apply(&ty), fin.errors));
                         Expr::ReflectTypeOf(ty)
+                    }
+                    "size_of" => {
+                        let (name, ty) = tanot.for_entity[0].clone();
+                        assert_eq!(*name, "self");
+                        let ty = self.finalizer(|mut fin| (fin.apply(&ty), fin.errors));
+                        Expr::SizeOf(ty)
                     }
                     _ => panic!("unknown builtin: {name}"),
                 },
@@ -476,6 +483,7 @@ impl fmt::Display for Expr {
             Expr::Deref(inner) => write!(f, "{op}{} {inner}{cp}", "deref".keyword()),
             Expr::Write(p) => write!(f, "{op}{} {} {}{cp}", "write".keyword(), &p[0], &p[1]),
             Expr::ReflectTypeOf(ty) => write!(f, "{op}{} {ty}{cp}", "type-of".keyword()),
+            Expr::SizeOf(ty) => write!(f, "{op}{} {ty}{cp}", "size-of".keyword()),
             Expr::Poison => "<poison>".fmt(f),
             Expr::Abort => write!(f, "{}", "abort".keyword()),
         }

@@ -5,6 +5,7 @@ pub use std:nothing [nothing]
 use std:ptr
 use std:list [Listable [:], List]
 use std:list:vec [Vec]
+use std:gc
 
 @![langItem(list as List)]
 
@@ -65,7 +66,7 @@ fn string_from_raw_parts ptr len as *u8, uint -> string =
 
 @[platform "linux"]
 fn alloc size as int -> *u8 =
-  mmtk_alloc main_thread_mutator size 8 0 0
+  std:gc:mmtk_alloc std:gc:main_thread_mutator size 8 0 0
 
 @[platform "linux"]
 fn dealloc ptr size as *u8, int -> () = free ptr
@@ -86,24 +87,3 @@ pub fn exit code as int -> () =
 
 @[extern "exit", platform "linux"]
 fn libc_exit code as int -> ()
-
-@[extern "mmtk_init", platform "linux"]
-fn lumina_gc_init as uint -> ()
-
-@[extern "mmtk_bind_mutator", platform "linux"]
-fn mmtk_bind_mutator as *u8 -> *u8
-
-@[extern "mmtk_alloc", platform "linux"]
-fn mmtk_alloc mutator size align offset allocator
-  as *u8, int, int, int, int -> *u8
-
-// TODO: To support multi-threadding we'd need thread local storage
-// then initialise MMTK seperately from creating the mutator
-// then create a mutator for each thread
-val main_thread_mutator as *u8 = 
-  do lumina_gc_init 1048576 then
-     let mutator = mmtk_bind_mutator ptr:null in mutator
-       // do mmtk_initialize_collection mutator then mutator
-
-@[extern "mmtk_initialize_collection", platform "linux"]
-fn mmtk_initialize_collection as *u8 -> ()

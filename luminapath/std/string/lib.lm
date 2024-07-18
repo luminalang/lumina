@@ -2,8 +2,6 @@ use std:ptr
 use std:list [List]
 use std:list:vec [Vec]
 
-@![langItem(list as List)]
-
 pub type string {
   inner [u8]
 }

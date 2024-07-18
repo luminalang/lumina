@@ -539,6 +539,14 @@ impl<'a> Monomorphization<'a> {
         }
     }
 
+    pub fn defined(&mut self, key: M<key::TypeKind>, params: &[Type]) -> MonoTypeKey {
+        match key.value {
+            key::TypeKind::Record(k) => self.record(key.module.m(k), params),
+            key::TypeKind::Sum(k) => self.sum(key.module.m(k), params),
+            key::TypeKind::Trait(k) => self.trait_object(key.module.m(k), params),
+        }
+    }
+
     pub fn record(&mut self, key: M<key::Record>, params: &[Type]) -> MonoTypeKey {
         self.get_or_monomorphise(key, params, GenericKind::Entity, |this, mut tmap| {
             let fields = &this.field_types[key];

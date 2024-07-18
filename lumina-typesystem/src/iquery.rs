@@ -114,9 +114,9 @@ pub struct Compatibility<'a, 't, 's> {
 }
 
 #[derive(new)]
-struct Assignment {
-    key: key::Generic,
-    ty: Type,
+pub struct Assignment {
+    pub key: key::Generic,
+    pub ty: Type,
 }
 
 impl<'a, 't, 's> Compatibility<'a, 't, 's> {
@@ -133,6 +133,10 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
             mapping: vec![],
             get_impl_data,
         }
+    }
+
+    pub fn into_assignments(self) -> Vec<Assignment> {
+        self.mapping
     }
 
     pub fn check_all(self) -> bool {

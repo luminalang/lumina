@@ -5,7 +5,7 @@
 //! Flatten to SSA+CFG with Basic Blocks
 
 use crate::prelude::*;
-use crate::{ProjectInfo, CLOSURE_CAPTURES};
+use crate::{ProjectInfo, LIST_CONCAT, LIST_NIL, LIST_SINGLETON};
 use key::{entity_impl, keys};
 use lumina_typesystem::{Bitsize, ConcreteInst, Generic, GenericKind, ImplIndex, Type};
 use lumina_util::Highlighting;
@@ -30,6 +30,7 @@ macro_rules! to_morphization {
 }
 
 mod mono;
+mod reflect;
 mod ssa;
 pub use mono::{
     fmt as ty_fmt, BitOffset, MonoFormatter, MonoType, MonoTypeKey, MonomorphisedRecord, Records,
@@ -48,7 +49,7 @@ pub struct Output {
     pub val_initializers: HashMap<M<key::Val>, MonoFunc>,
     pub val_types: ModMap<key::Val, MonoType>,
 
-    pub read_only_table: ModMap<key::ReadOnly, (mir::ReadOnlyBytes, Type)>,
+    pub read_only_table: ModMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
 
     pub types: Records,
 
@@ -70,6 +71,8 @@ struct LIR {
     types: mono::MonomorphisedTypes,
     #[new(default)]
     vtables: HashMap<MonoTypeKey, M<key::Val>>,
+
+    read_only_table: ModMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
 
     vals: ModMap<key::Val, MonoType>,
     #[new(default)]
@@ -148,7 +151,7 @@ impl FuncOrigin {
     }
 }
 
-pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mir: mir::MIR) -> Output {
+pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mut mir: mir::MIR) -> Output {
     info!("starting LIR lower");
 
     let mainfunc = &mir.funcs[info.main].as_done();
@@ -169,35 +172,44 @@ pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mir: mir::MIR) -> Output {
             &mir.trait_objects,
             tmap,
         )
-    };
+    }
 
     let mut tmap = TypeMap::new();
     let mut monomorphization = to_morphization(&mir, &mut mono, &mut tmap);
-
-    let mut vals = mir.val_initializers.secondary_inner_capacity();
-    for val in mir.val_initializers.iter() {
-        let func = mir.val_initializers[val];
-        let typing = &mir.funcs[func].as_done().typing;
-        assert!(
-            typing.params.is_empty(),
-            "static vals cannot take parameters in their initialiser"
-        );
-        assert!(typing.forall.is_empty(), "static vals cannot be generic");
-        let ret = monomorphization.apply(&typing.returns);
-        vals.push_as(val, ret);
-    }
 
     // the main functions generics are substituted for unit when used as entrypoint
     monomorphization.substitute_generics_for_unit_type(&mainfunc.typing.forall);
 
     let returns = monomorphization.apply(&mainfunc.typing.returns);
 
+    let vals = mir.val_initializers.map(|(_, func)| {
+        let typing = &mir.funcs[*func].as_done().typing;
+        assert!(
+            typing.params.is_empty(),
+            "static vals cannot take parameters in their initialiser"
+        );
+        assert!(typing.forall.is_empty(), "static vals cannot be generic");
+        monomorphization.apply(&typing.returns)
+    });
+
+    // Move ReadOnly from MIR to LIR so that we can define more of them
+    // without borrowing the rest of MIR mutably. This isn't a great workaround.
+    let mut read_only_table = mir.read_only_table.secondary_inner_capacity();
+    for module in mir.read_only_table.modules() {
+        let this = &mut mir.read_only_table[module];
+        for (key, (bytes, ty)) in std::mem::take(this).into_iter() {
+            let mut monomorphization = to_morphization(&mir, &mut mono, &mut tmap);
+            let mono_ty = monomorphization.apply(&ty);
+            read_only_table[module].push_as(key, (bytes, mono_ty));
+        }
+    }
+
     assert!(
         mainfunc.typing.params.is_empty(),
         "main function can not take parameters"
     );
 
-    let mut lir = LIR::new(mono, vals);
+    let mut lir = LIR::new(mono, read_only_table, vals);
 
     // fn alloc size as int -> *u8 =
     // fn dealloc ptr size as *u8, int -> () =
@@ -263,7 +275,7 @@ pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mir: mir::MIR) -> Output {
         extern_funcs,
         val_initializers: lir.val_initialisers,
         val_types: lir.vals,
-        read_only_table: mir.read_only_table,
+        read_only_table: lir.read_only_table,
         func_names: mir.func_names,
         module_names: mir.module_names,
         types: lir.types.into_records(),
@@ -505,11 +517,103 @@ impl<'a> FuncLower<'a> {
         tmap
     }
 
+    fn elems_to_tuple(&mut self, elems: Vec<Value>, payload: Option<u32>) -> Value {
+        let ty = payload
+            .map(|largest| MonoType::SumDataCast { largest })
+            .unwrap_or_else(|| {
+                let types = elems.iter().map(|v| self.type_of_value(*v)).collect();
+                self.lir.types.get_or_make_tuple(types).into()
+            });
+
+        self.ssa().construct(elems, ty).into()
+    }
+
+    // Relies on the layout of `std:prelude:List`
+    //
+    // type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
+    fn values_to_cons_list(&mut self, values: Vec<Value>, inner: Type) -> Value {
+        let list_type: MonoType = to_morphization!(self, &mut self.current.tmap)
+            .defined(self.info.global_list_default, &[inner])
+            .into();
+
+        let [nil_tag, singleton_tag, concat_tag] = [LIST_NIL, LIST_SINGLETON, LIST_CONCAT]
+            .map(|n| Value::UInt(n.0 as u128, mono::TAG_SIZE));
+
+        let payload_size = self.lir.types.types.size_of(&list_type) - mono::TAG_SIZE.0 as u32;
+
+        let empty_tuple = self.elems_to_tuple(vec![], Some(payload_size));
+
+        // TODO: we technically don't need a `Nil` at the end since we're using
+        // singleton. But; perhaps it's still a good idea?
+        let init = self
+            .ssa()
+            .construct(vec![nil_tag, empty_tuple], list_type.clone())
+            .value();
+
+        values.into_iter().rev().fold(init, |next, v| {
+            let singleton_payload = self.elems_to_tuple(vec![v], Some(payload_size));
+
+            let this = self
+                .ssa()
+                .construct(vec![singleton_tag, singleton_payload], list_type.clone())
+                .value();
+
+            let concat_payload = self.elems_to_tuple(vec![this, next], Some(payload_size));
+            self.ssa()
+                .construct(vec![concat_tag, concat_payload], list_type.clone())
+                .value()
+        })
+    }
+
+    fn string_type(&mut self) -> MonoType {
+        let string_type = Type::defined(self.info.string, vec![]);
+        to_morphization!(self, &mut self.current.tmap).apply(&string_type)
+    }
+
+    fn string_from_raw_parts_mfunc(&mut self) -> (MonoFunc, MonoType) {
+        let string_type = self.string_type();
+
+        let tmap = TypeMap::new();
+        let typing = MonoTyping::new(
+            FuncOrigin::Defined(self.info.string_from_raw_parts),
+            [MonoType::u8_pointer(), MonoType::UInt(Bitsize(64))] // TODO: 32-bit target
+                .into_iter()
+                .collect(),
+            string_type.clone(),
+        );
+
+        (
+            self.lir
+                .func(self.mir, self.iquery, self.info, tmap, typing, None),
+            string_type,
+        )
+    }
+
+    fn string_to_value(&mut self, str: &[u8]) -> Value {
+        let (mfunc, string) = self.string_from_raw_parts_mfunc();
+
+        let ro = self.string_to_readonly(str.to_vec());
+        let len = Value::UInt(str.len() as u128, Bitsize(64)); // TODO: 32-bit
+
+        self.ssa()
+            .call(mfunc, vec![Value::ReadOnly(ro), len], string)
+            .value()
+    }
+
+    fn string_to_readonly(&mut self, str: Vec<u8>) -> M<key::ReadOnly> {
+        let module = self.current.origin.module();
+        let ro = self.lir.read_only_table[module].push((
+            mir::ReadOnlyBytes(str.into_boxed_slice()),
+            MonoType::u8_pointer(),
+        ));
+        module.m(ro)
+    }
+
     // Rebinds `BlockParam`s so that this value can safely be used in a future block
     // We don't use PHI block parameters, any block parameter is assumed to be for the current block.
     //
     // WARNING: might cause incorrect behavior on recursion
-    pub fn ensure_no_scope_escape(&mut self, value: ssa::Value) -> ssa::Value {
+    fn ensure_no_scope_escape(&mut self, value: ssa::Value) -> ssa::Value {
         match value {
             ssa::Value::BlockParam(bparam) => {
                 let block = self.ssa().block();
@@ -613,10 +717,7 @@ impl<'a> FuncLower<'a> {
                 let block = self.ssa().block();
                 self.ssa().type_of_param(block, param).clone()
             }
-            ssa::Value::ReadOnly(ro) => {
-                let ty = &self.mir.read_only_table[ro].1;
-                to_morphization!(self, &mut self.current.tmap).apply(&ty)
-            }
+            ssa::Value::ReadOnly(ro) => self.lir.read_only_table[ro].1.clone(),
             ssa::Value::V(v) => self.ssa().type_of(v).clone(),
             ssa::Value::Int(_, bitsize) => MonoType::Int(bitsize),
             ssa::Value::UInt(_, bitsize) => MonoType::UInt(bitsize),
@@ -656,11 +757,12 @@ impl<'a> FuncLower<'a> {
             ast::NFunc::Method(key, method) => {
                 let trait_ = func.module.m(key);
 
-                let morph = to_morphization!(self, &mut self.current.tmap);
+                let mut morph = to_morphization!(self, &mut self.current.tmap);
 
                 let self_ = inst.self_.as_ref().unwrap();
 
                 let weak_impltor = morph.apply_weak(self_);
+                let impltor = morph.apply(self_);
 
                 let trtp = inst
                     .pgenerics
@@ -668,12 +770,11 @@ impl<'a> FuncLower<'a> {
                     .map(|ty| morph.apply_weak(ty))
                     .collect::<Vec<_>>();
 
-                let ikey = self.find_implementation(trait_, &trtp, &weak_impltor);
+                let (ikey, itmap) = self.find_implementation(trait_, &trtp, weak_impltor, impltor);
 
                 let forigin = FuncOrigin::Method(ikey, method);
 
-                let tmap = self.morphise_inst([GenericKind::Parent, GenericKind::Entity], inst);
-                let (mfunc, ret) = self.call_to_mfunc(forigin, tmap);
+                let (mfunc, ret) = self.call_to_mfunc(forigin, itmap);
 
                 ResolvedNFunc::Static(mfunc, ret)
             }
@@ -706,7 +807,7 @@ impl<'a> FuncLower<'a> {
             ),
             MonoType::Unreachable => format!("!"),
             MonoType::Monomorphised(mk) => match self.lir.types.types[*mk].original {
-                Some(key) => format!("{key}>{mk}"),
+                Some(key) => format!("{}>{mk}", self.mir.name_of_type(key)),
                 None => mk.to_string(),
             },
             _ => MonoFormatter { types: &self.lir.types.types, v: ty }.to_string(),

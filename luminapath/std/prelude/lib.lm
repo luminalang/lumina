@@ -14,6 +14,7 @@ trait Closure p r
 pub trait Size
   fn of as int
 
+// WARNING: Compiler assumes specific layout of `Type`
 pub type Type
   = Int bool u8
   | Float
@@ -21,29 +22,46 @@ pub type Type
   | Never
   | Poison
   | Pointer   Type
-  | FnPointer Type
-  | Struct string [Type]
-  | Sum    string [(string, Type)]
+  | FnPointer [Type] Type
+  | Struct string [(string, Type)]
+  | Sum    string [(string, [Type])]
+  | Tuple  [Type]
   | Object string
 
-impl Size for a
-  fn of as int = size_of_ty builtin:reflect_type(self as a)
+// TODO: for this to be a valid declaration then we need the compiler to expose
+// a more advancedf TypeId API instead. 
+//
+// Because; currently a reflect like this will lock up the compiler on recursive data structures
+// since this API doesn't account for autoboxing. 
+//
+// We could of course *add* autoboxing but if we do; then we wouldn't be able to use this function for things like
+// `Show`. So; let's park this for now and think about reflection API designs later. 
+//
+// impl Size for a
+//   fn of as int = size_of_ty builtin:reflect_type(self as a)
 
+impl Size for a
+  fn of as int = builtin:size_of(self as a)
+
+// WARNING: Compiler assumes specific layout of `string_from_raw_parts`
 fn string_from_raw_parts ptr len as *u8, uint -> string =
   { string | inner = List:Slice ({ std:list:vec:Vec u8 | ptr, len } . slice) }
 
-fn size_of_ty ty as Type -> int =
-    match ty
-    | Int _ size -> (size as int) / 8
-    | Float  -> 8
-    | Bool   -> 1
-    | Never  -> 0
-    | Poison -> 0
-    | Pointer _ -> 8
-    | FnPointer _ -> 8
-    | Struct _ fields   -> fields . map #size_of_ty . sum
-    | Sum    _ variants -> variants . map #(\_ ty -> size_of_ty ty) . max . or #0
-    | Object _ -> 16 // TODO: remember to change this if we decide to change the repr
+// fn size_of_ty ty as Type -> int =
+//     match ty
+//     | Int _ size -> (size as int) / 8
+//     | Float  -> 8
+//     | Bool   -> 1
+//     | Never  -> 0
+//     | Poison -> 0
+//     | Pointer _ -> 8
+//     | FnPointer _ _ -> 8
+//     | Struct _ fields   -> fields . map #(\_ ty -> size_of_ty ty) . sum
+//     | Sum    _ variants -> tag_size + variants . map #(\_ params -> list:map #size_of_ty params . sum) . max . or #0
+//     | Tuple fields -> fields . map #(\_ ty -> size_of_ty ty) . sum
+//     | Object _ -> 16
+//  where
+//   fn tag_size = 4
 
 @[platform "linux"]
 fn alloc size as int -> *u8 =
@@ -63,7 +81,7 @@ fn raw_syscall_exit code as int -> () =
   do syscall code 0 0 0 0 60 then ()
 
 @[platform "linux"]
-fn exit code as int -> () =
+pub fn exit code as int -> () =
   libc_exit code
 
 @[extern "exit", platform "linux"]

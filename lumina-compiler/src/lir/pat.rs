@@ -206,17 +206,12 @@ impl<'f, 'a> PatLower<'f, 'a> {
         let innermt = morph.apply(&inner);
         let inner = morph.apply_weak(&inner);
 
-        let mut tmap = TypeMap::new();
-        [GenericKind::Entity, GenericKind::Parent].map(|kind| {
-            tmap.generics.push((
-                Generic::new(key::Generic(0), kind),
-                (inner.clone(), innermt.clone()),
-            ))
-        });
-
-        let ikey = self
-            .f
-            .find_implementation(self.f.info.listable, &[inner.clone()], &list);
+        let (ikey, tmap) = self.f.find_implementation(
+            self.f.info.listable,
+            &[inner.clone()],
+            list.clone(),
+            listmt.clone(),
+        );
 
         let split = FuncOrigin::Method(ikey, LISTABLE_SPLIT);
         let (split, ret) = self.f.call_to_mfunc(split, tmap);

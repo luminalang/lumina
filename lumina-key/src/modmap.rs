@@ -58,6 +58,10 @@ impl<K: EntityRef, V> ModMap<K, V> {
         self.iter().map(|k| (k, &self[k]))
     }
 
+    pub fn modules(&self) -> impl Iterator<Item = Module> + 'static {
+        self.0.keys()
+    }
+
     pub fn secondary<A: EntityRef, B>(&self) -> ModMap<A, B> {
         self.0.keys().collect()
     }

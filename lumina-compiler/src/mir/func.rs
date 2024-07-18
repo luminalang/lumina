@@ -375,20 +375,6 @@ impl<'a, 's> Verify<'a, 's> {
 
         let pforall = self.pforall;
 
-        // TODO: I think this API is causing us problems.
-        //
-        // Because; the foralls given by `|generic| (forall)` is specific to the current function.
-        //
-        // But; if we're recursing and checking multiple layers, then the foralls are actually
-        // suddenly different no??
-        //
-        // I suppose we can "fix" that by constructing a new `Compatbility` in the iquery checker
-        // for recursive stuff. But; there *must* be a smarter way of doing this. This API is
-        // absolutely cursed.
-        //
-        // oh right, the reason we use `recurse` is because it doesn't have access to hir.itraits
-        // and hir.impltors.
-
         for (span, ty, con) in constraints {
             let get_forall = &|gkind| match gkind {
                 GenericKind::Lambda(lkey) => &lambdas[lkey].typing.forall,

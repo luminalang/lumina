@@ -36,8 +36,6 @@ pub struct MIR {
     pub funcs: ModMap<key::Func, FunctionStatus>,
     pub read_only_table: ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
 
-    pub module_names: Map<key::Module, String>,
-
     // Certain parts of the HIR will be kept for the next pass
     pub methods: ModMap<key::Trait, Map<key::Method, key::Func>>,
     pub imethods: ModMap<key::Impl, Map<key::Method, Option<M<key::Func>>>>,
@@ -46,9 +44,26 @@ pub struct MIR {
     pub impls: ModMap<key::Impl, Forall<'static, Type>>,
     pub impltors: ModMap<key::Impl, Tr<Type>>,
     pub itraits: ModMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
-    pub func_names: ModMap<key::Func, String>,
     pub val_initializers: ModMap<key::Val, M<key::Func>>,
     pub trait_objects: ModMap<key::Trait, Option<SelfPositions>>,
+
+    pub module_names: Map<key::Module, String>,
+    pub func_names: ModMap<key::Func, String>,
+    pub record_names: ModMap<key::Record, String>,
+    pub sum_names: ModMap<key::Sum, String>,
+    pub trait_names: ModMap<key::Trait, String>,
+    pub field_names: ModMap<key::Record, Map<key::RecordField, String>>,
+    pub variant_names: ModMap<key::Sum, Map<key::SumVariant, String>>,
+}
+
+impl MIR {
+    pub fn name_of_type<K: Into<key::TypeKind> + Copy>(&self, key: M<K>) -> &str {
+        match key.map(K::into).value {
+            key::TypeKind::Sum(k) => &self.sum_names[key.module.m(k)],
+            key::TypeKind::Record(k) => &self.record_names[key.module.m(k)],
+            key::TypeKind::Trait(k) => &self.trait_names[key.module.m(k)],
+        }
+    }
 }
 
 pub struct ReadOnlyBytes(pub Box<[u8]>);
@@ -119,6 +134,17 @@ pub fn run<'a, 'h, 's>(
                 .modules()
                 .map(|m| hir.sources.name_of_module(m))
                 .collect(),
+            func_names: hir.func_names.map(|(_, name)| name.value.to_string()),
+            record_names: hir.records.map(|(name, _)| name.value.to_string()),
+            sum_names: hir.sums.map(|(name, _)| name.value.to_string()),
+            trait_names: hir.traits.map(|(name, _)| name.value.to_string()),
+            field_names: hir
+                .fnames
+                .map(|(_, fields)| fields.values().map(|name| name.to_string()).collect()),
+            variant_names: hir
+                .vnames
+                .map(|(_, variants)| variants.values().map(|name| name.to_string()).collect()),
+
             trait_objects,
             impls,
             impltors: hir.impltors,
@@ -128,7 +154,6 @@ pub fn run<'a, 'h, 's>(
             field_types: hir.field_types,
             variant_types: hir.variant_types,
             val_initializers: hir.val_initializers,
-            func_names: hir.func_names.map(|(_, name)| name.value.to_string()),
         },
         has_failed,
     )

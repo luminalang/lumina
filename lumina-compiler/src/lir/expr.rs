@@ -38,17 +38,6 @@ impl<'a> FuncLower<'a> {
             mir::Local::Param(pid) if self.current.has_captures => {
                 assert_eq!(self.ssa().block(), ssa::Block::entry());
                 Value::BlockParam(ssa::BlockParam(pid.0 + 1))
-                // We no longer use a tuple for the parameters
-                //
-                // instead; we just offset by 1 to adapt to the capture struct
-
-                // let ptuple = ssa::BlockParam(1);
-                // let field = key::RecordField(pid.0);
-                // let mk = self.type_of_value(ptuple.into()).as_key();
-
-                // let fty = self.lir.types.types.type_of_field(mk, field);
-
-                // self.ssa().field(ptuple.into(), mk, field, fty).into()
             }
             mir::Local::Param(pid) => {
                 assert_eq!(self.ssa().block(), ssa::Block::entry());
@@ -167,14 +156,7 @@ impl<'a> FuncLower<'a> {
             mir::Expr::ReadOnly(ro) => Value::ReadOnly(*ro),
             mir::Expr::Tuple(elems) => {
                 let params = self.params_to_values(elems);
-
-                let types = params.iter().map(|v| self.type_of_value(*v)).collect();
-
-                let mt = self.lir.types.get_or_make_tuple(types);
-
-                self.ssa()
-                    .construct(params, MonoType::Monomorphised(mt))
-                    .into()
+                self.elems_to_tuple(params, None)
             }
             mir::Expr::IntCast(expr, from, to) => {
                 let inner = self.expr_to_value(&expr);
@@ -205,15 +187,12 @@ impl<'a> FuncLower<'a> {
                 let mut morph = to_morphization!(self, &mut self.current.tmap);
                 let weak_impltor = morph.apply_weak(weak_impltor);
                 let weak_trait_params = morph.applys_weak::<Vec<_>>(trait_params);
-                let trait_params = morph.applys::<Vec<_>>(trait_params);
 
-                let impl_ = self.find_implementation(*trait_, &weak_trait_params, &weak_impltor);
-
-                let mut tmap = TypeMap::new();
-                tmap.self_ = Some((weak_impltor, impltor.clone()));
-                tmap.extend(
-                    GenericKind::Parent,
-                    weak_trait_params.into_iter().zip(trait_params),
+                let (impl_, tmap) = self.find_implementation(
+                    *trait_,
+                    &weak_trait_params,
+                    weak_impltor,
+                    impltor.clone(),
                 );
 
                 let methods = self.mir.imethods[impl_]
@@ -241,7 +220,10 @@ impl<'a> FuncLower<'a> {
                 let on = self.expr_to_value(on);
                 self.to_pat_lower().run(on, tree)
             }
-            mir::Expr::ReflectTypeOf(_) => todo!(),
+            mir::Expr::ReflectTypeOf(ty) => {
+                let ty = to_morphization!(self, &mut self.current.tmap).apply_weak(ty);
+                self.create_reflection(ty)
+            }
             mir::Expr::Cmp(cmp, params) => {
                 let params = [
                     self.expr_to_value(&params[0]),
@@ -309,9 +291,7 @@ impl<'a> FuncLower<'a> {
             }
             ResolvedNFunc::Sum { tag, payload_size, ty } => {
                 let params = self.params_to_values(params);
-
-                let dataty = MonoType::SumDataCast { largest: payload_size };
-                let parameters = self.ssa().construct(params, dataty);
+                let parameters = self.elems_to_tuple(params, Some(payload_size));
 
                 self.ssa()
                     .construct(vec![tag, parameters.into()], MonoType::Monomorphised(ty))
@@ -357,12 +337,9 @@ impl<'a> FuncLower<'a> {
             (call_field, *ret)
         };
 
-        let ptypes = params.iter().map(|v| self.type_of_value(*v)).collect();
-        let param_tuple_ty = self.lir.types.get_or_make_tuple(ptypes);
-        let param_tuple = self
-            .ssa()
-            .construct(params, MonoType::Monomorphised(param_tuple_ty));
-        let call_method_params = vec![Value::V(objptr), Value::V(param_tuple)];
+        let param_tuple = self.elems_to_tuple(params, None);
+
+        let call_method_params = vec![Value::V(objptr), param_tuple];
 
         self.ssa()
             .call(Value::from(fnptr), call_method_params, ret)
@@ -434,13 +411,14 @@ impl<'a> FuncLower<'a> {
         &mut self,
         trait_: M<key::Trait>,
         trtp: &[Type],
-        weak_impltor: &Type,
-    ) -> M<key::Impl> {
+        weak_impltor: Type,
+        impltor: MonoType,
+    ) -> (M<key::Impl>, TypeMap) {
         warn!(
             "conflicting implementations is not fully implemented. Weird auto-selections may occur"
         );
 
-        let concrete_impltor = weak_impltor.try_into().ok();
+        let concrete_impltor = (&weak_impltor).try_into().ok();
 
         info!(
             "attempting to find `impl {trait_} {} for {}` in {}",
@@ -453,7 +431,7 @@ impl<'a> FuncLower<'a> {
             .for_each_relevant(trait_, concrete_impltor, |imp| {
                 let iforall = &self.mir.impls[imp];
                 let (_, trait_params) = &self.mir.itraits[imp];
-                let impltor = &self.mir.impltors[imp];
+                let iimpltor = &self.mir.impltors[imp];
 
                 let mut comp = lumina_typesystem::Compatibility::new(
                     &self.iquery,
@@ -462,12 +440,23 @@ impl<'a> FuncLower<'a> {
                     &|_| unreachable!(),
                 );
 
-                (trtp
+                let valid = trtp
                     .iter()
                     .zip(trait_params)
                     .all(|(ty, ttp)| comp.cmp(ty, ttp))
-                    && comp.cmp(&weak_impltor, impltor))
-                .then_some(imp)
+                    && comp.cmp(&weak_impltor, iimpltor);
+
+                valid.then(|| {
+                    let mut tmap = TypeMap::new();
+                    tmap.self_ = Some((weak_impltor.clone(), impltor.clone()));
+                    for assignment in comp.into_assignments().into_iter() {
+                        let mono =
+                            to_morphization!(self, &mut TypeMap::new()).apply(&assignment.ty);
+                        let generic = Generic::new(assignment.key, GenericKind::Parent);
+                        tmap.generics.push((generic, (assignment.ty, mono)));
+                    }
+                    (imp, tmap)
+                })
             })
             .unwrap()
     }

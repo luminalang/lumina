@@ -5,6 +5,7 @@ use crate::prelude::*;
 
 impl<'a> FuncLower<'a> {
     pub fn partially_applicate_func(&mut self, target: MonoFunc, given: Vec<lir::Value>) -> Value {
+        info!("partially applicating {target} with {given:?}");
         let given_types = given.iter().map(|v| self.type_of_value(*v)).collect();
         let vtable = self.partial_application_vtable(target, given_types);
         let data = self.ssa().construct(given, vtable.object.into());
@@ -213,18 +214,19 @@ impl<'a> FuncLower<'a> {
         module: key::Module,
         data_type: MonoType,
         vtable: MonoTypeKey,
-        fns: impl Iterator<Item = MonoFunc>,
+        fns: impl Iterator<Item = MonoFunc> + Clone,
     ) -> M<key::Val> {
         let vtable_val_initialiser = {
             let mut blocks = ssa::Blocks::new(Map::new());
 
-            let fn_pointers = fns.map(Value::FuncPtr).collect();
+            let fn_pointers = fns.clone().map(Value::FuncPtr).collect();
             let v = blocks.construct(fn_pointers, vtable.into());
             blocks.return_(v.value());
 
             let init_name = format!(
-                "VTable_{}_{}_initialiser",
+                "VTable_{}_{}^{}_initialiser",
                 self.ty_symbol(&data_type),
+                fns.format(","),
                 self.ty_symbol(&MonoType::Monomorphised(vtable)),
             );
             self.lir.push_function(init_name, blocks, vtable.into())

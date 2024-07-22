@@ -1,9 +1,7 @@
 use super::super::mir::func::Local;
-use super::{pat, ConcreteInst, FinError, Lower};
+use super::{pat, pat::Merge, ConcreteInst, FinError, Lower, MatchBranchLower};
 use crate::prelude::*;
-use crate::{
-    LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY, TRAIT_OBJECT_DATA_FIELD, VTABLE_FIELD,
-};
+use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY};
 use ast::NFunc;
 use lumina_typesystem::{Bitsize, Constraint, Container, ForeignInst, Prim, Type, Var};
 use lumina_util::Highlighting;
@@ -45,7 +43,11 @@ pub enum Expr {
     ValToRef(Box<Self>),
 
     Tuple(Vec<Self>),
-    Match(Box<Self>, pat::DecTree),
+    Match(
+        Box<Self>,
+        pat::DecTree<key::DecisionTreeTail>,
+        Map<key::DecisionTreeTail, Self>,
+    ),
     Poison,
 }
 
@@ -228,7 +230,7 @@ impl<'a, 's> Lower<'a, 's> {
             }
             hir::Expr::Cast(expr, ty) => {
                 let mexpr = self.lower_expr((**expr).as_ref());
-                let ty_of_expr = self.current.casts.pop_front().unwrap();
+                let ty_of_expr = self.current.casts_and_matches.pop_front().unwrap();
                 let (ty, ty_of_expr) = self
                     .finalizer(|mut fin| ((fin.apply(&ty), fin.apply(&ty_of_expr)), fin.errors));
                 self.lower_cast(mexpr, ty_of_expr.tr(expr.span), ty)
@@ -366,34 +368,51 @@ impl<'a, 's> Lower<'a, 's> {
         branches: &[(Tr<hir::Pattern<'s>>, Tr<hir::Expr<'s>>)],
     ) -> Expr {
         let on = self.lower_expr(on);
+        let ty = self.current.casts_and_matches.pop_front().unwrap();
+        let ty = self.finalizer(|mut fin| {
+            let ty = fin.apply(&ty);
+            (ty, fin.errors)
+        });
 
         let mut iter = branches.iter();
         let (initp, inite) = iter.next().unwrap();
 
-        let mut tree = pat::TreeBuilder::new(self, &[], inite.as_ref(), &[]).new_tree(&initp);
+        let mut tails = Map::new();
+
+        let mut blower = MatchBranchLower::new(self, inite.as_ref(), key::DecisionTreeTail(0));
+        let mut tree = blower.first(&ty, initp.as_ref());
+
+        tails.push(blower.lowered_tail.unwrap());
 
         for (pat, expr) in iter {
-            let additional = pat::TreeBuilder::new(self, &[], expr.as_ref(), &[]).new_tree(pat);
-
             info!("merging {pat} into pattern tree");
-            let reachable = pat::Merger::new(self.vtypes).merge(&mut tree, additional);
+
+            let tailkey = tails.next_key();
+
+            let mut blower = MatchBranchLower::new(self, expr.as_ref(), tailkey);
+            let reachable = blower.branch(&mut tree, pat.as_ref());
 
             if !reachable {
-                todo!("ET: unreachable warning");
-                // self.warning("unreachable pattern")
-                //     .eline(pat.span, "")
-                //     .emit();
+                blower
+                    .lower
+                    .errors
+                    .push(FinError::UnreachablePattern(pat.span));
             }
+
+            let expr = blower.lowered_tail.unwrap();
+            tails.push_as(tailkey, expr);
         }
 
-        let mut missing = pat::MissingGeneration { vtypes: self.vtypes };
-        if let Some(missing) = missing.invert(&tree, 1) {
-            let formatter = pat::Formatter::new(self.rsolver.fnames, self.vnames);
-            let missing = pat::Formatter::tree_to_fmt_patterns(&formatter, &missing);
+        let missing = pat::MissingGeneration::new(pat::Init::new(self.rsolver.ftypes, self.vtypes))
+            .run(&tree);
+
+        if !missing.is_empty() {
             self.errors.push(FinError::MissingPatterns(span, missing));
         }
 
-        Expr::Match(Box::new(on), tree)
+        assert_ne!(tails.len(), 0);
+
+        Expr::Match(Box::new(on), tree, tails)
     }
 }
 
@@ -460,9 +479,38 @@ impl fmt::Display for Expr {
             Expr::Float(n) => n.fmt(f),
             Expr::ReadOnly(k) => k.fmt(f),
             Expr::Tuple(elems) => write!(f, "{op}{}{cp}", elems.iter().format(", ")),
-            Expr::Match(on, tree) => {
-                write!(f, "{} {on}:\n{}", "match".keyword(), tree,)
-            }
+            Expr::Match(on, tree, tails) => match tree {
+                // edge-case for formatting `let x = y in` prettily
+                pat::DecTree::End(pat::TreeTail::Reached(table, excess, key))
+                    if excess.is_empty() && table.binds.len() == 1 =>
+                {
+                    write!(
+                        f,
+                        "{} {} {} {on} {}\n  {}",
+                        "let".keyword(),
+                        table.binds[0].0,
+                        '='.symbol(),
+                        "in".keyword(),
+                        tails[*key].to_string().lines().format("\n  ")
+                    )
+                }
+                _ => {
+                    write!(
+                        f,
+                        "{} {on}:\n{}\n  {}\n   {}",
+                        "match".keyword(),
+                        tree,
+                        "where".keyword(),
+                        tails
+                            .iter()
+                            .map(|(k, v)| format!(
+                                "{k} ->\n     {}",
+                                v.to_string().lines().format("\n     ")
+                            ))
+                            .format("\n   ")
+                    )
+                }
+            },
             Expr::IntCast(expr, _, to) => write!(
                 f,
                 "{op}{expr} {} {}{}{cp}",

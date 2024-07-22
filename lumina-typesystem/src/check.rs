@@ -487,11 +487,10 @@ impl<'a, 's> TypeSystem<'a, 's> {
         fname: Tr<&'s str>,
         params: &[IType],
     ) -> Option<IType> {
-        self.env.inst(&params, |inst| {
-            self.fnames[key]
-                .find(|name| fname == *name)
-                .map(|field| inst.apply(&self.ftypes[key][field]))
-        })
+        let finst = ForeignInst::from_type_params(params);
+        self.fnames[key]
+            .find(|name| fname == *name)
+            .map(|field| finst.apply(&self.ftypes[key][field]))
     }
 
     pub fn force_record_inference(&mut self, _from: Span, var: RecordVar) {

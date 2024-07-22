@@ -165,6 +165,19 @@ impl<T> ForeignInst<T> {
     }
 }
 
+impl<T: Clone> ForeignInst<T> {
+    pub fn from_type_params<'a>(params: impl IntoIterator<Item = &'a T>) -> Self
+    where
+        T: 'a,
+    {
+        ForeignInst {
+            generics: params.into_iter().cloned().collect(),
+            pgenerics: Map::new(),
+            self_: None,
+        }
+    }
+}
+
 impl ForeignInst<Var> {
     pub fn to_itype(&self, key: M<key::TypeKind>) -> IType {
         let params = self.generics.values().copied().map(IType::Var).collect();

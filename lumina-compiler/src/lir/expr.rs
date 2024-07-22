@@ -216,9 +216,9 @@ impl<'a> FuncLower<'a> {
                 let vtable = self.trait_impl_vtable(*trait_, impltor, methods);
                 self.construct_dyn_object(&vtable, expr)
             }
-            mir::Expr::Match(on, tree) => {
+            mir::Expr::Match(on, tree, branches) => {
                 let on = self.expr_to_value(on);
-                self.to_pat_lower().run(on, tree)
+                self.to_pat_lower(branches).run(on, tree)
             }
             mir::Expr::ReflectTypeOf(ty) => {
                 let ty = to_morphization!(self, &mut self.current.tmap).apply_weak(ty);

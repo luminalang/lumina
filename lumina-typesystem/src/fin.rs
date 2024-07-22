@@ -35,9 +35,8 @@ impl<'a, 'f, 's> Finalizer<'a, 'f, 's> {
     pub fn apply(&mut self, ty: &IType) -> Type {
         match ty {
             IType::Container(con) => self.apply_container(con),
-            IType::List(type_, params) | IType::Defined(type_, params) => {
-                Type::Defined(*type_, self.apply_types(params))
-            }
+            IType::Defined(type_, params) => Type::Defined(*type_, self.apply_types(params)),
+            IType::List(type_, params) => Type::List(*type_, self.apply_types(params)),
 
             IType::Generic(generic) => Type::Generic(*generic),
             IType::Self_ => Type::Self_,
@@ -192,10 +191,11 @@ impl<'a, 'f, 's> Finalizer<'a, 'f, 's> {
                 let rdata = &self.ts.env.records[var];
                 let name = &rdata.fields[field];
                 match self.ts.fnames[key].find(|n| *n == *name) {
-                    Some(fieldkey) => self.ts.env.inst(&params, |finst| {
+                    Some(fieldkey) => {
+                        let finst = ForeignInst::from_type_params(&params);
                         let ty = &self.ts.ftypes[key][fieldkey];
                         finst.apply(&ty)
-                    }),
+                    }
                     // error will be created by a separate check
                     None => Type::poison(),
                 }
@@ -263,9 +263,8 @@ impl ConcreteInst {
                 GenericKind::Entity => self.generics[generic.key].clone(),
                 GenericKind::Parent => self.pgenerics[generic.key].clone(),
             },
-            Type::List(kind, params) | Type::Defined(kind, params) => {
-                Type::Defined(*kind, self.applys(params))
-            }
+            Type::Defined(kind, params) => Type::Defined(*kind, self.applys(params)),
+            Type::List(kind, params) => Type::List(*kind, self.applys(params)),
             Type::Self_ => match self.self_.clone() {
                 Some(ty) => ty,
                 None => Type::Self_,

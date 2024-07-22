@@ -6,10 +6,7 @@ use crate::prelude::*;
 
 mod expr;
 pub use expr::Expr;
-mod pat;
-pub use pat::{
-    BranchOf, DecTree, DecTreeBranch, ListConstr, PatPoint, PointToBindTranslationTable, Range,
-};
+pub mod pat;
 
 use derive_new::new;
 use lumina_typesystem::{
@@ -74,7 +71,8 @@ pub struct Lower<'a, 's> {
 
 pub enum FinError<'s> {
     TS(lumina_typesystem::FinError<'s>),
-    MissingPatterns(Span, Vec<pat::FmtPattern>),
+    UnreachablePattern(Span),
+    MissingPatterns(Span, Vec<pat::MissingPattern>),
     InvalidCast(Tr<Type>, Type),
 }
 
@@ -177,16 +175,6 @@ impl<'a, 's> Lower<'a, 's> {
         })
     }
 
-    // TODO: remove wrapper
-    pub fn patterns_and_expr(
-        &mut self,
-        ptypes: &[Type],
-        pats: &[Tr<hir::Pattern<'s>>],
-        expr: Tr<&hir::Expr<'s>>,
-    ) -> Expr {
-        pat::TreeBuilder::parameters_to_tree(self, pats, expr, ptypes)
-    }
-
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
         let mut buffer = Vec::with_capacity(str.len());
         let mut bytes = str.bytes().enumerate();
@@ -221,6 +209,117 @@ impl<'a, 's> Lower<'a, 's> {
             (mir::ReadOnlyBytes(buffer.into_boxed_slice()), ty),
         )
     }
+
+    pub fn patterns_and_expr(
+        &mut self,
+        params: &[Type],
+        patterns: &[Tr<hir::Pattern<'s>>],
+        expr: Tr<&hir::Expr<'s>>,
+    ) -> Expr {
+        assert_eq!(params.len(), patterns.len());
+
+        // if params.is_empty() {
+        //     return self.lower_expr(expr);
+        // }
+
+        let mut plower = ParamsLower {
+            lower: self,
+            params,
+            patterns,
+            tail: expr,
+            current_param: 0,
+            lowered_tail: None,
+        };
+        let _ = pat::Merge::generate_tail(&mut plower);
+
+        plower.lowered_tail.unwrap()
+    }
+}
+
+pub struct ParamsLower<'l, 'a, 's> {
+    lower: &'l mut Lower<'a, 's>,
+    params: &'l [Type],
+    patterns: &'l [Tr<hir::Pattern<'s>>],
+    current_param: usize,
+
+    tail: Tr<&'l hir::Expr<'s>>,
+    lowered_tail: Option<Expr>,
+}
+
+impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, 's> {
+    fn generate_tail(&mut self) -> key::DecisionTreeTail {
+        match self.params.get(self.current_param) {
+            None => {
+                if self.lowered_tail.is_none() {
+                    self.lowered_tail = Some(self.lower.lower_expr(self.tail));
+                }
+
+                key::DecisionTreeTail(0)
+            }
+            Some(ty) => {
+                let i = self.current_param;
+                self.current_param += 1;
+
+                let tree = self.first(ty, self.patterns[i].as_ref());
+
+                let missing = pat::MissingGeneration::new(pat::Init::new(
+                    self.lower.rsolver.ftypes,
+                    self.lower.vtypes,
+                ))
+                .run(&tree);
+
+                if !missing.is_empty() {
+                    self.lower
+                        .errors
+                        .push(FinError::MissingPatterns(self.patterns[i].span, missing));
+                }
+
+                let on = Expr::Yield(mir::func::Local::Param(key::Param(i as u32)));
+
+                let mut tails = Map::new();
+                tails.push(self.lowered_tail.take().unwrap());
+
+                self.lowered_tail = Some(Expr::Match(Box::new(on), tree, tails));
+
+                key::DecisionTreeTail(0)
+            }
+        }
+    }
+
+    fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
+        *self.lower.rsolver.fnames[record][field]
+    }
+
+    fn to_init(&self) -> pat::Init {
+        pat::Init::new(self.lower.rsolver.ftypes, self.lower.vtypes)
+    }
+}
+
+#[derive(new)]
+pub struct MatchBranchLower<'l, 'a, 's> {
+    lower: &'l mut Lower<'a, 's>,
+    tail: Tr<&'l hir::Expr<'s>>,
+    tail_key: key::DecisionTreeTail,
+    #[new(default)]
+    lowered_tail: Option<Expr>,
+}
+
+impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for MatchBranchLower<'l, 'a, 's> {
+    fn generate_tail(&mut self) -> key::DecisionTreeTail {
+        if self.lowered_tail.is_none() {
+            self.lowered_tail = Some(self.lower.lower_expr(self.tail));
+        }
+
+        self.tail_key
+    }
+
+    fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
+        *self.lower.rsolver.fnames[record][field]
+    }
+
+    fn to_init(&self) -> pat::Init {
+        pat::Init::new(self.lower.rsolver.ftypes, self.lower.vtypes)
+    }
 }
 
 pub fn emit_fin_error<'s, T>(
@@ -245,6 +344,11 @@ pub fn emit_fin_error<'s, T>(
         FinError::TS(lumina_typesystem::FinError::Record(rerror)) => {
             emit_record_error(sources, module, records, rerror)
         }
+        FinError::UnreachablePattern(span) => sources
+            .error("unreachable pattern")
+            .m(module)
+            .eline(span, "")
+            .emit(),
         FinError::MissingPatterns(span, missing) => {
             let init = sources
                 .error("patterns not exhaustive")
@@ -252,9 +356,18 @@ pub fn emit_fin_error<'s, T>(
                 .eline(span, "")
                 .text("missing patterns");
 
+            let name_of_var = |sum: M<key::Sum>, var: key::SumVariant| {
+                tfmt.hir.vnames[sum][var].value.to_string()
+            };
+            let name_of_field = |record: M<key::Record>, field: key::RecordField| {
+                tfmt.hir.fnames[record][field].value.to_string()
+            };
+
             missing
                 .into_iter()
-                .fold(init, |err, pat| err.text(format!("  {pat}")))
+                .fold(init, |err, pat| {
+                    err.text(format!("  {}", pat.fmt(&name_of_var, &name_of_field)))
+                })
                 .emit();
         }
         FinError::InvalidCast(from, to) => {

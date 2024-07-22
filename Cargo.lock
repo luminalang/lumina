@@ -570,6 +570,8 @@ dependencies = [
  "take_mut",
  "target-lexicon",
  "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
 ]
 
 [[package]]

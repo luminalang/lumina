@@ -36,7 +36,7 @@ Lumina's own ABI is currently a transparent representation of the data given. So
  - [ ] Basic Windows target
  - [ ] Basic MacOS target
  - [ ] Basic introductory website hosted on our domain
- - [ ] Re-add the unreachability warning messages
+ - [x] Re-add the unreachability warning messages
  - [x] Strings
  - [ ] Basic standard library
  - [ ] Floats
@@ -61,3 +61,4 @@ Lumina's own ABI is currently a transparent representation of the data given. So
  - [ ] Inline smaller sum-type data payloads for increased performance
  - [ ] Natively aligned data for improved performance
  - [ ] Stable public function symbols
+ - [ ] Deduplicate ReadOnlyBytes

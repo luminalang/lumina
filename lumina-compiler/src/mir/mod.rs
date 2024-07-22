@@ -19,16 +19,15 @@ mod func;
 use func::InstInfo;
 pub use func::{FunctionStatus, Local};
 use lumina_typesystem::{ImplIndex, Type};
-mod pat;
+mod patc;
 mod tcheck;
 
 mod tyfmt;
 
 mod lower;
-pub use lower::{
-    BranchOf, CallTypes, ConcreteTyping, DecTree, DecTreeBranch, Expr, Function, ListConstr,
-    PatPoint, PointToBindTranslationTable, Range,
-};
+pub use lower::{pat, CallTypes, ConcreteTyping, Expr, Function};
+pub type DecTree = pat::DecTree<key::DecisionTreeTail>;
+pub type Branching<K> = pat::Branching<K, key::DecisionTreeTail>;
 
 type SelfPositions = Map<key::Method, key::Param>;
 
@@ -183,9 +182,15 @@ pub struct Current {
     pub lambda: Option<key::Lambda>,
     pub fkey: M<key::Func>,
     pub binds: HashMap<key::Bind, Tr<IType>>,
+
+    // We traverse the HIR two times. First imutably to perform all type unification than a second
+    // time which actually performs the transformation when all types are statically known.
+    //
+    // These ring buffers are pushed to when traversing the first time and then popped from when
+    // traversing the second time. Allowing us to save some information generating on the first pass to the other.
     pub insts: HashMap<Option<key::Lambda>, VecDeque<Tr<Option<InstInfo>>>>,
     pub type_dependent_lookup: VecDeque<M<ast::NFunc>>,
-    pub casts: VecDeque<Tr<IType>>,
+    pub casts_and_matches: VecDeque<Tr<IType>>,
 }
 
 #[derive(new, Clone, Copy)]
@@ -226,7 +231,7 @@ impl Current {
             fkey,
             binds: HashMap::new(),
             type_dependent_lookup: VecDeque::new(),
-            casts: VecDeque::new(),
+            casts_and_matches: VecDeque::new(),
             insts,
         }
     }

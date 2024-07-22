@@ -7,7 +7,9 @@ use itertools::Itertools;
 use key::{Map, M};
 use lumina_key as key;
 use lumina_key::LinearFind;
-use lumina_typesystem::{Container, Forall, Generic, IType, IntConstraint, RecordVar, Type};
+use lumina_typesystem::{
+    Container, Forall, ForeignInst, Generic, IType, IntConstraint, RecordVar, Type,
+};
 use lumina_util::Highlighting;
 use lumina_util::Tr;
 use std::fmt;
@@ -22,7 +24,7 @@ pub trait TyFormatted<'a, 's> {
 #[derive(new, Clone)]
 pub struct TyFmtState<'a, 's> {
     // ast: &'a AST<'s>,
-    hir: &'a HIR<'s>,
+    pub(crate) hir: &'a HIR<'s>,
     env: &'a TEnv<'s>,
 
     forall: Map<key::Generic, &'s str>,
@@ -90,11 +92,10 @@ impl<'a, 's> TyFormatted<'a, 's> for (RecordVar, &'s str) {
         let (var, fname) = (self.0, self.1);
         match state.env.get_record(var) {
             lumina_typesystem::RecordAssignment::Ok(key, params) => {
-                let ty = state.env.inst(&params, |inst| {
-                    state.hir.fnames[*key]
-                        .find(|name| fname == **name)
-                        .map(|field| inst.apply(&state.hir.field_types[*key][field]))
-                });
+                let inst = ForeignInst::from_type_params(params);
+                let ty = state.hir.fnames[*key]
+                    .find(|name| fname == **name)
+                    .map(|field| inst.apply(&state.hir.field_types[*key][field]));
 
                 match ty {
                     Some(ty) => state.fmt(&ty).fmt(f),

@@ -1,0 +1,34 @@
+---
+source: lumina-compiler/src/mir/lower/pat/tests.rs
+expression: "format!\n(\"{}\\n\\nmissing patterns {{\\n  {}\\n}}\", tree,\nmissing.into_iter().map(| p |\np.fmt(& name_of_var, & name_of_field).to_string()).format(\"\\n  \"))"
+---
+tuple(len = 2)
+  ▵·0:sum0 variant0
+      u8 ..
+          ▵·0:sum0 variant0
+              u8 ..
+                  {
+                    table = [PointTable { binds: [] }],
+                    excess = []
+                    tail = 1
+                  }
+          ▵·0:sum0 variant1
+              unreached: 
+  ▵·0:sum0 variant1
+      ▵·0:sum0 variant0
+          u8 ..
+              {
+                table = [PointTable { binds: [] }],
+                excess = []
+                tail = 0
+              }
+      ▵·0:sum0 variant1
+          {
+            table = [PointTable { binds: [] }],
+            excess = []
+            tail = 3
+          }
+
+missing patterns {
+  (Just _, None)
+}

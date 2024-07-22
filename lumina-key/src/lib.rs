@@ -71,9 +71,6 @@ key_wrapper!(TypeKind, [Record, Sum, Trait]);
 keys! {
     Record . "record",
     Sum . "sum",
-    // Trait . "trait",
-    // TypeEnv . "tenv",
-    // Forall . "forall",
     AssociatedType . "assoc",
     Func . "func",
     Impl . "impl",
@@ -85,6 +82,7 @@ keys! {
     Val . "val",
     Bind . "v",
     Capture . "c",
+    DecisionTreeTail . "tail",
     Method . "method"
 }
 

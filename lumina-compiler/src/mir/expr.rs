@@ -30,7 +30,7 @@ impl<'a, 's> Verify<'a, 's> {
             hir::Expr::PassExpr(inner) => self.type_check_pass_expr((**inner).as_ref()),
             hir::Expr::Cast(expr_, ty) => {
                 let ty_of_expr = self.type_check_expr((**expr_).as_ref());
-                self.current.casts.push_back(ty_of_expr);
+                self.current.casts_and_matches.push_back(ty_of_expr);
                 ty.value.clone()
             }
             hir::Expr::Access(rvar, object, field) => {
@@ -83,6 +83,11 @@ impl<'a, 's> Verify<'a, 's> {
             hir::Expr::Match(on, branches) => {
                 let on = self.type_check_expr((**on).as_ref());
 
+                let clen = self.current.casts_and_matches.len();
+                self.current
+                    .casts_and_matches
+                    .push_back(IType::poison().tr(on.span)); // hackily reserve a slot
+
                 let mut pchecker = SameAsCheck::new("match expressions");
                 let mut echecker = SameAsCheck::new("match patterns");
                 pchecker.include(self.type_system(), on);
@@ -94,7 +99,9 @@ impl<'a, 's> Verify<'a, 's> {
                     echecker.include(self.type_system(), expr_ty);
                 }
 
-                let _on_ty = pchecker.finalize(module, self.ty_formatter(), &self.hir.sources);
+                let on_ty = pchecker.finalize(module, self.ty_formatter(), &self.hir.sources);
+                self.current.casts_and_matches[clen] = on_ty;
+
                 let match_eval_ty =
                     echecker.finalize(module, self.ty_formatter(), &self.hir.sources);
 

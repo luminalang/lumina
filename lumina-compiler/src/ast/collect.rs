@@ -287,7 +287,7 @@ impl<'s> Collector<'s> {
                     let key = self
                         .entities
                         .traits
-                        .push(module, (TyHeader::new(attributes, ty.header)));
+                        .push(module, TyHeader::new(attributes, ty.header));
 
                     self.entities
                         .associated_types

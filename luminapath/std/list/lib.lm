@@ -37,12 +37,12 @@ impl Listable a for List a
       . map #(preventConcatNil right)
 
 // TODO: we wouldn't need this if we specialised the split in `Concat`
-fn preventConcatNil right (v, leftright) as [a], (a, [a]) -> (a, [a]) =
+fn preventConcatNil right (v, leftright) as List a, (a, List a) -> (a, List a) =
   match leftright
     | Nil -> (v, right)
     | _   -> (v, Concat leftright right)
 
-pub fn ++ left right as [a], [a] -> [a] =
+pub fn ++ left right as List a, List a -> List a =
   match left
   | Nil -> right
   | _   -> Concat left right
@@ -75,14 +75,14 @@ pub fn min list as [n] -> Maybe n =
   | [] -> Nothing
   | [x : xs] -> Just (fold #Compare:min x xs)
 
-pub fn len list as [a] -> uint =
+pub fn len list as List a -> uint =
   match list
   | Slice slice -> slice.vec.len - slice.start
   | Singleton a -> 1
   | Concat left right -> len left + len right
   | Nil -> 0
 
-pub fn forEach f list as fn(a -> ()), [a] -> () =
+pub fn forEach f list as fn(a -> ()), List a -> () =
   match list
   | Slice slice -> slice . forEach #f
   | Singleton a -> f a

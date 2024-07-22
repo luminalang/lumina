@@ -111,6 +111,7 @@ pub trait Ty: Clone + From<Prim> {
         panic!("invalid var");
     }
     fn defined(key: M<key::TypeKind>, params: Vec<Self>) -> Self;
+    fn list(key: M<key::TypeKind>, params: Vec<Self>) -> Self;
     fn container(con: Container<Self>) -> Self;
     fn generic(generic: Generic) -> Self;
     fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self>;
@@ -124,6 +125,7 @@ pub trait Ty: Clone + From<Prim> {
 impl Ty for IType {
     fn var(var: Var) -> Self { IType::Var(var) }
     fn defined(key: M<key::TypeKind>, params: Vec<Self>) -> Self { IType::Defined(key, params) }
+    fn list(key: M<key::TypeKind>, params: Vec<Self>) -> Self { IType::List(key, params) }
     fn container(con: Container<Self>) -> Self { IType::Container(con) }
     fn generic(generic: Generic) -> Self { IType::Generic(generic) }
     fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self> {
@@ -144,6 +146,7 @@ impl Ty for IType {
 impl Ty for Type {
     fn container(con: Container<Self>) -> Self { Type::Container(con) }
     fn defined(key: M<key::TypeKind>, params: Vec<Self>) -> Self { Type::Defined(key, params) }
+    fn list(key: M<key::TypeKind>, params: Vec<Self>) -> Self { Type::List(key, params) }
     fn generic(generic: Generic) -> Self { Type::Generic(generic) }
     fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self> {
         match self {
@@ -206,7 +209,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                     Prim::Poison.into()
                 } else {
                     let params = self.tys(inner);
-                    T::defined(self.type_info.list, params)
+                    T::list(self.type_info.list, params)
                 }
             }
             parser::Type::Poison => T::from(Prim::Poison),

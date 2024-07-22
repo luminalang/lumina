@@ -1,17 +1,21 @@
 use super::*;
 use crate::LISTABLE_SPLIT;
-use ibig::IBig;
-use mir::ListConstr;
-use mir::Range;
+use mir::pat::{DecTree, Range, TreeTail};
 use ssa::{Block, Value};
-use std::cmp::Ordering as Ord;
 use std::collections::VecDeque;
 
 impl<'a> FuncLower<'a> {
-    pub fn to_pat_lower<'f>(&'f mut self) -> PatLower<'f, 'a> {
+    pub fn to_pat_lower<'f, 'v>(
+        &'f mut self,
+        branches: &'v Map<key::DecisionTreeTail, mir::Expr>,
+    ) -> PatLower<'f, 'v, 'a> {
         PatLower {
             continuation_block: None,
             continuation_value: None,
+
+            expressions: branches.keys().map(|_| None).collect(),
+
+            branches,
 
             f: self,
 
@@ -24,7 +28,7 @@ impl<'a> FuncLower<'a> {
     }
 }
 
-pub struct PatLower<'f, 'a> {
+pub struct PatLower<'f, 'v, 'a> {
     f: &'f mut FuncLower<'a>,
 
     // All branches put their yielded value as a parameter to this block and jump to it
@@ -33,13 +37,16 @@ pub struct PatLower<'f, 'a> {
     continuation_block: Option<ssa::Block>,
     continuation_value: Option<ssa::Value>,
 
+    branches: &'v Map<key::DecisionTreeTail, mir::Expr>,
+    expressions: Map<key::DecisionTreeTail, Option<Value>>,
+
     constructors: Vec<VecDeque<Value>>,
-    map: Vec<(mir::PatPoint, ssa::Value)>,
+    map: Vec<ssa::Value>,
 
     can_skip_continuation: bool,
 }
 
-impl<'f, 'a> PatLower<'f, 'a> {
+impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
     fn ssa(&mut self) -> &mut ssa::Blocks {
         self.f.ssa()
     }
@@ -76,28 +83,49 @@ impl<'f, 'a> PatLower<'f, 'a> {
 
     fn tree(&mut self, on: ssa::Value, tree: &mir::DecTree) {
         let on = self.f.ensure_no_scope_escape(on);
-        self.map.push((tree.point, on));
+        self.map.push(on);
 
-        match &tree.branch {
-            mir::DecTreeBranch::Ints(bitsize, min, _, vars) => {
-                self.can_skip_continuation &= vars.branches.len() == 1;
+        match tree {
+            DecTree::Record { next, .. } => self.record(on, next),
+            DecTree::Tuple { next, .. } => self.tuple(on, next),
+            DecTree::List { next, ty } => self.list(on, ty, next),
+            DecTree::Ints { bitsize, signed, next } => self.ints(on, *signed, *bitsize, next),
+            DecTree::Bools(next) => self.bools(on, next),
+            DecTree::Sum { sum, params, next } => self.sum(on, *sum, params, next),
+            DecTree::Wildcard { next, .. } | DecTree::Opaque { next, .. } => self.next(next),
+            DecTree::End(tail) => self.tail(tail),
+        }
+    }
 
-                let signed = *min < IBig::from(0);
+    fn tail(&mut self, tail: &TreeTail<key::DecisionTreeTail>) {
+        match tail {
+            TreeTail::Poison => {}
+            TreeTail::Unreached(_) => {}
+            TreeTail::Reached(table, _excess, tail) => {
+                for &(bind, i) in &table.binds {
+                    let v = self.map[i];
+                    trace!("binding {bind} -> {v}");
+                    self.f.current.bindmap.insert(bind, v);
+                }
 
-                let mut vars = vars.branches.clone();
-                vars.sort_by(|(range, _, _), (orange, _, _)| range.start.cmp(&orange.start));
-                let checks = vars_to_check_blocks(vars.clone());
+                match self.expressions[*tail] {
+                    Some(_) => {}
+                    None => {
+                        let expr = &self.branches[*tail];
+                        let v = self.f.expr_to_value(expr);
+                        self.expressions[*tail] = Some(v);
 
-                self.ints(on, checks, signed, *bitsize)
+                        let ty = self.f.type_of_value(v);
+
+                        if self.can_skip_continuation {
+                            self.continuation_value = Some(v);
+                        } else {
+                            let con = self.get_continuation(ty);
+                            self.ssa().jump_continuation(con, vec![v]);
+                        }
+                    }
+                }
             }
-            mir::DecTreeBranch::Tuple(_, next) => self.tuple(on, next),
-            mir::DecTreeBranch::Bools(v) => self.bools(on, v),
-            mir::DecTreeBranch::Sum(_, typings, _, vars) => self.sum(on, typings, vars),
-            mir::DecTreeBranch::List(kind, ty, vars) => self.list(on, *kind, ty, vars),
-            mir::DecTreeBranch::Record(key, params, _, tree) => self.record(on, *key, params, tree),
-            mir::DecTreeBranch::Wildcard(next) => self.next(next),
-            mir::DecTreeBranch::Reached(..) => unreachable!(),
-            mir::DecTreeBranch::Poison => todo!("?"),
         }
     }
 
@@ -110,27 +138,58 @@ impl<'f, 'a> PatLower<'f, 'a> {
                     self.next(tree)
                 }
             },
-            None => match &tree.branch {
-                mir::DecTreeBranch::Reached(table, expr) => {
-                    for (bind, point) in &table.map {
-                        let (_, v) = self.map.iter().find(|(p, _)| p == point).unwrap();
-                        trace!("binding {bind} -> {v}");
-                        self.f.current.bindmap.insert(*bind, *v);
-                    }
-
-                    let v = self.f.expr_to_value(expr);
-
-                    let ty = self.f.type_of_value(v);
-
-                    if self.can_skip_continuation {
-                        self.continuation_value = Some(v);
-                    } else {
-                        let con = self.get_continuation(ty);
-                        self.ssa().jump_continuation(con, vec![v]);
-                    }
-                }
+            None => match &tree {
+                DecTree::End(tail) => self.tail(tail),
                 other => unreachable!("misaligned constructor ordering:\n{other}"),
             },
+        }
+    }
+
+    fn ints(
+        &mut self,
+        on: ssa::Value,
+        signed: bool,
+        bitsize: Bitsize,
+        next: &mir::Branching<Range>,
+    ) {
+        let resetpoint = self.make_reset();
+
+        for (range, next) in &next.branches {
+            if range.end == range.con.max {
+                return self.next(next);
+            }
+
+            let [on_true, on_false] = [self.ssa().new_block(), self.ssa().new_block()];
+
+            let to_value = |n| {
+                if signed {
+                    Value::Int(n, bitsize)
+                } else {
+                    Value::UInt(n as u128, bitsize)
+                }
+            };
+
+            let check = if range.end == range.start {
+                // TODO: jump-table optimisation for adjecent single-numbers
+                self.ssa().eq([on, to_value(range.end)], bitsize)
+            } else {
+                let mut check = self.ssa().lti([on, to_value(range.end)], bitsize);
+                if range.con.min != range.start {
+                    let high_enough = self.ssa().gti([on, to_value(range.start)], bitsize);
+                    let ty = self.f.type_of_value(on);
+                    check = self.ssa().bit_and([check.value(), high_enough.value()], ty);
+                }
+                check
+            }
+            .value();
+
+            self.ssa()
+                .select(check, [(on_true, vec![]), (on_false, vec![])]);
+
+            self.ssa().switch_to_block(on_true);
+            self.next(&next);
+
+            self.reset(on_false, resetpoint.clone());
         }
     }
 
@@ -153,7 +212,7 @@ impl<'f, 'a> PatLower<'f, 'a> {
         self.next(next)
     }
 
-    fn bools(&mut self, on: Value, v: &mir::BranchOf<bool>) {
+    fn bools(&mut self, on: Value, v: &mir::Branching<bool>) {
         self.can_skip_continuation = false;
 
         let [fst, snd] = v.branches.as_slice() else {
@@ -173,19 +232,13 @@ impl<'f, 'a> PatLower<'f, 'a> {
             .select(on, [(on_true, vec![]), (on_false, vec![])]);
 
         self.ssa().switch_to_block(on_true);
-        self.next(&truthy.2);
+        self.next(&truthy.1);
 
         self.reset(on_false, resetpoint);
-        self.next(&falsey.2);
+        self.next(&falsey.1);
     }
 
-    fn list(
-        &mut self,
-        on: Value,
-        _: M<key::TypeKind>,
-        ty: &Type,
-        vars: &mir::BranchOf<ListConstr>,
-    ) {
+    fn list(&mut self, on: Value, ty: &Type, vars: &SumBranches) {
         self.can_skip_continuation = false;
 
         let oblock = self.block();
@@ -236,7 +289,7 @@ impl<'f, 'a> PatLower<'f, 'a> {
             .ssa()
             .eq([tag.value(), Value::maybe_just()], mono::TAG_SIZE);
 
-        let [con_block, nil_block] = [ListConstr::Cons, ListConstr::Nil].map(|constr| {
+        let [con_block, nil_block] = [mir::pat::LIST_CONS, mir::pat::LIST_NIL].map(|constr| {
             let vblock = self.ssa().new_block();
             self.ssa().switch_to_block(vblock);
 
@@ -245,7 +298,7 @@ impl<'f, 'a> PatLower<'f, 'a> {
             let mut vparams = VecDeque::new();
 
             // Add parameters matching the MIR pattern of `Cons x xs`
-            if constr == ListConstr::Cons {
+            if constr == mir::pat::LIST_CONS {
                 let mut offset = BitOffset(0);
 
                 let x = self.ssa().sum_field(data, offset, innermt.clone());
@@ -262,7 +315,7 @@ impl<'f, 'a> PatLower<'f, 'a> {
             let next = vars
                 .branches
                 .iter()
-                .find_map(|(con, _, n)| (*con == constr).then_some(n))
+                .find_map(|(con, n)| (*con == constr).then_some(n))
                 .unwrap();
 
             self.next(next);
@@ -275,7 +328,7 @@ impl<'f, 'a> PatLower<'f, 'a> {
             .select(is_just.value(), [(con_block, vec![]), (nil_block, vec![])]);
     }
 
-    fn record(&mut self, on: Value, _: M<key::Record>, _: &[Type], next: &mir::DecTree) {
+    fn record(&mut self, on: Value, next: &mir::DecTree) {
         let mk = self.f.type_of_value(on).as_key();
 
         let constructor = self
@@ -294,13 +347,8 @@ impl<'f, 'a> PatLower<'f, 'a> {
         self.next(next);
     }
 
-    fn sum(
-        &mut self,
-        on: Value,
-        typings: &Map<key::SumVariant, mir::CallTypes>,
-        v: &mir::BranchOf<key::SumVariant>,
-    ) {
-        self.can_skip_continuation &= typings.len() == 1;
+    fn sum(&mut self, on: Value, sum: M<key::Sum>, params: &[Type], v: &SumBranches) {
+        self.can_skip_continuation &= v.branches.len() == 1;
 
         let oblock = self.block();
         let on = self.f.ensure_no_scope_escape(on);
@@ -318,29 +366,31 @@ impl<'f, 'a> PatLower<'f, 'a> {
 
         let data_field = self.ssa().field(on, on_mk, key::RecordField(1), data);
 
-        let jmp_table_blocks = typings
+        assert!(
+            v.branches
+                .windows(2)
+                .all(|branch| branch[0].0 .0 == branch[1].0 .0 - 1),
+            "sum variants in decision tree are meant to be sorted"
+        );
+
+        let jmp_table_blocks = v
+            .branches
             .iter()
-            .map(|(variant, typing)| {
+            .map(|(var, next)| {
                 let vblock = self.ssa().new_block();
                 self.ssa().switch_to_block(vblock);
 
                 let resetpoint = self.make_reset();
 
+                let finst = lumina_typesystem::ForeignInst::from_type_params(params);
+                let raw_var_types = &self.f.mir.variant_types[sum][*var];
+
                 let mut base_offset = BitOffset(0);
-                let params = typing
-                    .params
-                    .values()
+                let params = raw_var_types
+                    .iter()
                     .map(|ty| {
-                        let mut morph = mono::Monomorphization::new(
-                            &mut self.f.lir.types,
-                            &self.f.mir.field_types,
-                            &self.f.mir.variant_types,
-                            &self.f.mir.methods,
-                            &self.f.mir.funcs,
-                            &self.f.mir.trait_objects,
-                            &mut self.f.current.tmap,
-                        );
-                        let ty = morph.apply(ty);
+                        let ty = finst.apply(ty);
+                        let ty = to_morphization!(self.f, &mut self.f.current.tmap).apply(&ty);
 
                         let size = self.f.lir.types.types.size_of(&ty) as u32;
                         let offset = base_offset;
@@ -352,8 +402,6 @@ impl<'f, 'a> PatLower<'f, 'a> {
 
                 self.constructors.push(params);
 
-                let (_, _, next) = v.branches.iter().find(|(v, _, _)| *v == variant).unwrap();
-
                 self.next(next);
                 self.reset(oblock, resetpoint);
 
@@ -362,121 +410,6 @@ impl<'f, 'a> PatLower<'f, 'a> {
             .collect();
 
         self.ssa().jump_table(copy_tag.into(), jmp_table_blocks);
-    }
-
-    fn bound_checks(
-        &mut self,
-        on: Value,
-        start: &IBig,
-        end: &IBig,
-        signed: bool,
-        bitsize: Bitsize,
-    ) -> Option<Value> {
-        let max = bitsize.maxi(signed);
-        let min = bitsize.mini(signed);
-
-        match (-IBig::from(min) == *start, IBig::from(max) == *end) {
-            (true, false) => {
-                let v = ibig_to_value(end, signed, bitsize);
-                let v = self.ssa().lti([on, v], bitsize).into();
-                Some(v)
-            }
-            (false, true) => {
-                let v = ibig_to_value(start, signed, bitsize);
-                let v = self.ssa().gti([on, v], bitsize).into();
-                Some(v)
-            }
-            (false, false) if start == end => {
-                let v = ibig_to_value(start, signed, bitsize);
-                let v = self.ssa().eq([on, v], bitsize).into();
-                Some(v)
-            }
-            (false, false) => {
-                let bounds = [start, end].map(|n| ibig_to_value(n, signed, bitsize));
-                let ty = self.f.type_of_value(on);
-                let v = self
-                    .ssa()
-                    .cmps(on, [Ord::Greater, Ord::Less], bounds, bitsize, ty);
-                Some(v)
-            }
-            (true, true) => None,
-        }
-    }
-
-    fn ints(&mut self, on: Value, checks: Vec<NCheck>, signed: bool, bitsize: Bitsize) {
-        let resetpoint = self.make_reset();
-
-        for check in checks {
-            let [on_true, on_false] = [self.ssa().new_block(), self.ssa().new_block()];
-
-            match check {
-                NCheck::LongRange(range, next) | NCheck::SmolRange(range, next) => {
-                    match self.bound_checks(on, &range.start, &range.end, signed, bitsize) {
-                        Some(check) => {
-                            self.ssa()
-                                .select(check, [(on_true, vec![]), (on_false, vec![])]);
-
-                            self.ssa().switch_to_block(on_true);
-                            self.next(&next);
-
-                            self.reset(on_false, resetpoint.clone());
-                        }
-                        None => {
-                            todo!();
-                        }
-                    }
-                }
-                NCheck::JmpTable { start, cons } => {
-                    let [Some(initnext), xs @ ..] = cons.as_slice() else {
-                        unreachable!();
-                    };
-
-                    let within_bounds = {
-                        let end = start.clone() + cons.len();
-                        self.bound_checks(on, &start, &end, signed, bitsize)
-                            .unwrap()
-                    };
-
-                    self.ssa()
-                        .select(within_bounds, [(on_true, vec![]), (on_false, vec![])]);
-
-                    self.ssa().switch_to_block(on_true);
-
-                    let by = ibig_to_value(&start, signed, bitsize);
-                    let ty = signed
-                        .then_some(MonoType::Int(bitsize))
-                        .unwrap_or(MonoType::UInt(bitsize));
-                    let normalised = self.ssa().sub(on, by, ty);
-
-                    let mut pblock = self.ssa().new_block();
-                    self.ssa().switch_to_block(pblock);
-                    self.next(&initnext);
-
-                    self.reset(pblock, resetpoint.clone());
-
-                    let blocks = std::iter::once(pblock)
-                        .chain(xs.iter().map(|next| match next {
-                            None => pblock,
-                            Some(next) => {
-                                let block = self.ssa().new_block();
-                                self.ssa().switch_to_block(block);
-                                self.next(next);
-                                self.reset(on_true, resetpoint.clone());
-                                pblock = block;
-                                block
-                            }
-                        }))
-                        .collect();
-
-                    // We should've already reset back to the on_true block which is what
-                    // should contain the jump table since on_true is for the bound checks
-                    self.ssa().jump_table(normalised.into(), blocks);
-
-                    // The next check should occur in the on_false block
-                    self.ssa().switch_to_block(on_false);
-                }
-            }
-        }
     }
 
     pub fn get_continuation(&mut self, ty: MonoType) -> Block {
@@ -492,84 +425,10 @@ impl<'f, 'a> PatLower<'f, 'a> {
     }
 }
 
-#[derive(Debug)]
-enum NCheck {
-    SmolRange(Range, mir::DecTree),
-    LongRange(Range, mir::DecTree),
-    JmpTable {
-        start: IBig,
-        // None means that it has the same continuation as the number before it
-        cons: Vec<Option<mir::DecTree>>,
-    },
-}
-
-impl NCheck {
-    fn new(range: Range, next: mir::DecTree) -> Self {
-        let diff = range.end.clone() - range.start.clone();
-        if diff < IBig::from(4) {
-            NCheck::SmolRange(range, next)
-        } else {
-            NCheck::LongRange(range, next)
-        }
-    }
-}
-
-fn vars_to_check_blocks<T>(vars: Vec<(Range, T, mir::DecTree)>) -> Vec<NCheck> {
-    let mut buf = vec![];
-
-    for (range, _, next) in vars {
-        let check = NCheck::new(range, next);
-
-        match (buf.last_mut(), check) {
-            (Some(NCheck::SmolRange(prev, pnext)), NCheck::SmolRange(mut n, next))
-                if n.start == prev.end.clone() + 1 =>
-            {
-                let mut cons = vec![];
-                cons.push(Some(pnext.clone()));
-                while prev.end != prev.start {
-                    prev.end -= 1;
-                    cons.push(None);
-                }
-
-                cons.push(Some(next));
-                while n.end != n.start {
-                    n.end -= 1;
-                    cons.push(None);
-                }
-
-                let start = prev.start.clone();
-                let lasti = buf.len() - 1;
-                buf[lasti] = NCheck::JmpTable { start, cons };
-            }
-            (Some(NCheck::JmpTable { start, cons }), NCheck::SmolRange(mut n, next))
-                if start.clone() + cons.len() == n.start =>
-            {
-                cons.push(Some(next));
-
-                while n.end != n.start {
-                    n.end -= 1;
-                    cons.push(None);
-                }
-            }
-            (_, check) => buf.push(check),
-        }
-    }
-
-    buf
-}
-
 #[derive(Clone)]
 struct ResetPoint {
     constructors: Vec<VecDeque<Value>>,
-    map: Vec<(mir::PatPoint, ssa::Value)>,
+    map: Vec<ssa::Value>,
 }
 
-fn ibig_to_value(n: &IBig, signed: bool, bitsize: Bitsize) -> Value {
-    if signed {
-        let n = n.to_string().parse::<i128>().unwrap();
-        Value::Int(n, bitsize)
-    } else {
-        let n = n.to_string().parse::<u128>().unwrap();
-        Value::UInt(n, bitsize)
-    }
-}
+type SumBranches = mir::Branching<key::SumVariant>;

@@ -24,7 +24,7 @@ impl<'a, 's> Verify<'a, 's> {
                 let (finst, ptypes, returns) = self.type_of_variant(pat.span, *type_, *var);
                 let instinfo = InstInfo::new(type_.module, finst, ptypes, returns.clone());
                 self.type_check_and_emit_application(pat.span, &params, &instinfo.ptypes);
-                self.current.push_inst(pat.span, Some(instinfo));
+                // self.current.push_inst(pat.span, Some(instinfo));
                 returns.value
             }
             hir::Pattern::Record(var, ty, fields) => {

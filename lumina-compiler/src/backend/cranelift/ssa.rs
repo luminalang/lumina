@@ -589,7 +589,9 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                     self.block();
                 }
             }
-            lir::ControlFlow::Unreachable => todo!("handle unreachable?"),
+            lir::ControlFlow::Unreachable => {
+                self.ins().trap(TrapCode::UnreachableCodeReached);
+            }
             lir::ControlFlow::Return(v) => {
                 let entry = self.value_to_entry(*v);
                 self.return_(entry);

@@ -1,10 +1,10 @@
 use std:ptr
-use std:list [List, Slice]
+use std:list [List [Slice]]
 use std:list:vec [Vec]
 use std:gc [logn]
 
 pub type string {
-  inner [u8]
+  inner List u8
 }
 
 pub fn len {inner} as string -> uint = inner . len

@@ -111,8 +111,8 @@ fn main() -> ExitCode {
                 .unwrap_or_else(Target::native);
 
             let ast = match compiler::ast::parse(
-                project_path,
-                env.lumina_folder,
+                project_path.clone(),
+                env.lumina_folder.clone(),
                 settings.epanic,
                 target.clone(),
             ) {
@@ -122,7 +122,6 @@ fn main() -> ExitCode {
                 }
                 Ok(ast) => ast,
             };
-            let output = settings.output.unwrap_or_else(String::new);
 
             let pinfo = match project_info(&ast.lookups) {
                 Err(err) => {
@@ -132,6 +131,7 @@ fn main() -> ExitCode {
                 Ok(pinfo) => pinfo,
             };
 
+            let project_name = ast.config.name.clone();
             let (hir, tenvs, mut iquery) = compiler::hir::run(pinfo, ast);
 
             let (mir, has_failed) = compiler::mir::run(pinfo, hir, tenvs, &mut iquery);
@@ -142,9 +142,15 @@ fn main() -> ExitCode {
 
             let lir = compiler::lir::run(pinfo, &iquery, mir);
 
-            compiler::backend::cranelift::run(target, &output, lir);
-
-            ExitCode::SUCCESS
+            let object = compiler::backend::cranelift::run(target, lir);
+            compiler::backend::link_native_binary(
+                target,
+                project_name,
+                settings.output.as_deref(),
+                env.lumina_folder,
+                project_path,
+                object,
+            )
         }
     }
 }

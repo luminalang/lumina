@@ -13,7 +13,7 @@ when t can Size
 pub fn alloc as *t = std:prelude:alloc (Size(self as t):of as int) as *t
 
 when t can Size
-pub fn dealloc ptr as *t -> () = std:prelude:free (ptr as *u8)
+pub fn dealloc ptr as *t -> () = std:prelude:dealloc (ptr as *u8) (Size(self as t):of as int)
 
 when t can Size
 pub fn box v as t -> *t =

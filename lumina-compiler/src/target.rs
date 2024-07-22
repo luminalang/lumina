@@ -95,6 +95,12 @@ impl Target {
 
         targetted
     }
+
+    pub fn object_extension(&self) -> &'static str {
+        match self.platform {
+            Platform::Linux { .. } => "o",
+        }
+    }
 }
 
 impl fmt::Display for Target {

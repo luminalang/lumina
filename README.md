@@ -4,10 +4,8 @@
 
 Currently there's two native targets with basic support for Linux only. 
 
-dynamically linked with glibc and mmtk as the allocator
-statically  linked with musl  and mmtk as the allocator
-
-See `compile-link-run.sh` for help. 
+`lumina build --target x86_64-linux-musl -o a.out sandbox/snippets`
+`./a.out`
 
 # Logging
 
@@ -30,7 +28,7 @@ Lumina's own ABI is currently a transparent representation of the data given. So
  - [x] Make `pub` actually have an effect. Our resolver has a system for visibility but we aren't using it. 
  - [ ] Basic guide/showcase
  - [ ] Replace all remaining `todo!("ET: ");`s with proper error messages
- - [ ] Give the compiler the ability to detect and use system linkers
+ - [x] Give the compiler the ability to detect and use system linkers
  - [x] Vectorised linked lists or finger trees as default list desugaring
  - [x] Fix the type checker sometimes confusing the expected type with the given type and vice-versa
  - [ ] Basic Windows target

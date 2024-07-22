@@ -26,7 +26,7 @@ impl Target {
     }
 }
 
-pub fn run(target: Target, output: &str, lir: lir::Output) {
+pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
     let mut shared_builder = settings::builder();
     shared_builder.set("opt_level", "speed").unwrap();
     let shared_flags = settings::Flags::new(shared_builder);
@@ -134,14 +134,15 @@ pub fn run(target: Target, output: &str, lir: lir::Output) {
     ctx.declare_entrypoint(target);
 
     let product = ctx.objmodule.finish();
-    let raw_data = product.emit().unwrap();
 
-    if output != "" {
-        let mut f = std::fs::File::create(output).unwrap();
-        f.write_all(&raw_data).unwrap()
-    } else {
-        println!(" no output filename specified ");
-    }
+    product.emit().unwrap()
+
+    // if output != "" {
+    //     let mut f = std::fs::File::create(output).unwrap();
+    //     f.write_all(&raw_data).unwrap()
+    // } else {
+    //     println!(" no output filename specified ");
+    // }
 }
 
 impl<'a> Context<'a> {

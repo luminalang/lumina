@@ -1,7 +1,6 @@
 use std:ptr
 use std:list [List [Slice]]
 use std:list:vec [Vec]
-use std:gc [logn]
 
 pub type string {
   inner List u8

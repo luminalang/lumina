@@ -65,14 +65,10 @@ fn string_from_raw_parts ptr len as *u8, uint -> string =
 //   fn tag_size = 4
 
 @[platform "linux"]
-fn alloc size as int -> *u8 =
-  std:gc:mmtk_alloc std:gc:main_thread_mutator size 4 0 0
+fn alloc size as int -> *u8 = std:gc:alloc size
 
 @[platform "linux"]
-fn dealloc ptr size as *u8, int -> () = free ptr
-
-@[extern "free", platform "linux"]
-fn free as *u8 -> ()
+fn dealloc ptr size as *u8, int -> () = std:gc:free ptr
 
 @[extern "x86_64_syscall", platform "linux"]
 fn syscall as int, int, int, int, int, int -> ()

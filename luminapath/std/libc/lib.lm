@@ -1,2 +1,5 @@
 @[extern "getenv", platform "linux"]
 pub fn getenv as *u8 -> *u8
+
+@[extern "exit", platform "linux"]
+pub fn exit code as int -> ()

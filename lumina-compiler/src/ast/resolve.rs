@@ -73,8 +73,20 @@ impl<'s> Lookups<'s> {
 
     pub fn new_root_module(&mut self, parent: Option<key::Module>) -> key::Module {
         let mut namespaces = Namespaces::default();
-        namespaces.kind = ModuleKind::Root { parent };
+        namespaces.kind = ModuleKind::Root {
+            parent,
+            stdlib: parent.map(|m| self.is_stdlib(m)).unwrap_or(false),
+        };
         self.modules.push(namespaces)
+    }
+
+    pub fn is_stdlib(&self, module: key::Module) -> bool {
+        match self.modules[module].kind {
+            ModuleKind::Root { stdlib: true, .. } => true,
+            ModuleKind::Root { parent: Some(module), .. } => self.is_stdlib(module),
+            ModuleKind::Root { .. } => false,
+            ModuleKind::Member { root } => self.is_stdlib(root),
+        }
     }
 
     pub fn new_member_module(&mut self, root: key::Module) -> key::Module {
@@ -84,7 +96,9 @@ impl<'s> Lookups<'s> {
     }
 
     pub fn new_lib(&mut self, in_: &'static str, lib: String) -> key::Module {
-        let module = self.modules.push(Namespaces::default());
+        let mut namespaces = Namespaces::default();
+        namespaces.kind = ModuleKind::Root { parent: None, stdlib: in_ == "std" };
+        let module = self.modules.push(namespaces);
         self.libs.get_mut(in_).unwrap().insert(lib, module);
         module
     }
@@ -313,8 +327,9 @@ impl<'s> Lookups<'s> {
 
     pub fn is_valid_reachability<'a>(&self, current: key::Module, visibility: Visibility) -> bool {
         match visibility {
-            Visibility::Project(m) if self.are_members_of_same_project(&[current, m]) => true,
             Visibility::Public => true,
+            Visibility::Project(m) if self.are_members_of_same_project(&[current, m]) => true,
+            Visibility::Project(m) if self.is_stdlib(current) && self.is_stdlib(m) => true,
             _ => false,
         }
     }
@@ -327,7 +342,7 @@ impl<'s> Lookups<'s> {
 
     fn get_root_module(&self, of: key::Module) -> key::Module {
         match self.modules[of].kind {
-            ModuleKind::Root { parent } => match parent {
+            ModuleKind::Root { parent, .. } => match parent {
                 Some(p) => self.get_root_module(p),
                 None => of,
             },
@@ -430,13 +445,18 @@ pub struct Namespaces<'s> {
 
 #[derive(Debug)]
 pub enum ModuleKind {
-    Root { parent: Option<key::Module> },
-    Member { root: key::Module },
+    Root {
+        parent: Option<key::Module>,
+        stdlib: bool,
+    },
+    Member {
+        root: key::Module,
+    },
 }
 
 impl Default for ModuleKind {
     fn default() -> Self {
-        ModuleKind::Root { parent: None }
+        ModuleKind::Root { parent: None, stdlib: false }
     }
 }
 

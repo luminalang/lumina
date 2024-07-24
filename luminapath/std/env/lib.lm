@@ -6,7 +6,7 @@ val process_arguments as Vec (Vec u8) = vec:empty
 
 pub fn get_args as [string] = 
     process_arguments
-    . vec:slice
+    . vec:slice // ["a.out"]
     . map #vec:slice
     . vec:slice
     . map #(\slice -> { string | inner = list:Slice slice })

@@ -26,10 +26,10 @@ pub fn get i vec as uint, Vec a -> Maybe a =
     else Just (unsafe_get i vec)
 
 fn unsafe_get i {ptr, len} as uint, Vec a -> a =
-  ptr:offset ptr (i as int) . ptr:deref
+  ptr:offsetu ptr (Size(a):of * i) . ptr:deref
 
 fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
-   let at = ptr:offset ptr (i as int) in
+   let at = ptr:offsetu ptr (Size(a):of * i) in
     ptr:write at v
 
 pub type Slice a {
@@ -44,18 +44,16 @@ pub fn split {vec, start} as Slice a -> Maybe (a, Slice a) =
 pub fn forEach f slice as fn(a -> ()), Slice a -> () =
   list:itimes #perform (slice.vec.len - slice.start)
  where
-  fn perform i as uint -> () = ptr:offset slice.vec.ptr ((slice.start + i) as int) . ptr:deref . f
+  fn perform i as uint -> () = unsafe_get i slice.vec . f
 
 pub fn map f slice as fn(a -> b), Slice a -> Vec b =
-  let vec = capacity(a as b) (slice.vec.len - slice.start) in
-    from_range
-      (slice.start, slice.vec.len)
-      #(\i -> unsafe_get i slice.vec . f)
-    // list:itimes #perform (slice.vec.len - slice.start)
+  from_range
+    (slice.start, slice.vec.len) // (0, 1)
+    #(\i -> unsafe_get i slice.vec . f)
 
 pub fn from_range (start, end) f as (uint, uint), fn(uint -> a) -> Vec a =
   // TODO: bound checks
-  let count = (end - start) in
+  let count = (end - start) in // 1 - 0 = 1
   let vec = capacity count in
     do list:itimes #(\i -> unsafe_set i (f (i + start)) vec) count
     then vec

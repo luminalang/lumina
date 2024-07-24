@@ -76,5 +76,5 @@ fn syscall as int, int, int, int, int, int -> ()
 
 @[no_mangle, platform ["linux-gnu", "linux-musl"]]
 fn _lumina_sys_init argc argv as i32, **u8 -> () = 
-  let args = vec:from_range (0, argc as uint) #(\i -> vec:bytes_from_null_terminated (ptr:offsetu argv i . ptr:deref))
+  let args = vec:from_range (0, argc as uint) #(\i -> vec:bytes_from_null_terminated (ptr:offsetu argv (i * 8) . ptr:deref))
     in ptr:write (builtin:val_to_ref process_arguments) args

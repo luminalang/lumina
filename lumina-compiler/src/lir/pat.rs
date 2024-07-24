@@ -244,7 +244,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let oblock = self.block();
         let on = self.f.ensure_no_scope_escape(on);
 
-        let mut morph = to_morphization!(self.f, &mut self.f.current.tmap);
+        let mut morph = to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap);
         let listmt = morph.apply(&ty);
         let list = morph.apply_weak(&ty);
         let (_, inner) = match &ty {
@@ -390,7 +390,8 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     .iter()
                     .map(|ty| {
                         let ty = finst.apply(ty);
-                        let ty = to_morphization!(self.f, &mut self.f.current.tmap).apply(&ty);
+                        let ty = to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap)
+                            .apply(&ty);
 
                         let size = self.f.lir.types.types.size_of(&ty) as u32;
                         let offset = base_offset;

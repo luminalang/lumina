@@ -1,16 +1,4 @@
-// @[platform "linux-gnu"]
-// fn read size as int -> *u8 =
-//   let buf = alloc size in
-//     do libc_read stdin buf size then buf
-// 
-// @[platform "linux-gnu"]
-// fn print ptr size as *u8, int -> () = 
-//   do libc_write stdout ptr size then ()
-// 
-// @[platform "linux-gnu"]
-// fn println ptr size as *u8, int -> () =
-//   do print ptr size then print "\n" 1
-// 
+use std:libc
  
 @[platform "linux"]
 pub fn stdout = 1
@@ -21,18 +9,10 @@ pub fn stdin  = 0
 @[platform "linux"]
 pub fn print str as string -> () =
   let {ptr, len} = str . toByteVec in
-    do libc_write stdout ptr (len as int)
+    do libc:write stdout ptr (len as int)
     then ()
 
-@[extern "write", platform "linux"]
-pub fn libc_write as int, *u8, int -> int
-
-@[extern "read", platform "linux"]
-pub fn libc_read as int, *u8, int -> int
-
-@[extern "raise", platform "linux"]
-pub fn libc_raise as int -> ()
-
-pub fn interupt = libc_raise sigint
+@[platform "linux"]
+pub fn interupt = libc:raise sigint
 
 fn sigint = 2

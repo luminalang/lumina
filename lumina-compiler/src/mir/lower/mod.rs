@@ -22,6 +22,8 @@ pub struct Function {
     pub typing: ConcreteTyping,
     pub lambdas: Map<key::Lambda, Lambda>,
     pub lcaptures: Map<key::Lambda, Vec<key::Bind>>,
+    #[new(default)]
+    pub no_mangle: bool,
     pub expr: Expr,
 }
 

@@ -85,13 +85,15 @@ impl<'a> FuncLower<'a> {
                 ResolvedNFunc::Val(_, _) => todo!(),
             },
             mir::Expr::YieldLambda(lambda, inst) => {
-                let (mfunc, captures, capture_tuple_ty, _ret) = self.morphise_lambda(*lambda, inst);
+                let (mfunc, captures, cap_tuple_ty, _ret) = self.morphise_lambda(*lambda, inst);
 
                 let mut methods = Map::new();
                 methods.push(mfunc);
 
+                let vhash = VTableHash::Lambda(mfunc);
+
                 let vtable =
-                    self.trait_impl_vtable(self.info.closure, capture_tuple_ty.into(), methods);
+                    self.trait_impl_vtable(self.info.closure, vhash, cap_tuple_ty.into(), methods);
 
                 self.construct_dyn_object(&vtable, captures)
             }
@@ -123,7 +125,7 @@ impl<'a> FuncLower<'a> {
             mir::Expr::Access(object, record, types, field) => {
                 let value = self.expr_to_value(object);
 
-                let mut morph = to_morphization!(self, &mut self.current.tmap);
+                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
 
                 let mk = morph.record(*record, types);
 
@@ -133,7 +135,7 @@ impl<'a> FuncLower<'a> {
                 Value::V(v)
             }
             mir::Expr::Record(record, types, fields) => {
-                let mut mono = to_morphization!(self, &mut self.current.tmap);
+                let mut mono = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
 
                 let ty = MonoType::Monomorphised(mono.record(*record, types));
 
@@ -181,17 +183,18 @@ impl<'a> FuncLower<'a> {
                 self.ssa().write(ptr, value).into()
             }
             mir::Expr::ObjectCast(expr, weak_impltor, trait_, trait_params) => {
+                let trait_ = *trait_;
                 let expr = self.expr_to_value(expr);
                 let impltor = self.type_of_value(expr);
 
-                let mut morph = to_morphization!(self, &mut self.current.tmap);
+                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
                 let weak_impltor = morph.apply_weak(weak_impltor);
                 let weak_trait_params = morph.applys_weak::<Vec<_>>(trait_params);
 
                 let (impl_, tmap) = self.find_implementation(
-                    *trait_,
+                    trait_,
                     &weak_trait_params,
-                    weak_impltor,
+                    weak_impltor.clone(),
                     impltor.clone(),
                 );
 
@@ -203,7 +206,7 @@ impl<'a> FuncLower<'a> {
                             // If the methods have generics then this isn't trait-safe therefore
                             // this would've already been stopped.
                             let mut tmap = tmap.clone();
-                            let mut morph = to_morphization!(self, &mut tmap);
+                            let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
                             let typing = self.mir.funcs[func].as_typing();
                             let typing =
                                 morph.apply_typing(FuncOrigin::Method(impl_, method), typing);
@@ -213,7 +216,11 @@ impl<'a> FuncLower<'a> {
                     })
                     .collect();
 
-                let vtable = self.trait_impl_vtable(*trait_, impltor, methods);
+                // TODO: Is it possible that a `Type::Defined` and `Type::List` both exist here
+                // and therefore we get an unintended hash miss?
+                let vhash = VTableHash::Object { trait_, weak_trait_params, weak_impltor };
+
+                let vtable = self.trait_impl_vtable(trait_, vhash, impltor, methods);
                 self.construct_dyn_object(&vtable, expr)
             }
             mir::Expr::Match(on, tree, branches) => {
@@ -221,11 +228,12 @@ impl<'a> FuncLower<'a> {
                 self.to_pat_lower(branches).run(on, tree)
             }
             mir::Expr::ReflectTypeOf(ty) => {
-                let ty = to_morphization!(self, &mut self.current.tmap).apply_weak(ty);
+                let ty =
+                    to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply_weak(ty);
                 self.create_reflection(ty)
             }
             mir::Expr::SizeOf(ty) => {
-                let ty = to_morphization!(self, &mut self.current.tmap).apply(ty);
+                let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
                 let size = self.lir.types.types.size_of(&ty) / 8;
                 Value::Int(size as i128, Bitsize(64)) // TODO: 32-bit
             }
@@ -364,7 +372,7 @@ impl<'a> FuncLower<'a> {
             ast::NFunc::Method(key, method) => {
                 let trait_ = func.module.m(key);
 
-                let morph = to_morphization!(self, &mut self.current.tmap);
+                let morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
 
                 let self_ = inst.self_.as_ref().unwrap();
 
@@ -389,7 +397,7 @@ impl<'a> FuncLower<'a> {
 
                 let ptypes = inst.generics.values().cloned().collect::<Vec<_>>();
 
-                let mut morph = to_morphization!(self, &mut self.current.tmap);
+                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
                 let mk = morph.sum(sum, &ptypes);
 
                 let tag = Value::UInt(var.0 as u128, mono::TAG_SIZE);
@@ -455,8 +463,8 @@ impl<'a> FuncLower<'a> {
                     let mut tmap = TypeMap::new();
                     tmap.self_ = Some((weak_impltor.clone(), impltor.clone()));
                     for assignment in comp.into_assignments().into_iter() {
-                        let mono =
-                            to_morphization!(self, &mut TypeMap::new()).apply(&assignment.ty);
+                        let mono = to_morphization!(self.lir, self.mir, &mut TypeMap::new())
+                            .apply(&assignment.ty);
                         let generic = Generic::new(assignment.key, GenericKind::Parent);
                         tmap.generics.push((generic, (assignment.ty, mono)));
                     }
@@ -479,7 +487,8 @@ impl<'a> FuncLower<'a> {
             &fdef.typing
         );
 
-        let typing = to_morphization!(self, &mut tmap).apply_typing(func, &fdef.typing);
+        let typing =
+            to_morphization!(self.lir, self.mir, &mut tmap).apply_typing(func, &fdef.typing);
         let ret = typing.returns.clone();
 
         info!(

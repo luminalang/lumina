@@ -126,7 +126,6 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
         let mut fctx = codegen::Context::for_function(clfunc);
         let id = ctx.funcmap[mfunc].id;
         if let Err(err) = ctx.objmodule.define_function(id, &mut fctx) {
-            println!("{}", &fctx.func);
             panic!("definition error when defining {}:\n {err}", func.symbol);
         }
     }
@@ -136,13 +135,6 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
     let product = ctx.objmodule.finish();
 
     product.emit().unwrap()
-
-    // if output != "" {
-    //     let mut f = std::fs::File::create(output).unwrap();
-    //     f.write_all(&raw_data).unwrap()
-    // } else {
-    //     println!(" no output filename specified ");
-    // }
 }
 
 impl<'a> Context<'a> {
@@ -222,16 +214,18 @@ impl<'a> Context<'a> {
         builder.switch_to_block(entryblock);
 
         let lumina_main_id = self.funcmap[self.lir.main].id;
+        let sys_init_id = self.funcmap[self.lir.sys_init].id;
 
-        let [lumina_main, val_inits] = [lumina_main_id, val_inits_id].map(|func_id| {
-            self.objmodule
-                .declare_func_in_func(func_id, &mut builder.func)
-        });
+        let [lumina_main, val_inits, sys_init] =
+            [lumina_main_id, val_inits_id, sys_init_id].map(|func_id| {
+                self.objmodule
+                    .declare_func_in_func(func_id, &mut builder.func)
+            });
 
         match target.platform {
             Platform::Linux { sub: LinuxPlatform::Gnu | LinuxPlatform::Musl } => {
                 builder.func.signature.params = vec![
-                    AbiParam::new(self.isa.pointer_type()), // argc
+                    AbiParam::new(types::I32),              // argc
                     AbiParam::new(self.isa.pointer_type()), // **argv
                 ];
                 builder.func.signature.returns = vec![AbiParam::new(types::I64)]; // exit code
@@ -243,6 +237,10 @@ impl<'a> Context<'a> {
 
                 // Call the val initialiser function
                 builder.ins().call(val_inits, &[]);
+
+                // Call the system-specific initialiser
+                let [argc, argv] = builder.block_params(entryblock).try_into().unwrap();
+                builder.ins().call(sys_init, &[argc, argv]);
 
                 // Call the lumina main function
                 builder.ins().call(lumina_main, &[]);

@@ -410,7 +410,10 @@ impl<'a, 's> Verify<'a, 's> {
 
         let lcaptures = self.fdef.lambdas.captures.clone();
 
-        lower::Function::new(typing, lambdas, lcaptures, expr)
+        let mut function = lower::Function::new(typing, lambdas, lcaptures, expr);
+        function.no_mangle = self.fdef.no_mangle;
+
+        function
     }
 
     #[track_caller]
@@ -497,6 +500,15 @@ impl<'a, 's> Verify<'a, 's> {
                     lumina_typesystem::RecordAssignment::Unknown(_) => None,
                     lumina_typesystem::RecordAssignment::None => None,
                 }
+            }
+            IType::Container(Container::Pointer(_)) => {
+                self.warning("unimplemented")
+                    .eline(
+                        ty.span,
+                        "calling functions from std:ptr with dot-pipes currently isn't allowed",
+                    )
+                    .emit();
+                None
             }
             IType::Var(var) => {
                 let vinfo = self.vars().get(*var);
@@ -680,7 +692,13 @@ impl<'a, 's> Verify<'a, 's> {
                         }
                         ast::Entity::Member(_, _) => todo!(),
                         ast::Entity::Module(_) => todo!(),
-                        ast::Entity::Type(_) => todo!(),
+                        ast::Entity::Type(_) => {
+                            self.error("invalid function")
+                                .eline(span, format!("{name} is a type, not a function"))
+                                .emit();
+
+                            InstCall::TypeDependentFailure
+                        }
                     },
                     Err(error) => {
                         self.hir.sources.emit_lookup_err(span, m, "function", error);

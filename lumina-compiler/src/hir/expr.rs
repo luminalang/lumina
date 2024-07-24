@@ -529,10 +529,16 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
                                 Some(var) => NFunc::SumVar(sum, var),
                             }
                         }
-                        key::TypeKind::Record(_) => {
-                            return self.emit_identifier_not_found(apath.span, format!(
-                                "if you wish to use a field named `{name}` from `{tname}`, then use `.{name}`",
-                            ));
+                        key::TypeKind::Record(key) => {
+                            let is_valid_field = self.ast.entities.field_names[module.m(key)]
+                                .values()
+                                .any(|n| **n == name);
+
+                            return self.emit_identifier_not_found(apath.span, if is_valid_field {format!(
+                                "if you're trying to use the field named `{name}` from `{tname}`, then use `.{name}`",
+                            )} else {
+                                format!("tried to use the type `{tname}` as a module")
+                            });
                         }
                     };
 

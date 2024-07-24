@@ -4,7 +4,7 @@ use lumina_key::{Map, M};
 use lumina_util::Span;
 use std::fmt;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Generic {
     pub key: key::Generic,
     pub kind: GenericKind,
@@ -16,7 +16,7 @@ impl Generic {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GenericKind {
     Lambda(key::Lambda),
     Entity,

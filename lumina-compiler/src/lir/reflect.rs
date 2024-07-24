@@ -7,7 +7,7 @@ impl<'a> FuncLower<'a> {
     pub fn create_reflection(&mut self, weak: Type) -> Value {
         error!("{}", &weak);
 
-        let reflect_weak = to_morphization!(self, &mut self.current.tmap)
+        let reflect_weak = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
             .apply_weak(&Type::defined(self.info.reflect_type, vec![]));
 
         match weak {
@@ -53,7 +53,7 @@ impl<'a> FuncLower<'a> {
             Type::List(key, params) | Type::Defined(key, params) => {
                 let name = self.mir.name_of_type(key);
 
-                let mut morph = to_morphization!(self, &mut self.current.tmap);
+                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
 
                 let mut tmap = TypeMap::new();
                 for (i, ty) in params.into_iter().enumerate() {
@@ -71,7 +71,8 @@ impl<'a> FuncLower<'a> {
                                 let fname = self
                                     .string_to_value(self.mir.field_names[key][field].as_bytes());
 
-                                let ty = to_morphization!(self, &mut tmap).apply_weak(ty);
+                                let ty =
+                                    to_morphization!(self.lir, self.mir, &mut tmap).apply_weak(ty);
                                 let field_type = self.create_reflection(ty);
 
                                 self.elems_to_tuple(vec![fname, field_type], None)
@@ -94,7 +95,8 @@ impl<'a> FuncLower<'a> {
                                 let variant_params = tys
                                     .iter()
                                     .map(|ty| {
-                                        let ty = to_morphization!(self, &mut tmap).apply_weak(ty);
+                                        let ty = to_morphization!(self.lir, self.mir, &mut tmap)
+                                            .apply_weak(ty);
                                         self.create_reflection(ty)
                                     })
                                     .collect();
@@ -128,8 +130,8 @@ impl<'a> FuncLower<'a> {
     }
 
     fn reflect_variant(&mut self, tag: Value, params: Vec<Value>) -> Value {
-        let reflect_mono =
-            to_morphization!(self, &mut self.current.tmap).sum(self.info.reflect_type, &[]);
+        let reflect_mono = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
+            .sum(self.info.reflect_type, &[]);
 
         let largest = self.lir.types.types.size_of_defined(reflect_mono) - mono::TAG_SIZE.0 as u32;
         let dataty = MonoType::SumDataCast { largest };

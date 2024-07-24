@@ -33,7 +33,7 @@ impl<'s> ModuleAttr<'s> {
     }
 }
 
-#[derive(Debug, Default, new)]
+#[derive(Debug, Default, new, Clone)]
 pub struct SharedAttr<'s> {
     #[new(default)]
     pub platforms: Vec<&'s str>,
@@ -45,9 +45,9 @@ pub struct SharedAttr<'s> {
     pub public: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FuncAttr<'s> {
-    pub inline: bool,
+    pub no_mangle: bool,
     pub precedence: Option<u32>,
     pub extern_: Option<String>,
     pub shared: SharedAttr<'s>,
@@ -104,7 +104,7 @@ impl<'s> FuncAttr<'s> {
         exprs: &[Tr<parser::Expr<'s>>],
     ) -> FuncAttr<'s> {
         let mut this = FuncAttr {
-            inline: false,
+            no_mangle: false,
             precedence: None,
             shared: SharedAttr::new(),
             extern_: None,
@@ -122,8 +122,8 @@ impl<'s> FuncAttr<'s> {
     fn parse_attr(&mut self, expr: Tr<&parser::Expr<'s>>) -> Result<(), Error> {
         let (entry, params) = path(expr, "attribute name")?;
         match entry.path.as_slice() {
-            ["inline"] => {
-                self.inline = true;
+            ["no_mangle"] => {
+                self.no_mangle = true;
                 Ok(())
             }
             ["precedence"] => {
@@ -150,7 +150,8 @@ impl<'s> SharedAttr<'s> {
         match entry.path.as_slice() {
             ["langItem"] => lang_item(entry, &mut self.lang_items),
             ["platform"] => {
-                self.platforms = strings(params, "one or more platform names")?;
+                self.platforms
+                    .extend(strings(params, "one or more platform names")?);
                 Ok(())
             }
             ["pub"] => {

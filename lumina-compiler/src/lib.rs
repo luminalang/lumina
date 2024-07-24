@@ -39,6 +39,7 @@ pub const VTABLE_FIELD: key::RecordField = key::RecordField(1);
 #[derive(new, Clone, Copy)]
 pub struct ProjectInfo {
     main: M<key::Func>,
+    sys_init: M<key::Func>,
     closure: M<key::Trait>,
     size: M<key::Trait>,
     allocator: (M<key::Func>, M<key::Func>),

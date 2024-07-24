@@ -40,7 +40,7 @@ pub struct TypeSystem<'a, 's> {
 mod check;
 pub use check::CheckResult;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Container<T> {
     Func(FuncKind, Vec<T>, Box<T>),
     Tuple(Vec<T>),
@@ -85,7 +85,7 @@ pub enum IType {
     Field(RecordVar, RecordVarField),
 }
 
-#[derive(Clone, Debug, From, PartialEq, Eq)]
+#[derive(Clone, Debug, From, PartialEq, Eq, Hash)]
 pub enum Type {
     #[from]
     Container(Container<Self>),

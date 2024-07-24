@@ -1,6 +1,6 @@
 //! Lowering for Closures and partial application
 
-use super::{ssa, FuncLower, Function, MonoFunc, MonoType, MonoTypeKey, Value};
+use super::{ssa, FuncLower, Function, MonoFunc, MonoType, MonoTypeKey, VTableHash, Value};
 use crate::prelude::*;
 
 impl<'a> FuncLower<'a> {
@@ -36,6 +36,7 @@ impl<'a> FuncLower<'a> {
     pub fn trait_impl_vtable(
         &mut self,
         trait_: M<key::Trait>,
+        vtablehash: VTableHash,
         impltor: MonoType,
         methods: Map<key::Method, MonoFunc>,
     ) -> VTable {
@@ -50,7 +51,7 @@ impl<'a> FuncLower<'a> {
             self.new_vtable_type(VTableSelf::Method(param_pos), methods.values().copied());
         let object_type = self.new_object_type(trait_, vtable_type);
 
-        if let Some(val) = self.lir.vtables.get(&object_type).copied() {
+        if let Some(val) = self.lir.vtables.get(&vtablehash).copied() {
             return VTable { val, object: object_type, data_type, vtable_type };
         }
 
@@ -101,7 +102,7 @@ impl<'a> FuncLower<'a> {
             vtable_type,
             forwarding_funcs.into_iter(),
         );
-        self.lir.vtables.insert(vtable_type, val);
+        self.lir.vtables.insert(vtablehash, val);
 
         VTable { val, object: object_type, data_type, vtable_type }
     }
@@ -126,10 +127,12 @@ impl<'a> FuncLower<'a> {
             VTableSelf::PartialApplication(given_count),
             std::iter::once(target),
         );
-        let data_type = self.lir.types.get_or_make_tuple(given);
+        let data_type = self.lir.types.get_or_make_tuple(given.clone());
         let object_type = self.new_object_type(self.info.closure, vtable_type);
 
-        if let Some(val) = self.lir.vtables.get(&vtable_type).copied() {
+        let vtablehash = VTableHash::PartialApplication(target, given);
+
+        if let Some(val) = self.lir.vtables.get(&vtablehash).copied() {
             return VTable {
                 val,
                 object: object_type.into(),
@@ -198,7 +201,7 @@ impl<'a> FuncLower<'a> {
 
         let fns = std::iter::once(forwarding_func);
         let val = self.create_vtable_global(module, data_type.into(), vtable_type, fns);
-        self.lir.vtables.insert(vtable_type, val);
+        self.lir.vtables.insert(vtablehash, val);
 
         VTable {
             val,

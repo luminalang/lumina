@@ -249,6 +249,7 @@ fn lower_func<'a, 's>(
     let module = func.module;
     let header = &ast.entities.fheaders[func];
     let attributes = &ast.entities.fattributes[func];
+    let no_mangle = attributes.no_mangle;
 
     let _span = info_span!(
         "lowering func",
@@ -276,7 +277,7 @@ fn lower_func<'a, 's>(
             let to_kind = FuncDefKind::Defined;
             let mut tinfo = tinfo.inference(TEnv::new());
             ExprLower::new(module, ast, &mut tinfo, &body.where_binds)
-                .lower_func(&header, &body, string, to_kind)
+                .lower_func(&header, &body, to_kind, no_mangle)
         }
         ast::FuncBody::TraitMethod(Some(body), tr) => {
             let to_kind = |k| FuncDefKind::TraitDefaultMethod(*tr, k);
@@ -284,7 +285,7 @@ fn lower_func<'a, 's>(
             tinfo.enter_type_or_impl_or_method(tforalls[*tr].1.clone(), GenericKind::Parent);
             tinfo.self_handler = SelfHandler::Direct;
             ExprLower::new(module, ast, &mut tinfo, &body.where_binds)
-                .lower_func(&header, &body, string, to_kind)
+                .lower_func(&header, &body, to_kind, no_mangle)
         }
         ast::FuncBody::ImplMethod(body, imp) => {
             let self_ = impltors[*imp].i();
@@ -295,7 +296,7 @@ fn lower_func<'a, 's>(
             tinfo.enter_type_or_impl_or_method(iforalls[*imp].clone(), GenericKind::Parent);
             tinfo.self_handler = SelfHandler::Direct;
             ExprLower::new(module, ast, &mut tinfo, &body.where_binds)
-                .lower_func(&header, &body, string, to_kind)
+                .lower_func(&header, &body, to_kind, no_mangle)
         }
         ast::FuncBody::TraitMethod(None, trait_) => {
             tinfo.self_handler = SelfHandler::Direct;
@@ -508,6 +509,8 @@ pub struct FuncDef<'s> {
     pub params: Vec<Tr<Pattern<'s>>>,
     pub expr: Tr<Expr<'s>>,
 
+    pub no_mangle: bool,
+
     #[new(default)]
     pub lambdas: Lambdas<'s>,
 }
@@ -591,8 +594,8 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         mut self,
         header: &parser::func::Header<'s>,
         body: &parser::func::Body<'s>,
-        string: M<key::TypeKind>,
         to_kind: impl FnOnce(FuncDef<'s>) -> FuncDefKind<'s>,
+        no_mangle: bool,
     ) -> (FuncDefKind<'s>, TEnv<'s>) {
         let forall = generics_from_con(&header.when);
         self.type_info.enter_function(forall);
@@ -615,7 +618,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         let list = self.type_info.list;
 
-        let mut func = FuncDef::new(RefCell::new(forall), typing, list, params, expr);
+        let mut func = FuncDef::new(RefCell::new(forall), typing, list, params, expr, no_mangle);
         func.lambdas = self.lambdas;
 
         info!(

@@ -1,13 +1,9 @@
+use std:libc
 use std:ptr
 
-pub fn alloc size as int -> *u8 = 
-  libc_alloc size
+pub fn alloc size as int -> *u8 = libc:malloc size
 
-@[extern "free", platform "linux"]
-pub fn free as *u8 -> ()
-
-@[extern "malloc", platform "linux"]
-fn libc_alloc as int -> *u8
+pub fn free ptr as *u8 -> () = libc:free ptr
 
 // used for internal debugging
 // @[extern "mmtk_info_log_number", platform "linux"]

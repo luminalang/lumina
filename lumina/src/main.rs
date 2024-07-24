@@ -1,3 +1,5 @@
+#![feature(array_try_map)]
+
 use clap::{command, Args, Parser, Subcommand};
 use directories::BaseDirs;
 use itertools::Itertools;
@@ -181,38 +183,34 @@ fn project_info<'s>(
             })
     }
 
-    let main = resolve_or_error(lookups, &["main"], |k| match k {
-        ast::Entity::Func(ast::NFunc::Key(func)) => Some(func),
-        _ => None,
+    let [main, sys_init, alloc, dealloc, string_from_raw_parts] = [
+        ["main"].as_slice(),
+        &["std", "prelude", "_lumina_sys_init"],
+        &["std", "prelude", "alloc"],
+        &["std", "prelude", "dealloc"],
+        &["std", "prelude", "string_from_raw_parts"],
+    ]
+    .try_map(|path| {
+        resolve_or_error(lookups, path, |k| match k {
+            ast::Entity::Func(ast::NFunc::Key(func)) => Some(func),
+            _ => None,
+        })
     })?;
 
-    let closure = resolve_or_error(lookups, &["std", "prelude", "Closure"], |k| match k {
-        ast::Entity::Type(key::TypeKind::Trait(trait_)) => Some(trait_),
-        _ => None,
-    })?;
-
-    let size = resolve_or_error(lookups, &["std", "prelude", "Size"], |k| match k {
-        ast::Entity::Type(key::TypeKind::Trait(trait_)) => Some(trait_),
-        _ => None,
-    })?;
-
-    let alloc = resolve_or_error(lookups, &["std", "prelude", "alloc"], |k| match k {
-        ast::Entity::Func(ast::NFunc::Key(func)) => Some(func),
-        _ => None,
-    })?;
-
-    let dealloc = resolve_or_error(lookups, &["std", "prelude", "dealloc"], |k| match k {
-        ast::Entity::Func(ast::NFunc::Key(func)) => Some(func),
-        _ => None,
+    let [closure, size, listable] = [
+        ["std", "prelude", "Closure"].as_slice(),
+        &["std", "prelude", "Size"],
+        &["std", "prelude", "Listable"],
+    ]
+    .try_map(|path| {
+        resolve_or_error(lookups, path, |k| match k {
+            ast::Entity::Type(key::TypeKind::Trait(trait_)) => Some(trait_),
+            _ => None,
+        })
     })?;
 
     let reflect_type = resolve_or_error(lookups, &["std", "prelude", "Type"], |k| match k {
         ast::Entity::Type(key::TypeKind::Sum(key)) => Some(key),
-        _ => None,
-    })?;
-
-    let listable = resolve_or_error(lookups, &["std", "prelude", "Listable"], |k| match k {
-        ast::Entity::Type(key::TypeKind::Trait(trait_)) => Some(trait_),
         _ => None,
     })?;
 
@@ -226,17 +224,9 @@ fn project_info<'s>(
         _ => None,
     })?;
 
-    let string_from_raw_parts = resolve_or_error(
-        lookups,
-        &["std", "prelude", "string_from_raw_parts"],
-        |k| match k {
-            ast::Entity::Func(ast::NFunc::Key(func)) => Some(func),
-            _ => None,
-        },
-    )?;
-
     Ok(compiler::ProjectInfo::new(
         main,
+        sys_init,
         closure,
         size,
         (alloc, dealloc),

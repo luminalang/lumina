@@ -58,8 +58,6 @@ pub struct MonomorphisedTypes {
     pub types: Records,
 
     closure: M<key::Trait>,
-    // we can just use `resolve`
-    // trait_objects: HashMap<(M<key::Trait>, Vec<MonoType>), MonoTypeKey>,
 }
 
 pub struct MonomorphisedRecord {

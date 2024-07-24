@@ -714,8 +714,8 @@ fn val_to_func<'s>(
         },
         FuncBody::Val(func::Body { expr: val.value, where_binds: vec![] }, key),
         ast::FuncAttr {
-            inline: false,
             precedence: None,
+            no_mangle: false,
             shared: ast::SharedAttr { public: val.public, ..ast::SharedAttr::new() },
             extern_: None,
         },

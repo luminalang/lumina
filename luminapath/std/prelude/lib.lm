@@ -6,6 +6,7 @@ use std:ptr
 use std:list [Listable [:], List]
 use std:list:vec [Vec]
 use std:gc
+use std:env [process_arguments]
 
 @![langItem(list as List)]
 
@@ -64,22 +65,16 @@ fn string_from_raw_parts ptr len as *u8, uint -> string =
 //  where
 //   fn tag_size = 4
 
-@[platform "linux"]
+@[platform ["linux-gnu", "linux-musl"]]
 fn alloc size as int -> *u8 = std:gc:alloc size
 
-@[platform "linux"]
+@[platform ["linux-gnu", "linux-musl"]]
 fn dealloc ptr size as *u8, int -> () = std:gc:free ptr
 
 @[extern "x86_64_syscall", platform "linux"]
 fn syscall as int, int, int, int, int, int -> ()
 
-@[platform "x86_64-linux"]
-fn raw_syscall_exit code as int -> () =
-  do syscall code 0 0 0 0 60 then ()
-
-@[platform "linux"]
-pub fn exit code as int -> () =
-  libc_exit code
-
-@[extern "exit", platform "linux"]
-fn libc_exit code as int -> ()
+@[no_mangle, platform ["linux-gnu", "linux-musl"]]
+fn _lumina_sys_init argc argv as i32, **u8 -> () = 
+  let args = vec:from_range (0, argc as uint) #(\i -> vec:bytes_from_null_terminated (ptr:offsetu argv i . ptr:deref))
+    in ptr:write (builtin:val_to_ref process_arguments) args

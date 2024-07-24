@@ -3,3 +3,28 @@ pub fn getenv as *u8 -> *u8
 
 @[extern "exit", platform "linux"]
 pub fn exit code as int -> ()
+
+@[extern "write", platform "linux"]
+pub fn write as int, *u8, int -> int
+
+@[extern "read", platform "linux"]
+pub fn read as int, *u8, int -> int
+
+@[extern "raise", platform "linux"]
+pub fn raise as int -> ()
+
+@[extern "malloc", platform "linux"]
+pub fn malloc as int -> *u8
+
+@[extern "free", platform "linux"]
+pub fn free as *u8 -> ()
+
+@[extern "open", platform "linux"]
+pub fn open path flags as *u8, i32 -> ()
+
+pub fn O_RDONLY as i32 = 0
+pub fn O_WRONLY as i32 = 1
+pub fn O_RDWR as i32 = 2
+
+// type size_t = uint
+// type c_int  = i32

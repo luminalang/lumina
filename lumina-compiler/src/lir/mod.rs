@@ -16,14 +16,14 @@ const UNIT: MonoTypeKey = MonoTypeKey(0);
 
 #[macro_export]
 macro_rules! to_morphization {
-    ($this:expr, $tmap:expr) => {
+    ($lir:expr, $mir:expr, $tmap:expr) => {
         crate::lir::mono::Monomorphization::new(
-            &mut $this.lir.types,
-            &$this.mir.field_types,
-            &$this.mir.variant_types,
-            &$this.mir.methods,
-            &$this.mir.funcs,
-            &$this.mir.trait_objects,
+            &mut $lir.types,
+            &$mir.field_types,
+            &$mir.variant_types,
+            &$mir.methods,
+            &$mir.funcs,
+            &$mir.trait_objects,
             $tmap,
         )
     };
@@ -57,6 +57,7 @@ pub struct Output {
     pub module_names: Map<key::Module, String>,
 
     pub main: MonoFunc,
+    pub sys_init: MonoFunc,
 
     pub alloc: MonoFunc,
     pub dealloc: MonoFunc,
@@ -70,7 +71,7 @@ struct LIR {
     functions: Map<MonoFunc, Function>,
     types: mono::MonomorphisedTypes,
     #[new(default)]
-    vtables: HashMap<MonoTypeKey, M<key::Val>>,
+    vtables: HashMap<VTableHash, M<key::Val>>,
 
     read_only_table: ModMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
 
@@ -82,6 +83,17 @@ struct LIR {
     alloc: Option<MonoFunc>,
     #[new(default)]
     dealloc: Option<MonoFunc>,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+pub enum VTableHash {
+    Lambda(MonoFunc),
+    Object {
+        weak_impltor: Type,
+        trait_: M<key::Trait>,
+        weak_trait_params: Vec<Type>,
+    },
+    PartialApplication(MonoFunc, Vec<MonoType>),
 }
 
 struct FuncLower<'a> {
@@ -213,38 +225,25 @@ pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mut mir: mir::MIR) -> Outp
 
     // fn alloc size as int -> *u8 =
     // fn dealloc ptr size as *u8, int -> () =
-    let [alloc, dealloc] = {
-        let unit = MonoType::Monomorphised(lir.types.get_or_make_tuple(vec![]));
-
-        let mut allocparams = Map::new();
-        allocparams.push(MonoType::Int(Bitsize(64)));
-
-        let mut deallocparams = Map::new();
-        deallocparams.push(MonoType::u8_pointer());
-        deallocparams.push(MonoType::Int(Bitsize(64)));
-
-        [
-            (info.allocator.0, allocparams, MonoType::u8_pointer()),
-            (info.allocator.1, deallocparams, unit),
-        ]
-        .map(|(func, ptypes, ret)| {
-            let typing = MonoTyping::new(FuncOrigin::Defined(func), ptypes, ret);
-            lir.func(&mir, iquery, info, TypeMap::new(), typing, None)
-        })
-    };
+    let [alloc, dealloc] =
+        [info.allocator.0, info.allocator.1].map(|func| lir.static_func(&mir, iquery, info, func));
     lir.alloc = Some(alloc);
     lir.dealloc = Some(dealloc);
+
+    // for example:
+    //
+    // fn _lumina_sys_init argc argv as i32, **u8 -> () =
+    let sys_init = lir.static_func(&mir, iquery, info, info.sys_init);
 
     let main = {
         let typing = MonoTyping::new(FuncOrigin::Defined(info.main), Map::new(), returns);
         lir.func(&mir, iquery, info, tmap, typing, None)
     };
+    lir.functions[main].symbol = String::from("_lumina_main");
 
     for val in mir.val_initializers.iter() {
         let func = mir.val_initializers[val];
-        let returns = lir.vals[val].clone();
-        let typing = MonoTyping::new(FuncOrigin::Defined(func), Map::new(), returns);
-        let mfunc = lir.func(&mir, iquery, info, TypeMap::new(), typing, None);
+        let mfunc = lir.static_func(&mir, iquery, info, func);
         let previous = lir.val_initialisers.insert(val, mfunc);
         assert_eq!(previous, None);
     }
@@ -282,10 +281,25 @@ pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mut mir: mir::MIR) -> Outp
         alloc,
         dealloc,
         main,
+        sys_init,
     }
 }
 
 impl LIR {
+    fn static_func(
+        &mut self,
+        mir: &mir::MIR,
+        iquery: &ImplIndex,
+        info: ProjectInfo,
+        key: M<key::Func>,
+    ) -> MonoFunc {
+        let fdef = mir.funcs[key].as_done();
+        let mut tmap = TypeMap::new();
+        let mut morph = to_morphization!(self, mir, &mut tmap);
+        let typing = morph.apply_typing(FuncOrigin::Defined(key), &fdef.typing);
+        self.func(mir, iquery, info, tmap, typing, None)
+    }
+
     fn func<'h, 's>(
         &mut self,
         mir: &mir::MIR,
@@ -359,14 +373,7 @@ impl LIR {
                 // Reserve the key in case of recursion
                 let origin = typing.origin.clone();
                 let returns = typing.returns.clone();
-                // HACK: If we need to generate a vtable that references this function; then the
-                // typing still needs to be available.
-                //
-                // FUCK: the symbol also needs to be available. The hack would still work but the
-                // symbol names will kinda suck.
-                //
-                // Perhaps we should access the ssa via `current` instead?
-                // we already use a helper
+
                 let symbol = func_symbol(mir, self.functions.next_key(), &origin);
                 let mfkey = self.push_function(symbol, ssa, returns);
                 self.mono_resolve.insert(typing, mfkey);
@@ -463,7 +470,7 @@ impl<'a> FuncLower<'a> {
     }
 
     fn morphise_inst(&mut self, kinds: [GenericKind; 2], inst: &ConcreteInst) -> TypeMap {
-        let mut morph = to_morphization!(self, &mut self.current.tmap);
+        let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
 
         let mut tmap = TypeMap::new();
 
@@ -532,7 +539,7 @@ impl<'a> FuncLower<'a> {
     //
     // type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
     fn values_to_cons_list(&mut self, values: Vec<Value>, inner: Type) -> Value {
-        let list_type: MonoType = to_morphization!(self, &mut self.current.tmap)
+        let list_type: MonoType = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
             .defined(self.info.global_list_default, &[inner])
             .into();
 
@@ -567,7 +574,7 @@ impl<'a> FuncLower<'a> {
 
     fn string_type(&mut self) -> MonoType {
         let string_type = Type::defined(self.info.string, vec![]);
-        to_morphization!(self, &mut self.current.tmap).apply(&string_type)
+        to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(&string_type)
     }
 
     fn string_from_raw_parts_mfunc(&mut self) -> (MonoFunc, MonoType) {
@@ -637,7 +644,7 @@ impl<'a> FuncLower<'a> {
         let kinds = [GenericKind::Entity, GenericKind::Lambda(lambda)];
         let mut tmap = self.morphise_inst(kinds, inst);
 
-        let mut morph = to_morphization!(self, &mut tmap);
+        let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
 
         // Add the generics that are still in scope from the parent
         let in_scope = self
@@ -736,7 +743,8 @@ impl<'a> FuncLower<'a> {
                 match &self.mir.funcs[key] {
                     mir::FunctionStatus::Extern { typing, .. } => {
                         let mut map = TypeMap::new();
-                        let ret = to_morphization!(self, &mut map).apply(&typing.returns);
+                        let ret =
+                            to_morphization!(self.lir, self.mir, &mut map).apply(&typing.returns);
                         ResolvedNFunc::Extern(key, ret)
                     }
                     _ => {
@@ -757,7 +765,7 @@ impl<'a> FuncLower<'a> {
             ast::NFunc::Method(key, method) => {
                 let trait_ = func.module.m(key);
 
-                let mut morph = to_morphization!(self, &mut self.current.tmap);
+                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
 
                 let self_ = inst.self_.as_ref().unwrap();
 
@@ -783,7 +791,7 @@ impl<'a> FuncLower<'a> {
 
                 let ptypes = inst.generics.values().cloned().collect::<Vec<_>>();
 
-                let mut morph = to_morphization!(self, &mut self.current.tmap);
+                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
                 let ty = morph.sum(sum, &ptypes);
 
                 let tag = Value::UInt(var.0 as u128, mono::TAG_SIZE);
@@ -816,6 +824,12 @@ impl<'a> FuncLower<'a> {
 }
 
 fn func_symbol(mir: &mir::MIR, key: MonoFunc, origin: &FuncOrigin) -> String {
+    if let FuncOrigin::Defined(key) = origin {
+        if mir.funcs[*key].as_done().no_mangle {
+            return mir.func_names[*key].clone();
+        }
+    }
+
     let module = origin.module();
     let mname = &mir.module_names[module];
     let fname = origin.name(mir);

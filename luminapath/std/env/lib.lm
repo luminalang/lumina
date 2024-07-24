@@ -1,10 +1,14 @@
-// ![platform "windows"]
-// fn platform_name = "windows"
-// 
-// ![platform "linux"]
-// fn platform_name = "linux"
-// 
-//
-// ![platform (not (any ["linux", "windows"]))]
-// fn platform_name = "unknown"
+use std:list [List [Slice]]
+use std:list:vec [Vec]
 
+// Written to by the `_lumina_sys_init` function
+val process_arguments as Vec (Vec u8) = vec:empty
+
+pub fn get_args as [string] = 
+    process_arguments
+    . vec:slice
+    . map #vec:slice
+    . vec:slice
+    . map #(\slice -> { string | inner = list:Slice slice })
+    . vec:slice
+    . list:Slice

@@ -409,29 +409,47 @@ impl<'a> Parser<'a> {
         let mut assignments = vec![];
 
         loop {
-            let lhs = self.expect_name("generic to annotate")?;
-
-            if self.expect(T::As).is_none() {
-                match self.recover_for([T::CloseList, T::As, T::Comma], false) {
-                    T::Comma => {
-                        self.progress();
-                        continue;
+            // We parse a type since `Trait(option int)` sugar exists for annotating `self`
+            //
+            // It's easier to then un-type it if we encounter `as`
+            let first = self.lexer.peek();
+            match self.r#type(true, false) {
+                Some(ty) => {
+                    let t = self.lexer.peek();
+                    match t.0 {
+                        T::Comma | T::CloseParen => {
+                            assignments.push((ty.span, "self", ty.value));
+                        }
+                        T::As => {
+                            self.progress();
+                            match ty.value {
+                                Type::Defined(path, params)
+                                    if params.is_empty() && path.path.is_name() =>
+                                {
+                                    let generic = path.path.as_name().unwrap();
+                                    if let Some(ty) = self.r#type(true, false) {
+                                        assignments.push((ty.span, generic, ty.value));
+                                    } else {
+                                        self.recover_for([T::Comma, T::CloseParen], false);
+                                    }
+                                }
+                                _ => {
+                                    self.err_unexpected_token(first, "generic name");
+                                    self.recover_for([T::Comma, T::CloseParen], false);
+                                }
+                            }
+                        }
+                        _ => {
+                            self.err_unexpected_token(t, "`as`");
+                            self.recover_for([T::Comma, T::CloseParen], false);
+                        }
                     }
-                    T::CloseParen => {
-                        self.progress();
-                        break;
-                    }
-                    T::As => self.progress(),
-                    _ => return None,
+                }
+                None => {
+                    self.err_unexpected_token(first, "type or generic name");
+                    self.recover_for([T::Comma, T::CloseParen], false);
                 }
             }
-
-            match self.type_with_params() {
-                None => {
-                    self.recover_for([T::CloseList, T::Comma], false);
-                }
-                Some(rhs) => assignments.push((lhs.span.extend(rhs.span), lhs.value, rhs.value)),
-            };
 
             select! { self, "`,` or `)`";
                 T::CloseParen => break,

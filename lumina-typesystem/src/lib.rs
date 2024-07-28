@@ -183,6 +183,10 @@ impl ForeignInst<Var> {
         let params = self.generics.values().copied().map(IType::Var).collect();
         IType::Defined(key, params)
     }
+
+    pub fn get_trait_type_params(&self) -> Vec<IType> {
+        self.pgenerics.values().copied().map(IType::Var).collect()
+    }
 }
 
 pub struct ForeignInstBuilder<'a, 's> {

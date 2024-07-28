@@ -8,6 +8,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use owo_colors::OwoColorize;
 use std::io::Write;
+use tracing::info_span;
 
 mod abi;
 mod ctx;
@@ -98,9 +99,10 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
 
             let triple = isa.triple();
             let conv = isa::CallConv::Fast;
-            let params = lir
-                .types
-                .get_abi_params(triple, func.blocks.params(entry).values());
+            let params = lir.types.get_abi_params(
+                triple,
+                func.blocks.params(entry).map(|v| func.blocks.type_of(v)),
+            );
 
             let ret = lir.types.get_abi_return(triple, &func.returns);
             let sig = abi::signature(conv, &params, &ret);
@@ -117,10 +119,12 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
     let mut ctx = Context::new(isa, &vals, &lir, objmodule, funcmap, externmap, rotable);
 
     for (mfunc, func) in lir.functions.iter() {
-        info!(
-            "lowering expression of {mfunc} {}",
-            format!("// {}", func.symbol).dimmed()
+        let _span = info_span!(
+            "lowering function expression",
+            entity = func.symbol,
+            key = mfunc.to_string()
         );
+        let _handle = _span.enter();
 
         let clfunc = ssa::Translator::func(&mut ctx, func, mfunc);
         let mut fctx = codegen::Context::for_function(clfunc);

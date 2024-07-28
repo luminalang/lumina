@@ -19,7 +19,7 @@ impl<'a> FuncLower<'a> {
         let vtable_ptr = self.ssa().val_to_ref(vtable.val, vtable.vtable_type.into());
 
         self.ssa()
-            .construct(vec![data_ptr, vtable_ptr.into()], vtable.object.into())
+            .construct(vec![data_ptr, vtable_ptr.value()], vtable.object.into())
             .value()
     }
 
@@ -66,21 +66,26 @@ impl<'a> FuncLower<'a> {
                     .type_of_field(vtable_type, key::RecordField(method.0));
                 let (vtable_func_ptypes, ret) = vtable_call_field.as_fnptr();
 
-                let mut blocks = ssa::Blocks::new(vtable_func_ptypes.iter().cloned().collect());
+                let mut blocks = ssa::Blocks::new(vtable_func_ptypes.len() as u32);
+                // let mut blocks = ssa::Blocks::new(vtable_func_ptypes.iter().cloned().collect());
 
-                let self_bparam = lir::BlockParam(param_pos[method].0);
+                for ty in vtable_func_ptypes {
+                    blocks.add_block_param(lir::Block::entry(), ty.clone());
+                }
+                let self_bparam = blocks.get_block_param(ssa::Block::entry(), param_pos[method].0);
 
                 // Dereference the opaque data
-                let data = blocks.deref(Value::BlockParam(self_bparam), data_type.clone());
+                let data = blocks.deref(self_bparam.value(), data_type.clone());
 
                 // Forward the parameters
                 let params = (0..vtable_func_ptypes.len())
                     .map(|i| {
                         if self_bparam.0 == i as u32 {
-                            data.value()
+                            data
                         } else {
-                            Value::BlockParam(lir::BlockParam(i as u32))
+                            blocks.get_block_param(ssa::Block::entry(), i as u32)
                         }
+                        .value()
                     })
                     .collect();
 
@@ -152,13 +157,20 @@ impl<'a> FuncLower<'a> {
 
         // Create the function that's put in the vtable
         let forwarding_func = {
-            let mut blocks = ssa::Blocks::new(vtable_func_ptypes.iter().cloned().collect());
+            let mut blocks = ssa::Blocks::new(vtable_func_ptypes.len() as u32);
+
+            for ty in vtable_func_ptypes {
+                blocks.add_block_param(lir::Block::entry(), ty.clone());
+            }
 
             let mut params = if given_count == 0 {
                 vec![]
             } else {
                 // Dereference the opaque data
-                let data = blocks.deref(Value::BlockParam(lir::BlockParam(0)), data_type.into());
+                let data = blocks.deref(
+                    blocks.get_block_param(lir::Block::entry(), 0).value(),
+                    data_type.into(),
+                );
 
                 let rdata = &self.lir.types.types[data_type];
                 assert!(rdata.autoboxed.is_empty());
@@ -179,12 +191,13 @@ impl<'a> FuncLower<'a> {
             for (i, _) in target_func
                 .blocks
                 .params(lir::Block::entry())
-                .iter()
                 .skip(given_count)
                 .enumerate()
             {
-                let pid = lir::BlockParam(i as u32 + 1); // offset to skip the capture data
-                let additional = Value::BlockParam(pid);
+                let additional = blocks
+                    // +1 offset to skip the capture data
+                    .get_block_param(lir::Block::entry(), i as u32 + 1)
+                    .value();
                 params.push(additional);
             }
 
@@ -220,7 +233,7 @@ impl<'a> FuncLower<'a> {
         fns: impl Iterator<Item = MonoFunc> + Clone,
     ) -> M<key::Val> {
         let vtable_val_initialiser = {
-            let mut blocks = ssa::Blocks::new(Map::new());
+            let mut blocks = ssa::Blocks::new(0);
 
             let fn_pointers = fns.clone().map(Value::FuncPtr).collect();
             let v = blocks.construct(fn_pointers, vtable.into());
@@ -264,11 +277,17 @@ impl<'a> FuncLower<'a> {
                 let params = match param {
                     VTableSelf::PartialApplication(count) => {
                         let mut params = vec![MonoType::u8_pointer()];
-                        params.extend(target_params.values().skip(count).cloned());
+                        params.extend(
+                            target_params
+                                .skip(count)
+                                .map(|v| func.blocks.type_of(v).clone()),
+                        );
                         params
                     }
                     VTableSelf::Method(methods) => {
-                        let mut params = target_params.values().cloned().collect::<Vec<_>>();
+                        let mut params = target_params
+                            .map(|v| func.blocks.type_of(v).clone())
+                            .collect::<Vec<_>>();
                         params[methods[key::Method(i as u32)].0 as usize] = MonoType::u8_pointer();
                         params
                     }

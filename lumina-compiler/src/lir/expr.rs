@@ -35,14 +35,14 @@ impl<'a> FuncLower<'a> {
 
     fn yield_to_value(&mut self, local: mir::Local) -> Value {
         match local {
-            mir::Local::Param(pid) if self.current.has_captures => {
-                assert_eq!(self.ssa().block(), ssa::Block::entry());
-                Value::BlockParam(ssa::BlockParam(pid.0 + 1))
-            }
-            mir::Local::Param(pid) => {
-                assert_eq!(self.ssa().block(), ssa::Block::entry());
-                Value::BlockParam(ssa::BlockParam(pid.0))
-            }
+            mir::Local::Param(pid) if self.current.has_captures => self
+                .ssa()
+                .get_block_param(ssa::Block::entry(), pid.0 + 1)
+                .value(),
+            mir::Local::Param(pid) => self
+                .ssa()
+                .get_block_param(ssa::Block::entry(), pid.0)
+                .value(),
             mir::Local::Binding(bind) => self.current.bindmap[&bind],
         }
     }
@@ -103,7 +103,7 @@ impl<'a> FuncLower<'a> {
                 let ty = self.type_of_value(to_call);
                 match ty {
                     MonoType::FnPointer(_, ret) => {
-                        self.ssa().call(to_call, params, (*ret).clone()).into()
+                        self.ssa().call(to_call, params, (*ret).clone()).value()
                     }
                     MonoType::Monomorphised(mk) => self.call_closure(mk, to_call, params),
                     _ => panic!("attempted to call {ty:#?} as a function"),
@@ -149,7 +149,7 @@ impl<'a> FuncLower<'a> {
                     .map(|field| values[fields.iter().position(|(f, _)| *f == field).unwrap()])
                     .collect();
 
-                self.ssa().construct(sorted, ty).into()
+                self.ssa().construct(sorted, ty).value()
             }
             mir::Expr::UInt(bitsize, n) => Value::UInt(*n, *bitsize),
             mir::Expr::Int(bitsize, n) => Value::Int(*n, *bitsize),
@@ -169,18 +169,18 @@ impl<'a> FuncLower<'a> {
 
                 match from.1.cmp(&to.1) {
                     Ordering::Equal => inner,
-                    Ordering::Less => self.ssa().extend(inner, from.0, ty).into(),
-                    Ordering::Greater => self.ssa().reduce(inner, ty).into(),
+                    Ordering::Less => self.ssa().extend(inner, from.0, ty).value(),
+                    Ordering::Greater => self.ssa().reduce(inner, ty).value(),
                 }
             }
             mir::Expr::Deref(inner) => {
                 let inner = self.expr_to_value(&inner);
                 let ty = self.type_of_value(inner).deref();
-                self.ssa().deref(inner, ty).into()
+                self.ssa().deref(inner, ty).value()
             }
             mir::Expr::Write(elems) => {
                 let [ptr, value] = self.params_to_values(&**elems).try_into().unwrap();
-                self.ssa().write(ptr, value).into()
+                self.ssa().write(ptr, value).value()
             }
             mir::Expr::ObjectCast(expr, weak_impltor, trait_, trait_params) => {
                 let trait_ = *trait_;
@@ -264,10 +264,10 @@ impl<'a> FuncLower<'a> {
 
                 let ty = self.type_of_value(left);
                 match *name {
-                    "plus" => self.ssa().add(left, right, ty).into(),
-                    "minus" => self.ssa().sub(left, right, ty).into(),
-                    "mul" => self.ssa().mul(left, right, ty).into(),
-                    "div" => self.ssa().div(left, right, ty).into(),
+                    "plus" => self.ssa().add(left, right, ty).value(),
+                    "minus" => self.ssa().sub(left, right, ty).value(),
+                    "mul" => self.ssa().mul(left, right, ty).value(),
+                    "div" => self.ssa().div(left, right, ty).value(),
                     _ => panic!("unknown num builtin: {name}"),
                 }
             }
@@ -296,11 +296,11 @@ impl<'a> FuncLower<'a> {
         match self.resolve_nfunc(func, inst) {
             ResolvedNFunc::Extern(key, ret) => {
                 let params = self.params_to_values(params);
-                self.ssa().call_extern(key, params, ret).into()
+                self.ssa().call_extern(key, params, ret).value()
             }
             ResolvedNFunc::Static(mfunc, ret) => {
                 let params = self.params_to_values(params);
-                self.ssa().call(mfunc, params, ret).into()
+                self.ssa().call(mfunc, params, ret).value()
             }
             ResolvedNFunc::Sum { tag, payload_size, ty } => {
                 let params = self.params_to_values(params);
@@ -308,12 +308,12 @@ impl<'a> FuncLower<'a> {
 
                 self.ssa()
                     .construct(vec![tag, parameters.into()], MonoType::Monomorphised(ty))
-                    .into()
+                    .value()
             }
             ResolvedNFunc::Val(key, ty) => {
                 assert!(params.is_empty(), "giving parameters to the function returnt by a static value is not yet supported");
                 let v = self.ssa().val_to_ref(key, ty.clone());
-                self.ssa().deref(v.into(), ty).into()
+                self.ssa().deref(v.value(), ty).value()
             }
         }
     }
@@ -335,7 +335,7 @@ impl<'a> FuncLower<'a> {
             .ssa()
             .field(obj, objty, VTABLE_FIELD, vtable_ptr_type.clone());
         let vtable_type = vtable_ptr_type.clone().deref();
-        let vtable = self.ssa().deref(vtableptr.into(), vtable_type);
+        let vtable = self.ssa().deref(vtableptr.value(), vtable_type);
 
         let (fnptr, ret) = {
             let call = key::RecordField(0);
@@ -346,7 +346,7 @@ impl<'a> FuncLower<'a> {
             };
             let call_field = self
                 .ssa()
-                .field(vtable.into(), vtable_key, key::RecordField(0), ty);
+                .field(vtable.value(), vtable_key, key::RecordField(0), ty);
             (call_field, *ret)
         };
 
@@ -355,8 +355,8 @@ impl<'a> FuncLower<'a> {
         let call_method_params = vec![Value::V(objptr), param_tuple];
 
         self.ssa()
-            .call(Value::from(fnptr), call_method_params, ret)
-            .into()
+            .call(fnptr.value(), call_method_params, ret)
+            .value()
     }
 
     fn callable_to_mfunc(&mut self, func: M<ast::NFunc>, inst: &ConcreteInst) -> MonoFunc {

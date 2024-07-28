@@ -4,7 +4,7 @@ use super::{
 use derive_new::new;
 use lumina_key as key;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{info, warn};
 
 // TODO: Specialisation via explicit default notation
 
@@ -45,7 +45,7 @@ impl TryFrom<&Type> for ConcreteType {
             Type::List(ty, _) | Type::Defined(ty, _) => Ok(ConcreteType::Defined(*ty)),
             Type::Prim(prim) => Ok(ConcreteType::Prim(*prim)),
             Type::Generic(_) => Err(()),
-            Type::Self_ => panic!("self type added to implementation"),
+            Type::Self_ => Err(()),
         }
     }
 }
@@ -56,6 +56,8 @@ impl ImplIndex {
             .traits
             .entry(trait_)
             .or_insert_with(|| (Vec::new(), HashMap::new()));
+
+        debug_assert!(!matches!(impltor, Type::Self_));
 
         match ConcreteType::try_from(impltor) {
             Ok(c) => concrete.entry(c).or_insert_with(Vec::new).push(ikey),
@@ -101,7 +103,7 @@ type GetForall<'a, 't, 's> = &'a dyn Fn(GenericKind) -> &'t Forall<'s, Type>;
 
 // Getter for implementor and trait parameters of specific implementation
 type GetImplData<'a, 't, 's> =
-    &'a dyn Fn(M<key::Impl>) -> (&'t Forall<'s, Type>, &'t Type, &'t [Type]);
+    &'a dyn Fn(M<key::Impl>) -> (M<key::Trait>, &'t Forall<'s, Type>, &'t Type, &'t [Type]);
 
 pub struct Compatibility<'a, 't, 's> {
     impls: &'a ImplIndex,
@@ -152,6 +154,7 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
 
                     Compatibility::constraint(
                         self.impls,
+                        None,
                         self.get_impl_data,
                         self.lhs_forall,
                         &assignment.ty,
@@ -166,6 +169,7 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
     /// Types in both are assumed to be from the same type environment (represented by lhs_forall)
     pub fn constraint(
         impls: &'a ImplIndex,
+        in_trait: Option<(M<key::Trait>, &'t Forall<'s, Type>)>,
         get_impl_data: GetImplData<'a, 't, 's>,
         lhs_forall: GetForall<'a, 't, 's>,
         got: &Type,
@@ -188,13 +192,26 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
                     }
                 }
             }
+            // Edge-case for `Self` in trait method defaults
+            Type::Self_ => {
+                let (trait_, tforall) = in_trait.unwrap();
+
+                if con.trait_ == trait_
+                    && con.params.iter().zip(tforall.keys()).all(|(t, k)| match t {
+                        Type::Generic(Generic { kind: GenericKind::Parent, key }) => k == *key,
+                        _ => false,
+                    })
+                {
+                    return true;
+                }
+            }
             _ => {}
         }
 
         // If not then fall back to querying the implementations.
         impls
             .for_each_relevant::<()>(con.trait_, got.try_into().ok(), |ikey: _| {
-                let (iforall, iimpltor, itrtp) = get_impl_data(ikey);
+                let (_, iforall, iimpltor, itrtp) = get_impl_data(ikey);
                 let mut comp = Compatibility::new(impls, lhs_forall, iforall, get_impl_data);
 
                 // Return None if the types aren't compatible
@@ -210,8 +227,13 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
     pub fn cmp(&mut self, got: &Type, exp: &Type) -> bool {
         match (got, exp) {
             (Type::Prim(gprim), Type::Prim(eprim)) => gprim == eprim,
-            (Type::Self_, _) => unreachable!(),
+
+            (Type::Self_, _) => {
+                warn!("indirect lookup for `self` in trait defaults currently isn't implemented");
+                false
+            }
             (_, Type::Self_) => unreachable!(),
+
             (Type::List(key, params), _) => {
                 let got = Type::Defined(*key, params.clone());
                 self.cmp(&got, exp)

@@ -36,7 +36,7 @@ pub use mono::{
     fmt as ty_fmt, BitOffset, MonoFormatter, MonoType, MonoTypeKey, MonomorphisedRecord, Records,
     TypeMap,
 };
-pub use ssa::{Block, BlockParam, Blocks, ControlFlow, Entry, Value, V};
+pub use ssa::{Block, Blocks, ControlFlow, Entry, Value, V};
 mod closure;
 mod expr;
 mod pat;
@@ -320,6 +320,7 @@ impl LIR {
                 let _handle = _span.enter();
 
                 let has_captures = captures.is_some();
+                let entryblock = ssa::Block::entry();
 
                 // Add an implicit capture record as the first parameter if this is a lambda
                 let mut ssa = if let Some(captures) = captures.as_ref() {
@@ -331,7 +332,7 @@ impl LIR {
                             .format(" ")
                     );
 
-                    let mut ssa = ssa::Blocks::new(Map::new());
+                    let mut ssa = ssa::Blocks::new(typing.params.len() as u32 + 1);
                     let mut morph = mono::Monomorphization::new(
                         &mut self.types,
                         &mir.field_types,
@@ -341,32 +342,32 @@ impl LIR {
                         &mir.trait_objects,
                         &mut tmap,
                     );
-                    let entry = ssa::Block::entry();
 
                     let capture_record = morph.create_capture_record(&captures);
 
-                    ssa.add_block_param(entry, MonoType::Monomorphised(capture_record));
-
-                    for ty in typing.params.values() {
-                        ssa.add_block_param(entry, ty.clone());
-                    }
+                    info!("adding implicit capture record param");
+                    ssa.add_block_param(entryblock, MonoType::Monomorphised(capture_record));
 
                     ssa
                 } else {
-                    info!("adding block parameters for {}", self.types.fmt(&typing));
-                    ssa::Blocks::new(typing.params.clone())
+                    ssa::Blocks::new(typing.params.len() as u32)
                 };
+
+                info!("adding block parameters for {}", self.types.fmt(&typing));
+                for ty in typing.params.values() {
+                    ssa.add_block_param(entryblock, ty.clone());
+                }
 
                 let mut bindmap = HashMap::new();
 
                 // Add captures to the bindmap if this is a lambda
                 if let Some(captures) = captures {
                     for (i, (bind, ty)) in captures {
-                        let cap_param = ssa::BlockParam(0);
+                        let cap_param = ssa.get_block_param(entryblock, 0);
                         let field = key::RecordField(i.0);
-                        let mk = ssa.type_of_param(ssa::Block::entry(), cap_param).as_key();
-                        let v = ssa.field(cap_param.into(), mk, field, ty);
-                        bindmap.insert(bind, v.into());
+                        let mk = ssa.type_of(cap_param).as_key();
+                        let v = ssa.field(cap_param.value(), mk, field, ty);
+                        bindmap.insert(bind, v.value());
                     }
                 }
 
@@ -532,7 +533,7 @@ impl<'a> FuncLower<'a> {
                 self.lir.types.get_or_make_tuple(types).into()
             });
 
-        self.ssa().construct(elems, ty).into()
+        self.ssa().construct(elems, ty).value()
     }
 
     // Relies on the layout of `std:prelude:List`
@@ -616,21 +617,6 @@ impl<'a> FuncLower<'a> {
         module.m(ro)
     }
 
-    // Rebinds `BlockParam`s so that this value can safely be used in a future block
-    // We don't use PHI block parameters, any block parameter is assumed to be for the current block.
-    //
-    // WARNING: might cause incorrect behavior on recursion
-    fn ensure_no_scope_escape(&mut self, value: ssa::Value) -> ssa::Value {
-        match value {
-            ssa::Value::BlockParam(bparam) => {
-                let block = self.ssa().block();
-                let ty = self.ssa().type_of_param(block, bparam).clone();
-                self.ssa().copy(value, ty).into()
-            }
-            _ => value,
-        }
-    }
-
     // Instantiates and lowers the lambda as a function.
     // Monomorphises the captures as a tuple.
     // Constructs the capture tuple in the SSA
@@ -692,7 +678,7 @@ impl<'a> FuncLower<'a> {
                 .construct(values, MonoType::Monomorphised(capture_tuple_ty))
         };
 
-        (mfunc, captures.into(), capture_tuple_ty, return_ty)
+        (mfunc, captures.value(), capture_tuple_ty, return_ty)
     }
 
     fn get_lambda_origin(
@@ -720,10 +706,6 @@ impl<'a> FuncLower<'a> {
 
     fn type_of_value(&mut self, value: ssa::Value) -> MonoType {
         match value {
-            ssa::Value::BlockParam(param) => {
-                let block = self.ssa().block();
-                self.ssa().type_of_param(block, param).clone()
-            }
             ssa::Value::ReadOnly(ro) => self.lir.read_only_table[ro].1.clone(),
             ssa::Value::V(v) => self.ssa().type_of(v).clone(),
             ssa::Value::Int(_, bitsize) => MonoType::Int(bitsize),

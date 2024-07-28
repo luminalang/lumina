@@ -10,8 +10,6 @@ use std::fmt::Display;
 
 macro_rules! reachable_as_poison {
     ($expr:expr) => {{
-        #[cfg(test)]
-
         warn!("reporting reachability as true due to poison: {}", $expr);
 
         true

@@ -382,7 +382,10 @@ impl<'a, 's> Lower<'a, 's> {
         let mut blower = MatchBranchLower::new(self, inite.as_ref(), key::DecisionTreeTail(0));
         let mut tree = blower.first(&ty, initp.as_ref());
 
-        tails.push(blower.lowered_tail.unwrap());
+        let Some(expr) = blower.lowered_tail else {
+            return Expr::Poison;
+        };
+        tails.push(expr);
 
         for (pat, expr) in iter {
             info!("merging {pat} into pattern tree");

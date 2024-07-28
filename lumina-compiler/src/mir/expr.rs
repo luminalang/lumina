@@ -179,8 +179,11 @@ impl<'a, 's> Verify<'a, 's> {
             }
             InstCall::Local(ty) if params.is_empty() => ty.value,
             InstCall::Local(ty) => {
-                dbg!(&ty, &params);
-                todo!();
+                if matches!(ty.value, IType::Prim(Prim::Poison)) {
+                    return IType::poison();
+                }
+
+                todo!("ET: parameters to non-function");
             }
             InstCall::Instantiated(instinfo) => {
                 self.type_check_and_emit_application(span, &params, &instinfo.ptypes);

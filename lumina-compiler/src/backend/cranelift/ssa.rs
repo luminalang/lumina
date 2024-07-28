@@ -13,11 +13,15 @@ pub struct Translator<'c, 'a, 'f> {
     f: Current<'a, 'f>,
 }
 
+type Predecessors = u16;
+
 #[derive(new)]
 struct Current<'a, 'f> {
     func: &'a lir::Function,
     builder: FunctionBuilder<'f>,
-    blockmap: Map<lir::Block, (Block, bool)>,
+    blockmap: Map<lir::Block, (Block, Predecessors)>,
+    #[new(default)]
+    imports: HashMap<FuncId, ir::FuncRef>,
     abi_block_types: Map<lir::Block, Map<key::Param, abi::Param>>,
     #[new(default)]
     vmap: Map<lir::V, VEntry>,
@@ -25,13 +29,26 @@ struct Current<'a, 'f> {
     block: lir::Block,
 }
 
+fn get_block(map: &mut Map<lir::Block, (Block, Predecessors)>, block: lir::Block) -> Block {
+    let (clblock, predecessors) = &mut map[block];
+    *predecessors += 1;
+    *clblock
+}
+
 impl<'a, 'f> Current<'a, 'f> {
-    fn switch_to_block(&mut self, block: lir::Block, seal: bool) {
-        let (clblock, filled) = self.blockmap[block];
-        assert!(!filled);
+    fn switch_to_block(&mut self, block: lir::Block) {
+        let (clblock, predecessors) = self.blockmap[block];
+        assert_eq!(predecessors, 1, "this block has already been lowered");
+
+        info!("switching to {} (cl{clblock})", block);
+
         self.builder.switch_to_block(clblock);
         self.block = block;
-        if seal {
+    }
+
+    fn seal_block_if_last(&mut self, block: lir::Block) {
+        let (clblock, predecessors) = self.blockmap[block];
+        if predecessors == self.func.blocks.predecessors(block) {
             self.builder.seal_block(clblock);
         }
     }
@@ -89,7 +106,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             .map(|block| {
                 ctx.lir
                     .types
-                    .get_abi_params(triple, func.blocks.params(block).values())
+                    .get_abi_params(triple, func.blocks.param_types(block))
             })
             .collect::<Map<_, _>>();
 
@@ -105,9 +122,10 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             .map(|block| {
                 let clblock = builder.create_block();
 
-                func.blocks.params(block).values().for_each(|t| {
-                    let v = ctx.lir.types.abi_param(triple, t);
-                    v.visit(|ty| {
+                func.blocks.params(block).for_each(|v| {
+                    let t = func.blocks.type_of(v);
+                    let entry = ctx.lir.types.abi_param(triple, t);
+                    entry.visit(|ty| {
                         builder.append_block_param(clblock, ty);
                     })
                 });
@@ -118,7 +136,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                     }
                 }
 
-                (clblock, false)
+                (clblock, 0)
             })
             .collect();
 
@@ -138,22 +156,26 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     }
 
     fn lower_and_finalize_current(mut self) {
-        self.f.switch_to_block(self.f.block, true);
-        self.block();
+        let (clblock, predecessors) = &mut self.f.blockmap[lir::Block::entry()];
+        *predecessors += 1;
 
-        // Blocks used as continuation in decision trees aren't sealed while lowering.
-        // In the future we should mark which branch is the last one so we can seal it during
-        // codegen instead.
-        self.f.builder.seal_all_blocks();
+        self.f.builder.seal_block(*clblock);
+        self.f.switch_to_block(self.f.block);
+        self.block();
 
         self.f.builder.finalize();
     }
 
     fn block(&mut self) {
-        assert_eq!(
-            std::mem::replace(&mut self.f.blockmap[self.f.block].1, true),
-            false
-        );
+        // Map the block parameters to entries
+        let clblock = self.f.blockmap[self.f.block].0;
+        let mut raw_params = self.f.builder.block_params(clblock).iter();
+        for (i, v) in self.f.func.blocks.params(self.f.block).enumerate() {
+            let entry = self.f.abi_block_types[self.f.block][key::Param(i as u32)]
+                .map(&mut |_type| *raw_params.next().unwrap());
+
+            self.f.vmap.push_as(v, entry);
+        }
 
         for v in self.f.func.blocks.entries(self.f.block) {
             let entry = self.f.func.blocks.entry_of(v);
@@ -169,9 +191,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     }
 
     fn declare_func_in_func(&mut self, id: FuncId) -> ir::FuncRef {
-        self.ctx
-            .objmodule
-            .declare_func_in_func(id, &mut self.f.builder.func)
+        *self.f.imports.entry(id).or_insert_with(|| {
+            self.ctx
+                .objmodule
+                .declare_func_in_func(id, &mut self.f.builder.func)
+        })
     }
 
     fn map_call_results_to_ventry(
@@ -268,10 +292,18 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         }
     }
 
+    fn lower_block_if_first(&mut self, block: lir::Block) {
+        let (_, predecessors) = self.f.blockmap[block];
+        if predecessors == 1 {
+            self.f.switch_to_block(block);
+            self.block();
+        }
+    }
+
     fn entry(&mut self, entry: &lir::Entry, ty: &MonoType) -> VEntry {
-        // Let's try a `V -> Data` mapping instead
         match entry {
             lir::Entry::Copy(value) => self.value_to_entry(*value),
+            lir::Entry::BlockParam(_) => VEntry::ZST,
             lir::Entry::CallStatic(mfunc, params) => {
                 let fheader = &self.ctx.funcmap[*mfunc];
                 let (id, ret) = (fheader.id, fheader.ret.clone());
@@ -506,25 +538,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
     fn value_to_entry(&mut self, value: lir::Value) -> VEntry {
         match value {
-            lir::Value::BlockParam(bparam) => {
-                let mut raw_params = self
-                    .f
-                    .builder
-                    .block_params(self.f.blockmap[self.f.block].0)
-                    .iter();
-
-                // Skip values that come before this block param
-                for bparam in 0..bparam.0 {
-                    let bparam = lir::BlockParam(bparam);
-                    self.f.abi_block_types[self.f.block][key::Param(bparam.0)].visit(|_ty| {
-                        raw_params.next();
-                    });
-                }
-
-                // Then Map the values from the start to the entry
-                self.f.abi_block_types[self.f.block][key::Param(bparam.0)]
-                    .map(&mut |_type| *raw_params.next().unwrap())
-            }
             lir::Value::V(v) => self.f.vmap[v].clone(),
             lir::Value::ReadOnly(ronly) => {
                 let dataid = self.ctx.rotable[ronly];
@@ -578,16 +591,14 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 let entry = self.call_func(id, ret, params);
                 self.return_(entry);
             }
-            lir::ControlFlow::JmpBlock(block, is_continuation, params) => {
-                let (clblock, filled) = self.f.blockmap[*block];
-                let params = self.params(params);
+            lir::ControlFlow::JmpBlock(block, params) => {
+                let clblock = get_block(&mut self.f.blockmap, *block);
 
+                let params = self.params(params);
                 self.ins().jump(clblock, &params);
 
-                if !filled {
-                    self.f.switch_to_block(*block, !*is_continuation);
-                    self.block();
-                }
+                self.f.seal_block_if_last(*block);
+                self.lower_block_if_first(*block);
             }
             lir::ControlFlow::Unreachable => {
                 self.ins().trap(TrapCode::UnreachableCodeReached);
@@ -599,21 +610,18 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             lir::ControlFlow::Select { value, on_true, on_false } => {
                 let int = self.value_to_entry(*value).as_direct();
 
-                let block_then = self.f.blockmap[on_true.0].0;
+                let block_then = get_block(&mut self.f.blockmap, on_true.0);
                 let then_params = self.params(&on_true.1);
 
-                let block_else = self.f.blockmap[on_false.0].0;
+                let block_else = get_block(&mut self.f.blockmap, on_false.0);
                 let else_params = self.params(&on_false.1);
 
                 self.ins()
                     .brif(int, block_then, &then_params, block_else, &else_params);
 
                 for block in [on_true.0, on_false.0] {
-                    let (_, filled) = self.f.blockmap[block];
-                    if !filled {
-                        self.f.switch_to_block(block, true);
-                        self.block();
-                    }
+                    self.f.seal_block_if_last(block);
+                    self.lower_block_if_first(block);
                 }
             }
             lir::ControlFlow::JmpTable(of, against, blocks) => {
@@ -625,7 +633,9 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
                 let table: Vec<ir::BlockCall> = blocks
                     .iter()
-                    .map(|block| ir::BlockCall::new(self.f.blockmap[*block].0, &[], pool))
+                    .map(|block| {
+                        ir::BlockCall::new(get_block(&mut self.f.blockmap, *block), &[], pool)
+                    })
                     .collect();
 
                 let defcall = ir::BlockCall::new(def, &[], pool);
@@ -639,16 +649,13 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
                 self.ins().br_table(indice, table);
 
-                self.f.builder.switch_to_block(def);
                 self.f.builder.seal_block(def);
+                self.f.builder.switch_to_block(def);
                 self.ins().trap(TrapCode::UnreachableCodeReached);
 
                 for block in blocks {
-                    let (_, filled) = self.f.blockmap[*block];
-                    if !filled {
-                        self.f.switch_to_block(*block, true);
-                        self.block();
-                    }
+                    self.f.seal_block_if_last(*block);
+                    self.lower_block_if_first(*block);
                 }
             }
         }

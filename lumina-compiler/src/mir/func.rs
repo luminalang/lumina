@@ -6,8 +6,8 @@ use derive_more::{Display, From};
 use either::Either;
 use hir::HIR;
 use lumina_typesystem::{
-    Bitsize, Container, Finalizer, Forall, ForeignInst, FuncKind, Generic, GenericKind, IType,
-    ImplIndex, Prim, RecordError, RecordVar, TEnv, Type, TypeSystem, Var,
+    Bitsize, Constraint, Container, Finalizer, Forall, ForeignInst, FuncKind, Generic, GenericKind,
+    IType, ImplIndex, Prim, RecordError, RecordVar, TEnv, Type, TypeSystem, Var,
 };
 use lumina_util::Highlighting;
 use owo_colors::OwoColorize;
@@ -381,13 +381,27 @@ impl<'a, 's> Verify<'a, 's> {
                 GenericKind::Entity => &typing.forall,
                 GenericKind::Parent => &pforall,
             };
+
+            // HACK: We substitute `Self` in implementation methods so we don't need to handle them
+            // BUT we forgot that default trait methods exist of where we can't substitute. So; we
+            // now need to partially track `Self` regardless making the effort of substituting
+            // `Self` useless.
+            let in_trait = match &self.hir.funcs[fkey] {
+                hir::FuncDefKind::TraitDefaultMethod(key, _) => {
+                    let params = &self.hir.traits[*key].1;
+                    Some((*key, params))
+                }
+                _ => None,
+            };
+
             let hit = lumina_typesystem::Compatibility::constraint(
                 self.iquery,
+                in_trait,
                 &|ikey| {
                     let impltor = &self.hir.impltors[ikey];
                     let iforall = &self.hir.impls[ikey];
-                    let (_, trait_params) = &self.hir.itraits[ikey];
-                    (iforall, impltor, trait_params)
+                    let (trait_, trait_params) = &self.hir.itraits[ikey];
+                    (*trait_, iforall, impltor, trait_params)
                 },
                 &get_forall,
                 &ty,
@@ -837,8 +851,8 @@ impl<'a, 's> Verify<'a, 's> {
                 let pforall = &self.hir.traits[*trait_].1;
                 let finst = ForeignInst::<Var>::new(vars)
                     .with_self(span)
-                    .parent(span, pforall)
                     .forall(span, forall)
+                    .parent(span, pforall)
                     .forall_cons(forall)
                     .parent_cons(pforall)
                     .build();
@@ -849,6 +863,12 @@ impl<'a, 's> Verify<'a, 's> {
                     typing.returns.as_ref(),
                 );
                 self.apply_tanot(tanot, &finst, Either::Left(func.map(NFunc::Key)));
+
+                let params = finst.get_trait_type_params();
+                self.vars().push_iconstraint(
+                    finst.self_.unwrap(),
+                    Constraint { span, trait_: *trait_, params },
+                );
 
                 let linfo = InstInfo::new(func.module, finst, ptypes, returns);
 
@@ -861,7 +881,7 @@ impl<'a, 's> Verify<'a, 's> {
                     let finst = ForeignInst::<Var>::new(vars);
                     let forall = &typing.forall;
 
-                    // Attach the impl blocks `forall` to the instantiation of this function is
+                    // Attach the impl blocks `forall` to the instantiation if this function is
                     // defined as a member to an implementation.
                     let pforall = match &self.hir.funcs[func] {
                         hir::FuncDefKind::ImplMethod(imp, _) => Some(&self.hir.impls[*imp]),
@@ -881,6 +901,26 @@ impl<'a, 's> Verify<'a, 's> {
                             .build(),
                         None => finst.forall(span, forall).forall_cons(forall).build(),
                     };
+
+                    // Attach the constraint from `self` if this is a method
+                    if let Some(var) = finst.self_ {
+                        let (trait_, params) = match &self.hir.funcs[func] {
+                            hir::FuncDefKind::TraitDefaultMethod(trait_, _) => {
+                                (*trait_, finst.get_trait_type_params())
+                            }
+                            hir::FuncDefKind::ImplMethod(ikey, _) => {
+                                let (trait_, i_trait_params) = &self.hir.itraits[*ikey];
+                                let trait_params =
+                                    i_trait_params.iter().map(|p| finst.apply(p)).collect();
+                                (*trait_, trait_params)
+                            }
+                            hir::FuncDefKind::InheritedDefault(_, _) => todo!(),
+                            _ => panic!("unexpected `self`"),
+                        };
+
+                        self.tenvs[self.current.fkey]
+                            .push_iconstraint(var, Constraint { span, trait_, params });
+                    }
 
                     // HACK: we need the spans from the HIR as they weren't copied to the MIR.
                     //
@@ -932,7 +972,7 @@ impl<'a, 's> Verify<'a, 's> {
         tanot: &hir::TypeAnnotation<'s>,
         finst: &ForeignInst<Var>,
         func: Either<M<NFunc>, key::Lambda>,
-    ) {
+    ) -> Option<Span> {
         use Either::*;
 
         let ty_lookup = match func {
@@ -948,6 +988,8 @@ impl<'a, 's> Verify<'a, 's> {
             Right(_) => None,
         };
 
+        let mut self_span = None;
+
         match (ty_lookup, tanot.for_type.is_empty()) {
             (_, true) => {}
             (Some(lookup), false) => {
@@ -956,6 +998,7 @@ impl<'a, 's> Verify<'a, 's> {
 
                     if **name == "self" {
                         self.type_system().assign_self(finst, tr(ty));
+                        self_span = Some(name.span);
                         continue;
                     }
 
@@ -1039,6 +1082,8 @@ impl<'a, 's> Verify<'a, 's> {
                 }
             }
         }
+
+        self_span
     }
 
     pub fn assign_ty_to_rvar(&mut self, span: Span, var: RecordVar, ty: Tr<&IType>) {

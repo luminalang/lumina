@@ -36,7 +36,7 @@ impl<'src> Identifier<'src> {
         let mut offset = 0;
 
         // edge-case for cons operator and similar
-        if s.chars().all(|c| c == ':') {
+        if !s.chars().any(|c| c.is_alphabetic()) {
             let mut segments = TinyVec::new();
             segments.push(s);
             return Ok(Identifier { segments });

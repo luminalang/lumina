@@ -38,7 +38,7 @@ pub struct PatLower<'f, 'v, 'a> {
     continuation_value: Option<ssa::Value>,
 
     branches: &'v Map<key::DecisionTreeTail, mir::Expr>,
-    expressions: Map<key::DecisionTreeTail, Option<Value>>,
+    expressions: Map<key::DecisionTreeTail, Option<Block>>,
 
     constructors: Vec<VecDeque<Value>>,
     map: Vec<ssa::Value>,
@@ -65,7 +65,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             assert_eq!(self.continuation_value, None);
             let block = self.continuation_block.unwrap();
             self.ssa().switch_to_block(block);
-            ssa::Value::BlockParam(ssa::BlockParam(0))
+            self.ssa().get_block_param(block, 0).value()
         }
     }
 
@@ -82,7 +82,6 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
     }
 
     fn tree(&mut self, on: ssa::Value, tree: &mir::DecTree) {
-        let on = self.f.ensure_no_scope_escape(on);
         self.map.push(on);
 
         match tree {
@@ -101,31 +100,47 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         match tail {
             TreeTail::Poison => {}
             TreeTail::Unreached(_) => {}
-            TreeTail::Reached(table, _excess, tail) => {
-                for &(bind, i) in &table.binds {
-                    let v = self.map[i];
-                    trace!("binding {bind} -> {v}");
-                    self.f.current.bindmap.insert(bind, v);
+            TreeTail::Reached(table, _excess, tail) => match self.expressions[*tail] {
+                Some(branch_expr_block) => {
+                    let branch_expr_params = table
+                        .binds
+                        .iter()
+                        .map(|(_, depth)| self.map[*depth])
+                        .collect();
+
+                    self.ssa().jump(branch_expr_block, branch_expr_params);
                 }
+                None => {
+                    let branch_expr_block = self.ssa().new_block(table.binds.len() as u32);
+                    self.expressions[*tail] = Some(branch_expr_block);
 
-                match self.expressions[*tail] {
-                    Some(_) => {}
-                    None => {
-                        let expr = &self.branches[*tail];
-                        let v = self.f.expr_to_value(expr);
-                        self.expressions[*tail] = Some(v);
+                    let branch_expr_params = table
+                        .binds
+                        .iter()
+                        .map(|(bind, depth)| {
+                            let v = self.map[*depth];
+                            let ty = self.f.type_of_value(v);
+                            let bparam = self.ssa().add_block_param(branch_expr_block, ty);
+                            self.f.current.bindmap.insert(*bind, bparam.value());
+                            v
+                        })
+                        .collect();
 
+                    self.ssa().jump(branch_expr_block, branch_expr_params);
+
+                    self.ssa().switch_to_block(branch_expr_block);
+                    let expr = &self.branches[*tail];
+                    let v = self.f.expr_to_value(expr);
+
+                    if self.can_skip_continuation {
+                        self.continuation_value = Some(v);
+                    } else {
                         let ty = self.f.type_of_value(v);
-
-                        if self.can_skip_continuation {
-                            self.continuation_value = Some(v);
-                        } else {
-                            let con = self.get_continuation(ty);
-                            self.ssa().jump_continuation(con, vec![v]);
-                        }
+                        let con = self.get_continuation(ty);
+                        self.ssa().jump(con, vec![v]);
                     }
                 }
-            }
+            },
         }
     }
 
@@ -152,6 +167,8 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         bitsize: Bitsize,
         next: &mir::Branching<Range>,
     ) {
+        self.can_skip_continuation &= next.branches.len() == 1;
+
         let resetpoint = self.make_reset();
 
         for (range, next) in &next.branches {
@@ -159,7 +176,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                 return self.next(next);
             }
 
-            let [on_true, on_false] = [self.ssa().new_block(), self.ssa().new_block()];
+            let [on_true, on_false] = [self.ssa().new_block(0), self.ssa().new_block(0)];
 
             let to_value = |n| {
                 if signed {
@@ -203,7 +220,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             .fields(mk)
             .map(|field| {
                 let ty = self.f.lir.types.types.type_of_field(mk, field);
-                self.ssa().field(on, mk, field, ty).into()
+                self.ssa().field(on, mk, field, ty).value()
             })
             .collect();
 
@@ -226,7 +243,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
         let resetpoint = self.make_reset();
 
-        let [on_true, on_false] = [self.ssa().new_block(), self.ssa().new_block()];
+        let [on_true, on_false] = [self.ssa().new_block(0), self.ssa().new_block(0)];
 
         self.ssa()
             .select(on, [(on_true, vec![]), (on_false, vec![])]);
@@ -242,7 +259,6 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         self.can_skip_continuation = false;
 
         let oblock = self.block();
-        let on = self.f.ensure_no_scope_escape(on);
 
         let mut morph = to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap);
         let listmt = morph.apply(&ty);
@@ -283,14 +299,14 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let data = self
             .ssa()
             .field(maybe, maybe_mk, key::RecordField(1), data_ty)
-            .into();
+            .value();
 
         let is_just = self
             .ssa()
             .eq([tag.value(), Value::maybe_just()], mono::TAG_SIZE);
 
         let [con_block, nil_block] = [mir::pat::LIST_CONS, mir::pat::LIST_NIL].map(|constr| {
-            let vblock = self.ssa().new_block();
+            let vblock = self.ssa().new_block(0);
             self.ssa().switch_to_block(vblock);
 
             let resetpoint = self.make_reset();
@@ -338,7 +354,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             .fields(mk)
             .map(|field| {
                 let ty = self.f.lir.types.types.type_of_field(mk, field);
-                self.ssa().field(on, mk, field, ty).into()
+                self.ssa().field(on, mk, field, ty).value()
             })
             .collect();
 
@@ -351,7 +367,6 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         self.can_skip_continuation &= v.branches.len() == 1;
 
         let oblock = self.block();
-        let on = self.f.ensure_no_scope_escape(on);
         let on_mk = self.f.type_of_value(on).as_key();
 
         let tag_ty = MonoType::UInt(mono::TAG_SIZE);
@@ -377,7 +392,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             .branches
             .iter()
             .map(|(var, next)| {
-                let vblock = self.ssa().new_block();
+                let vblock = self.ssa().new_block(0);
                 self.ssa().switch_to_block(vblock);
 
                 let resetpoint = self.make_reset();
@@ -397,7 +412,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                         let offset = base_offset;
                         base_offset.0 += size;
 
-                        self.ssa().sum_field(data_field.into(), offset, ty).into()
+                        self.ssa().sum_field(data_field.value(), offset, ty).value()
                     })
                     .collect();
 
@@ -410,14 +425,14 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             })
             .collect();
 
-        self.ssa().jump_table(copy_tag.into(), jmp_table_blocks);
+        self.ssa().jump_table(copy_tag.value(), jmp_table_blocks);
     }
 
     pub fn get_continuation(&mut self, ty: MonoType) -> Block {
         match self.continuation_block {
             Some(block) => block,
             None => {
-                let block = self.ssa().new_block();
+                let block = self.ssa().new_block(1);
                 self.ssa().add_block_param(block, ty);
                 self.continuation_block = Some(block);
                 block

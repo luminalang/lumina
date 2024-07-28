@@ -135,6 +135,10 @@ impl<'s> TEnv<'s> {
         self.concrete_constraint_checks.push((ty, con))
     }
 
+    pub fn push_iconstraint(&mut self, ty: Var, con: Constraint<IType>) {
+        self.constraint_checks.push((ty, con))
+    }
+
     pub fn record(&mut self, span: Span) -> RecordVar {
         self.records.push(RecordVarInfo {
             fields: Map::new(),

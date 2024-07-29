@@ -1,3 +1,11 @@
+pub use non_zero [NonZero]
+
+when n can Num + Negate + Compare
+pub fn abs n as n -> n =
+  if n < Num:zero
+    then Negate:neg n
+    else n
+
 pub trait Num
   @[precedence 4500]
   fn ** as self, self -> self
@@ -9,12 +17,17 @@ pub trait Num
   fn * as self, self -> self
   @[precedence 5500]
   fn / as self, self -> self
+  @[precedence 5500]
+  fn % as self, self -> self
 
   fn zero as self
   fn one  as self
 
   fn succ n as self -> self = n + Num:one
   fn pred n as self -> self = n - Num:one
+
+pub trait Negate
+  fn neg as self -> self
 
 pub trait Compare
   @[precedence 4000]
@@ -44,6 +57,7 @@ impl Num for u8
   fn - a b as self, self -> self = builtin:minus a b
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
+  fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
   fn one  = 1
 
@@ -58,6 +72,7 @@ impl Num for u16
   fn - a b as self, self -> self = builtin:minus a b
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
+  fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
   fn one  = 1
 
@@ -72,6 +87,7 @@ impl Num for u32
   fn - a b as self, self -> self = builtin:minus a b
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
+  fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
   fn one  = 1
 
@@ -86,6 +102,7 @@ impl Num for u64
   fn - a b as self, self -> self = builtin:minus a b
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
+  fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
   fn one  = 1
 
@@ -100,6 +117,7 @@ impl Num for i8
   fn - a b as self, self -> self = builtin:minus a b
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
+  fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
   fn one  = 1
 
@@ -114,6 +132,7 @@ impl Num for i16
   fn - a b as self, self -> self = builtin:minus a b
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
+  fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
   fn one  = 1
 
@@ -128,6 +147,7 @@ impl Num for i32
   fn - a b as self, self -> self = builtin:minus a b
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
+  fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
   fn one  = 1
 
@@ -142,6 +162,7 @@ impl Num for i64
   fn - a b as self, self -> self = builtin:minus a b
   fn * a b as self, self -> self = builtin:mul a b
   fn / a b as self, self -> self = builtin:div a b
+  fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
   fn one  = 1
 

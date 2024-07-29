@@ -572,6 +572,18 @@ pub struct Typing<T> {
     pub returns: Tr<T>,
 }
 
+impl<T> Typing<T> {
+    pub fn map<U>(&self, mut f: impl FnMut(Tr<&T>) -> U) -> (Vec<Tr<U>>, Tr<U>) {
+        let ptypes = self
+            .params
+            .values()
+            .map(|ty| f(ty.as_ref()).tr(ty.span))
+            .collect::<Vec<_>>();
+        let returns = f(self.returns.as_ref()).tr(self.returns.span);
+        (ptypes, returns)
+    }
+}
+
 impl<'s> Typing<IType> {
     pub fn inferred(
         span: impl Fn(usize) -> Span,

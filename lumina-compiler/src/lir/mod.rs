@@ -66,7 +66,7 @@ pub struct Output {
 #[derive(new)]
 struct LIR {
     #[new(default)]
-    mono_resolve: HashMap<MonoTyping, MonoFunc>,
+    mono_resolve: HashMap<MonoTypesKey, MonoFunc>,
     #[new(default)]
     functions: Map<MonoFunc, Function>,
     types: mono::MonomorphisedTypes,
@@ -83,6 +83,13 @@ struct LIR {
     alloc: Option<MonoFunc>,
     #[new(default)]
     dealloc: Option<MonoFunc>,
+}
+
+#[derive(new, PartialEq, Eq, Hash)]
+pub struct MonoTypesKey {
+    origin: FuncOrigin,
+    generics: Vec<(Generic, MonoType)>,
+    self_: Option<MonoType>,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -306,12 +313,18 @@ impl LIR {
         iquery: &ImplIndex,
         info: ProjectInfo,
         mut tmap: TypeMap,
-        typing: MonoTyping,
+        mut typing: MonoTyping,
         captures: Option<Map<key::Capture, (key::Bind, MonoType)>>,
     ) -> MonoFunc {
-        match self.mono_resolve.get(&typing) {
+        let key = MonoTypesKey::new(typing.origin, tmap.generics, tmap.self_);
+
+        match self.mono_resolve.get(&key) {
             Some(key) => *key,
             None => {
+                typing.origin = key.origin;
+                tmap.generics = key.generics;
+                tmap.self_ = key.self_;
+
                 let _span = info_span!(
                     "lowering function",
                     module = &mir.module_names[typing.origin.module()],
@@ -377,7 +390,13 @@ impl LIR {
 
                 let symbol = func_symbol(mir, self.functions.next_key(), &origin);
                 let mfkey = self.push_function(symbol, ssa, returns);
-                self.mono_resolve.insert(typing, mfkey);
+
+                let key = MonoTypesKey::new(
+                    typing.origin.clone(),
+                    tmap.generics.clone(),
+                    tmap.self_.clone(),
+                );
+                self.mono_resolve.insert(key, mfkey);
 
                 let lower = FuncLower {
                     lir: self,
@@ -479,47 +498,18 @@ impl<'a> FuncLower<'a> {
             let ty = morph.apply(hty);
             let weak = morph.apply_weak(hty);
             let generic = Generic::new(key, kinds[0]);
-            tmap.generics.push((generic, (weak, ty)));
+            tmap.push(generic, weak, ty);
         }
 
         for (key, hty) in &inst.generics {
             let ty = morph.apply(hty);
             let weak = morph.apply_weak(hty);
             let generic = Generic::new(key, kinds[1]);
-            tmap.generics.push((generic, (weak, ty)));
+            tmap.push(generic, weak, ty);
         }
 
-        if let Some(hty) = inst.self_.as_ref() {
-            let ty = morph.apply(hty);
-            let weak = morph.apply_weak(hty);
-
-            // HACK: if finding the implementation of `self` lands us at one with generics then
-            // we need to add those generics now since they weren't known during the MIR lower.
-            match &weak {
-                Type::Defined(_, params) | Type::List(_, params) => {
-                    for (i, p) in params.iter().enumerate() {
-                        let key = key::Generic(i as u32);
-                        let kind = GenericKind::Parent;
-
-                        let already_defined = tmap
-                            .generics
-                            .iter()
-                            .any(|(gen, _)| gen.kind == kind && gen.key == key);
-
-                        if !already_defined {
-                            // TODO: Is it valid to just throw it *back* into monomorphisation?
-                            //
-                            // It shouldn't contain any generics so I guess so
-                            let mty = morph.apply(p);
-                            tmap.generics
-                                .push((Generic::new(key, kind), (p.clone(), mty)));
-                        }
-                    }
-                }
-                _ => {}
-            }
-
-            tmap.self_ = Some((weak, ty));
+        if let Some(ty) = inst.self_.as_ref() {
+            panic!("morphise_inst used when tmap from implementation query takes priority (self = {ty})");
         }
 
         tmap
@@ -633,16 +623,22 @@ impl<'a> FuncLower<'a> {
         let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
 
         // Add the generics that are still in scope from the parent
-        let in_scope = self
+        for ((g, mono), (_, ty)) in self
             .current
             .tmap
             .generics
             .iter()
-            .filter(|(g, _)| !matches!(g.kind, GenericKind::Lambda(..)))
-            .cloned();
-
-        // TODO: we probably need to add `self` as well?
-        morph.tmap.generics.extend(in_scope);
+            .zip(&self.current.tmap.weak_generics)
+        {
+            if !matches!(g.kind, GenericKind::Lambda(_)) {
+                morph.tmap.push(*g, ty.clone(), mono.clone());
+            }
+        }
+        if let Some(self_) = self.current.tmap.self_.clone() {
+            morph
+                .tmap
+                .set_self(self.current.tmap.weak_self.clone().unwrap(), self_);
+        }
 
         let fdef = self.current.origin.get_root_fdef(self.mir);
         let typing = morph.apply_typing(func, &fdef.lambdas[lambda].typing);
@@ -778,8 +774,8 @@ impl<'a> FuncLower<'a> {
 
                 let tag = Value::UInt(var.0 as u128, mono::TAG_SIZE);
 
-                let size = self.lir.types.types.size_of_defined(ty);
-                let payload_size = size - mono::TAG_SIZE.0 as u32;
+                let (tag_size, payload_size) = self.lir.types.types.as_sum_type(ty).unwrap();
+                assert_eq!(tag_size, mono::TAG_SIZE.0 as u32);
 
                 ResolvedNFunc::Sum { tag, ty, payload_size }
             }

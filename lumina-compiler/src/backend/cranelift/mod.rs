@@ -56,7 +56,6 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
     });
 
     let rotable = lir.read_only_table.map(|(ro, (bytes, _ty))| {
-        warn!("forcing all byte/str literals to be raw bytes written to global ptr");
         let name = ro.to_string();
         let thread_local = false;
         let id = objmodule

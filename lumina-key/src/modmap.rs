@@ -38,6 +38,20 @@ impl<K: EntityRef, V> ModMap<K, V> {
         module.m(self.0[module].push(value))
     }
 
+    pub fn get_both(&mut self, keys: [M<K>; 2]) -> [&mut V; 2] {
+        if keys[0].module == keys[1].module {
+            self.0[keys[0].module]
+                .get_many_mut(keys.map(|k| k.value))
+                .ok()
+                .unwrap()
+        } else {
+            let modules = keys.map(|k| k.module);
+            let [fst, snd] = self.0.get_many_mut(modules).ok().unwrap();
+
+            [&mut fst[keys[0].value], &mut snd[keys[1].value]]
+        }
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = M<K>> + '_ {
         self.0
             .iter()

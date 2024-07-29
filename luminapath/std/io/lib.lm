@@ -13,6 +13,17 @@ pub fn print str as string -> () =
     then ()
 
 @[platform "linux"]
+pub fn println str as string -> () =
+  let {ptr, len} = (str <++> "\n") . toByteVec in
+    do libc:write stdout ptr (len as int)
+    then ()
+
+@[platform "linux"]
 pub fn interupt = libc:raise sigint
 
 fn sigint = 2
+
+when s can ToString
+pub fn trace s as s -> s =
+  do print (ToString:show s) then 
+    do print "\n" then s

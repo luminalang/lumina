@@ -141,7 +141,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ForeignInst<T> {
     pub generics: Map<key::Generic, T>,
     pub pgenerics: Map<key::Generic, T>,
@@ -152,6 +152,22 @@ impl<T> ForeignInst<T> {
     pub fn new<'a, 's>(env: &'a mut TEnv<'s>) -> ForeignInstBuilder<'a, 's> {
         ForeignInstBuilder {
             env,
+            inst: ForeignInst { self_: None, generics: Map::new(), pgenerics: Map::new() },
+        }
+    }
+
+    pub fn circular<'a, 's>(
+        from: &'a mut TEnv<'s>,
+        to: &'a mut TEnv<'s>,
+        to_forall: &'a mut Forall<'s, IType>,
+        span: Span,
+    ) -> CircularRecursionInst<'a, 's> {
+        CircularRecursionInst {
+            from,
+            to,
+            failures: vec![],
+            span,
+            to_forall,
             inst: ForeignInst { self_: None, generics: Map::new(), pgenerics: Map::new() },
         }
     }
@@ -190,7 +206,7 @@ impl ForeignInst<Var> {
 }
 
 pub struct ForeignInstBuilder<'a, 's> {
-    env: &'a mut TEnv<'s>,
+    pub env: &'a mut TEnv<'s>,
 
     inst: ForeignInst<Var>,
 }
@@ -283,11 +299,7 @@ impl<T: Into<IType> + Clone> ForeignInst<T> {
             Type::List(key, params) => {
                 IType::List(*key, params.iter().map(|t| self.apply(t)).collect())
             }
-            Type::Self_ => self
-                .self_
-                .as_ref()
-                .map(|var| var.clone().into())
-                .unwrap_or(IType::Self_),
+            Type::Self_ => self.self_().unwrap_or(IType::Self_),
         }
     }
 
@@ -301,11 +313,7 @@ impl<T: Into<IType> + Clone> ForeignInst<T> {
             IType::List(kind, params) => {
                 IType::List(*kind, params.iter().map(|ty| self.applyi(ty)).collect())
             }
-            IType::Self_ => self
-                .self_
-                .as_ref()
-                .map(|var| var.clone().into())
-                .unwrap_or(IType::Self_),
+            IType::Self_ => self.self_().unwrap_or(IType::Self_),
             other => other.clone(),
         }
     }
@@ -317,4 +325,102 @@ impl<T: Into<IType> + Clone> ForeignInst<T> {
             GenericKind::Parent => self.pgenerics[generic.key].clone().into(),
         }
     }
+
+    fn self_(&self) -> Option<IType> {
+        self.self_.as_ref().map(|var| var.clone().into())
+    }
+}
+
+impl<'a, 's> CircularRecursionInst<'a, 's> {
+    pub fn applyi(&mut self, ty: &IType) -> IType {
+        match ty {
+            IType::Container(con) => IType::Container(con.map(|ty| self.applyi(ty))),
+            IType::Generic(generic) => self.generic(*generic),
+            IType::Defined(kind, params) => {
+                IType::Defined(*kind, params.iter().map(|ty| self.applyi(ty)).collect())
+            }
+            IType::List(kind, params) => {
+                IType::List(*kind, params.iter().map(|ty| self.applyi(ty)).collect())
+            }
+            IType::Self_ => unreachable!(),
+            IType::Prim(prim) => IType::Prim(*prim),
+
+            // TODO: This recursive instantiation is very simple in that it just
+            // fails on anything that isn't yet inferred.
+            //
+            // Having more complex recursive inference would require embedding it into the type
+            // checker. Which seems overkill for now.
+            IType::Var(var) => {
+                let vdata = self.to.get(*var);
+                match vdata.value {
+                    Some(ty) => {
+                        let ty = ty.cloned();
+                        self.applyi(&ty)
+                    }
+                    None => {
+                        self.failures.push(vdata.span);
+                        IType::Var(self.from.var(self.span))
+                    }
+                }
+            }
+            IType::InferringRecord(record) => match self.to.get_record(*record).clone() {
+                RecordAssignment::Ok(key, params) => IType::defined(key, params),
+                RecordAssignment::Redirect(rvar) => {
+                    let ty = IType::InferringRecord(rvar);
+                    self.applyi(&ty)
+                }
+                RecordAssignment::NotRecord(ty) => self.applyi(&ty),
+                RecordAssignment::Unknown(_) => IType::Var(self.from.var(self.span)),
+                RecordAssignment::None => {
+                    self.failures.push(self.to.get_record_span(*record));
+                    IType::Var(self.from.var(self.span))
+                }
+            },
+            IType::Field(record, _) => {
+                self.failures.push(self.to.get_record_span(*record));
+                IType::Var(self.from.var(self.span))
+            }
+        }
+    }
+
+    pub fn generic(&self, generic: Generic) -> IType {
+        match generic.kind {
+            GenericKind::Entity => self.inst.generics[generic.key].clone().into(),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn forall(mut self) -> Self {
+        for k in self.to_forall.keys() {
+            debug_assert_eq!(k, self.inst.generics.push(self.from.var(self.span)));
+        }
+        self
+    }
+
+    pub fn iforall_cons(mut self) -> Self {
+        for k in self.to_forall.keys() {
+            let var = self.inst.generics[k];
+            for con in self.to_forall[k].trait_constraints.clone() {
+                let con = map_con(&con, |t| self.applyi(t));
+                self.from.constraint_checks.push((var, con));
+            }
+        }
+        self
+    }
+
+    pub fn finalize(self) -> (ForeignInst<Var>, Vec<Span>) {
+        (self.inst, self.failures)
+    }
+}
+
+pub struct CircularRecursionInst<'a, 's> {
+    from: &'a mut TEnv<'s>,
+
+    to: &'a mut TEnv<'s>,
+    to_forall: &'a mut Forall<'s, IType>,
+    span: Span,
+
+    failures: Vec<Span>,
+
+    inst: ForeignInst<Var>,
 }

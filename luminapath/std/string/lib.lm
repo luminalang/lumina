@@ -1,5 +1,6 @@
 use std:ptr
-use std:list [List [Slice]]
+use std:io
+use std:list [List [Slice, Nil]]
 use std:list:vec [Vec]
 
 pub type string {
@@ -16,3 +17,49 @@ pub fn toByteVec str as string -> Vec u8 =
       do str.inner
          . fold #(\i v -> do vec:unsafe_set i v vec then i + 1) 0
       then vec
+
+pub trait ToString
+  fn show as self -> string
+
+pub fn <> left right as string, string -> string =
+  match left.inner
+  | Nil -> right
+  | _  -> { string | inner = List:Concat left.inner right.inner }
+
+pub fn <:> left right as u8, string -> string =
+  { string | inner = left : right.inner }
+
+pub fn <++> left right as string, string -> string =
+  { string | inner = left.inner ++ right.inner }
+
+impl ToString for string
+  fn show str = str
+
+impl ToString for i64
+  fn show n = 
+    // TODO: we need to abs `n`
+    let str = show (n as u64) in
+      if n < 0
+        then 45 <:> str
+        else str
+
+impl ToString for u8
+  fn show n = show (n as u64)
+
+// TODO: This would be much more efficient if we manually used `Vec`.
+// However; I think a better way to approach this is a more general MIR/LIR optimisation
+// which detects and transforms this kind of code? Should be possible. 
+//
+// Since `string` has the same layout as `List` perhaps we could do it transparently post-monomorphisation?
+impl ToString for u64
+  fn show n =
+    if n == 0 then "0" else showNext n
+  where
+    fn showNext n as u64 -> string =
+      match n
+      | 0 -> ""
+      | _ ->
+        let c = ((n % 10) as u8) + 48 in
+           c <:> showNext (n / 10)
+
+        // showNext (n / 10) <+> ((n % 10) as u8) + 48

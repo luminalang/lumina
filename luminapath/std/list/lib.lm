@@ -18,7 +18,9 @@ pub type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
 
 impl Listable a for List a
   fn : x xs as a, List a -> List a =
-    Concat (Singleton x) xs
+    match xs
+    | Nil -> Singleton x
+    | _   -> Concat (Singleton x) xs
 
   fn with_capacity len as int -> List a =
     Nil
@@ -27,25 +29,22 @@ impl Listable a for List a
     match list
     | Slice slice -> 
       vec:split slice
-      . map #(\(v, right) -> (v, Slice right))
+      . map #(\(v, right) -> (v, if right . is_empty then Nil else Slice right))
 
     | Singleton a -> Just (a, Nil)
     | Nil         -> Nothing
 
     | Concat left right -> 
       split left 
-      . map #(preventConcatNil right)
-
-// TODO: we wouldn't need this if we specialised the split in `Concat`
-fn preventConcatNil right (v, leftright) as List a, (a, List a) -> (a, List a) =
-  match leftright
-    | Nil -> (v, right)
-    | _   -> (v, Concat leftright right)
+      . map #(\(v, leftright) -> (v, leftright ++ right))
 
 pub fn ++ left right as List a, List a -> List a =
   match left
   | Nil -> right
-  | _   -> Concat left right
+  | _   -> 
+    match right
+    | Nil -> left
+    | _ -> Concat left right
 
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
 pub fn fold f acc list as fn(b, a -> b), b, [a] -> b =

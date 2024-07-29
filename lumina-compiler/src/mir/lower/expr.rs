@@ -47,6 +47,7 @@ pub enum Expr {
         Box<Self>,
         pat::DecTree<key::DecisionTreeTail>,
         Map<key::DecisionTreeTail, Self>,
+        Map<key::DecisionTreeTail, u16>,
     ),
     Poison,
 }
@@ -279,9 +280,11 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Literal::String(str) => {
                 let ro_key = self.str_to_ro(*str);
 
+                let len = self.read_only_table[ro_key].0 .0.len();
+
                 let func = self.items.pinfo.string_from_raw_parts;
                 let ptr = Expr::ReadOnly(ro_key);
-                let len = Expr::UInt(Bitsize::default(), str.len() as u128); // TODO: 32-bit target
+                let len = Expr::UInt(Bitsize::default(), len as u128); // TODO: 32-bit target
                 let finst =
                     ForeignInst { generics: Map::new(), pgenerics: Map::new(), self_: None };
 
@@ -385,6 +388,7 @@ impl<'a, 's> Lower<'a, 's> {
         let Some(expr) = blower.lowered_tail else {
             return Expr::Poison;
         };
+
         tails.push(expr);
 
         for (pat, expr) in iter {
@@ -415,7 +419,14 @@ impl<'a, 's> Lower<'a, 's> {
 
         assert_ne!(tails.len(), 0);
 
-        Expr::Match(Box::new(on), tree, tails)
+        // We need to know the predecessor count to know when they should be lowered
+        let mut predecessor_count: Map<_, _> = tails.values().map(|_| 0).collect();
+        tree.for_each_tail(&mut |tail| match tail {
+            pat::TreeTail::Reached(_, _, tail) => predecessor_count[*tail] += 1,
+            _ => {}
+        });
+
+        Expr::Match(Box::new(on), tree, tails, predecessor_count)
     }
 }
 
@@ -482,7 +493,7 @@ impl fmt::Display for Expr {
             Expr::Float(n) => n.fmt(f),
             Expr::ReadOnly(k) => k.fmt(f),
             Expr::Tuple(elems) => write!(f, "{op}{}{cp}", elems.iter().format(", ")),
-            Expr::Match(on, tree, tails) => match tree {
+            Expr::Match(on, tree, tails, _) => match tree {
                 // edge-case for formatting `let x = y in` prettily
                 pat::DecTree::End(pat::TreeTail::Reached(table, excess, key))
                     if excess.is_empty() && table.binds.len() == 1 =>

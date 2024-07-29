@@ -11,7 +11,7 @@ use tracing::trace;
 /// The type environment contains all contexts that types direct to.
 #[derive(Debug)]
 pub struct TEnv<'s> {
-    pub(crate) self_: Option<IType>,
+    pub self_: Option<IType>,
     pub(crate) records: Map<RecordVar, RecordVarInfo<'s>>,
     pub(crate) vars: Map<Var, VarInfo>,
     pub(crate) constraint_checks: Vec<(Var, Constraint<IType>)>,
@@ -129,6 +129,10 @@ impl<'s> TEnv<'s> {
 
     pub fn get_record(&self, var: RecordVar) -> &RecordAssignment<'s> {
         &self.records[var].assignment
+    }
+
+    pub fn get_record_span(&self, var: RecordVar) -> Span {
+        self.records[var].span
     }
 
     pub fn push_constraint(&mut self, ty: Tr<Type>, con: Constraint<Type>) {

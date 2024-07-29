@@ -179,15 +179,15 @@ impl<'a, 's> Lower<'a, 's> {
 
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
         let mut buffer = Vec::with_capacity(str.len());
-        let mut bytes = str.bytes().enumerate();
+        let mut bytes = str.bytes();
 
         loop {
-            let Some((_, mut b)) = bytes.next() else {
+            let Some(mut b) = bytes.next() else {
                 break;
             };
 
             match b {
-                b'\\' => match bytes.next().map(|(_, b)| b) {
+                b'\\' => match bytes.next() {
                     Some(b'n') => b = b'\n',
                     Some(b'r') => b = b'\r',
                     Some(b't') => b = b'\t',
@@ -281,7 +281,8 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
                 let mut tails = Map::new();
                 tails.push(self.lowered_tail.take().unwrap());
 
-                self.lowered_tail = Some(Expr::Match(Box::new(on), tree, tails));
+                let pred = [1].into_iter().collect();
+                self.lowered_tail = Some(Expr::Match(Box::new(on), tree, tails, pred));
 
                 key::DecisionTreeTail(0)
             }

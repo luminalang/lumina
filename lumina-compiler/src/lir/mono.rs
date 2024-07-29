@@ -60,6 +60,7 @@ pub struct MonomorphisedTypes {
     closure: M<key::Trait>,
 }
 
+#[derive(Debug)]
 pub struct MonomorphisedRecord {
     pub size: u32,
     pub repr: Repr,
@@ -206,28 +207,6 @@ impl Records {
         }
     }
 
-    fn push_record(
-        &mut self,
-        fields: Map<key::RecordField, MonoType>,
-        original: Option<M<key::TypeKind>>,
-    ) -> MonoTypeKey {
-        let record = MonomorphisedRecord {
-            size: fields.values().map(|ty| self.size_of(ty)).sum(),
-            repr: Repr::Lumina,
-            autoboxed: original
-                .map(|key| {
-                    fields
-                        .iter()
-                        .filter_map(|(field, ty)| self.field_is_recursive(key, ty).then_some(field))
-                        .collect()
-                })
-                .unwrap_or_else(HashSet::new),
-            fields,
-            original,
-        };
-        self.push(record)
-    }
-
     fn field_is_recursive(&self, key: M<key::TypeKind>, ty: &MonoType) -> bool {
         match ty {
             MonoType::Monomorphised(mk) if self[*mk].original == Some(key) => true,
@@ -239,12 +218,22 @@ impl Records {
         }
     }
 
+    pub fn size_of_without_ptr_sum(&self, ty: &MonoType) -> u32 {
+        self.size_of_ty(ty, false)
+    }
+
     pub fn size_of(&self, ty: &MonoType) -> u32 {
+        self.size_of_ty(ty, true)
+    }
+
+    fn size_of_ty(&self, ty: &MonoType, sum_are_ptrs: bool) -> u32 {
         match ty {
-            MonoType::SumDataCast { .. } | MonoType::Pointer(_) => 64,
+            MonoType::SumDataCast { .. } if sum_are_ptrs => 64,
+            MonoType::SumDataCast { largest } => *largest,
+            MonoType::Pointer(_) => 64,
             MonoType::Int(bitsize) => bitsize.0 as u32,
             MonoType::UInt(bitsize) => bitsize.0 as u32,
-            MonoType::Array(inner, times) => self.size_of(&inner) * *times as u32,
+            MonoType::Array(inner, times) => self.size_of_ty(&inner, sum_are_ptrs) * *times as u32,
             MonoType::Float => 64,
             MonoType::FnPointer(_, _) => 64,
             MonoType::Unreachable => 0,
@@ -256,8 +245,16 @@ impl Records {
         let size = self[key].size;
 
         // recursive; will be autoboxed. So; we take pointer size
+        // (unless it's a sum-type, those are always tag+dataptr for now)
         if size == u32::MAX {
-            self.size_of(&MonoType::u8_pointer())
+            match self[key].original {
+                Some(M { value: key::TypeKind::Sum(_), .. }) => {
+                    let field = &self[key].fields[key::RecordField(1)];
+                    dbg!(&field, self.size_of_without_ptr_sum(field));
+                    TAG_SIZE.0 as u32 + self.size_of_without_ptr_sum(field)
+                }
+                _ => self.size_of(&MonoType::u8_pointer()),
+            }
         } else {
             size
         }
@@ -427,8 +424,10 @@ impl MonoType {
 
 #[derive(Clone, Debug)]
 pub struct TypeMap {
-    pub generics: Vec<(Generic, (Type, MonoType))>,
-    pub self_: Option<(Type, MonoType)>,
+    pub generics: Vec<(Generic, MonoType)>,
+    pub weak_generics: Vec<(Generic, Type)>,
+    pub self_: Option<MonoType>,
+    pub weak_self: Option<Type>,
 }
 
 #[derive(new)]
@@ -467,10 +466,11 @@ impl<'a> Monomorphization<'a> {
         let unit = self.mono.get_or_make_tuple(vec![]);
 
         forall.keys().for_each(|key| {
-            self.tmap.generics.push((
+            self.tmap.push(
                 Generic::new(key, GenericKind::Entity),
-                (Type::tuple(), MonoType::Monomorphised(unit)),
-            ));
+                Type::tuple(),
+                MonoType::Monomorphised(unit),
+            );
         });
     }
 
@@ -491,10 +491,10 @@ impl<'a> Monomorphization<'a> {
             None => {
                 let mk = self.mono.types.push(MonomorphisedRecord::placeholder());
                 self.mono.resolve.insert(key, mk);
-                tmap.self_ = Some((
+                tmap.set_self(
                     Type::defined(kind, params.to_vec()),
                     MonoType::Monomorphised(mk),
-                ));
+                );
                 let record = or(self, tmap);
                 assert_eq!(self.mono.types[mk].size, u32::MAX);
                 self.mono.types[mk] = record;
@@ -626,7 +626,7 @@ impl<'a> Monomorphization<'a> {
 
             // Create a tmap to monomorphise the generics from the `trait` decl when creating fnpointers
             let mut tmap = TypeMap::new();
-            tmap.self_ = Some((Type::u8_ptr(), MonoType::u8_pointer()));
+            tmap.set_self(Type::u8_ptr(), MonoType::u8_pointer());
             tmap.extend(GenericKind::Parent, params.into_iter().zip(key.1));
 
             methods
@@ -717,7 +717,7 @@ impl<'a> Monomorphization<'a> {
                     MonoType::Monomorphised(mk)
                 }
             },
-            Type::Self_ => self.tmap.self_.clone().unwrap().1,
+            Type::Self_ => self.tmap.self_.clone().unwrap(),
         }
     }
 
@@ -729,7 +729,7 @@ impl<'a> Monomorphization<'a> {
             Type::List(key, params) | Type::Defined(key, params) => {
                 Type::Defined(*key, params.iter().map(|ty| self.apply_weak(ty)).collect())
             }
-            Type::Self_ => self.tmap.self_.clone().unwrap().0,
+            Type::Self_ => self.tmap.weak_self.clone().unwrap(),
         }
     }
 
@@ -770,24 +770,39 @@ impl<'a> Monomorphization<'a> {
         }
     }
 
-    pub fn generic(&self, generic: Generic) -> &(Type, MonoType) {
-        match self.tmap.generics.iter().find(|(g, _)| *g == generic) {
+    pub fn generic(&self, generic: Generic) -> (&Type, &MonoType) {
+        match self.tmap.generics.iter().position(|(g, _)| *g == generic) {
             None => panic!("unknown generic: {generic}"),
-            Some((_, ty)) => ty,
+            Some(i) => (&self.tmap.weak_generics[i].1, &self.tmap.generics[i].1),
         }
     }
 }
 
 impl TypeMap {
     pub fn new() -> Self {
-        Self { generics: Vec::new(), self_: None }
+        Self {
+            generics: Vec::new(),
+            weak_generics: Vec::new(),
+            self_: None,
+            weak_self: None,
+        }
     }
 
     pub fn extend(&mut self, kind: GenericKind, tys: impl IntoIterator<Item = (Type, MonoType)>) {
         for (i, ty) in tys.into_iter().enumerate() {
             let generic = Generic::new(key::Generic(i as u32), kind);
-            self.generics.push((generic, ty));
+            self.push(generic, ty.0, ty.1);
         }
+    }
+
+    pub fn set_self(&mut self, weak: Type, mono: MonoType) {
+        self.self_ = Some(mono);
+        self.weak_self = Some(weak);
+    }
+
+    pub fn push(&mut self, generic: Generic, weak: Type, mono: MonoType) {
+        self.generics.push((generic, mono));
+        self.weak_generics.push((generic, weak));
     }
 }
 

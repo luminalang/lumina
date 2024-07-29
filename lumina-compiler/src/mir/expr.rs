@@ -202,8 +202,14 @@ impl<'a, 's> Verify<'a, 's> {
 
                 ret
             }
-            InstCall::CircularRecursion { .. } => {
-                todo!()
+            InstCall::CircularRecursion(key) => {
+                let instinfo = self.inst_indirect_recursion(span, key);
+                self.type_check_and_emit_application(span, &params, &instinfo.ptypes);
+
+                let ret = instinfo.ret.value.clone();
+                self.current.push_inst(span, Some(instinfo));
+
+                ret
             }
             InstCall::TypeDependentFailure => {
                 self.current.push_inst(span, None);

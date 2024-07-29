@@ -223,9 +223,9 @@ impl<'a> FuncLower<'a> {
                 let vtable = self.trait_impl_vtable(trait_, vhash, impltor, methods);
                 self.construct_dyn_object(&vtable, expr)
             }
-            mir::Expr::Match(on, tree, branches) => {
+            mir::Expr::Match(on, tree, branches, pred) => {
                 let on = self.expr_to_value(on);
-                self.to_pat_lower(branches).run(on, tree)
+                self.to_pat_lower(branches, pred).run(on, tree)
             }
             mir::Expr::ReflectTypeOf(ty) => {
                 let ty =
@@ -235,7 +235,7 @@ impl<'a> FuncLower<'a> {
             mir::Expr::SizeOf(ty) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
                 let size = self.lir.types.types.size_of(&ty) / 8;
-                Value::Int(size as i128, Bitsize(64)) // TODO: 32-bit
+                Value::UInt(size as u128, Bitsize(64)) // TODO: 32-bit
             }
             mir::Expr::Cmp(cmp, params) => {
                 let params = [
@@ -461,12 +461,12 @@ impl<'a> FuncLower<'a> {
 
                 valid.then(|| {
                     let mut tmap = TypeMap::new();
-                    tmap.self_ = Some((weak_impltor.clone(), impltor.clone()));
+                    tmap.set_self(weak_impltor.clone(), impltor.clone());
                     for assignment in comp.into_assignments().into_iter() {
                         let mono = to_morphization!(self.lir, self.mir, &mut TypeMap::new())
                             .apply(&assignment.ty);
                         let generic = Generic::new(assignment.key, GenericKind::Parent);
-                        tmap.generics.push((generic, (assignment.ty, mono)));
+                        tmap.push(generic, assignment.ty, mono);
                     }
                     (imp, tmap)
                 })

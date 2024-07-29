@@ -37,20 +37,12 @@ fn get_block(map: &mut Map<lir::Block, (Block, Predecessors)>, block: lir::Block
 
 impl<'a, 'f> Current<'a, 'f> {
     fn switch_to_block(&mut self, block: lir::Block) {
-        let (clblock, predecessors) = self.blockmap[block];
-        assert_eq!(predecessors, 1, "this block has already been lowered");
+        let (clblock, _) = self.blockmap[block];
 
         info!("switching to {} (cl{clblock})", block);
 
         self.builder.switch_to_block(clblock);
         self.block = block;
-    }
-
-    fn seal_block_if_last(&mut self, block: lir::Block) {
-        let (clblock, predecessors) = self.blockmap[block];
-        if predecessors == self.func.blocks.predecessors(block) {
-            self.builder.seal_block(clblock);
-        }
     }
 
     fn type_of_value(&self, value: Value) -> Type {
@@ -292,9 +284,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         }
     }
 
-    fn lower_block_if_first(&mut self, block: lir::Block) {
-        let (_, predecessors) = self.f.blockmap[block];
-        if predecessors == 1 {
+    fn lower_block_if_last_predecessor(&mut self, block: lir::Block) {
+        let (clblock, predecessors) = self.f.blockmap[block];
+
+        if predecessors == self.f.func.blocks.predecessors(block) {
+            self.f.builder.seal_block(clblock);
             self.f.switch_to_block(block);
             self.block();
         }
@@ -333,7 +327,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 MonoType::Monomorphised(mk) => self.construct_record(*mk, values),
                 &MonoType::SumDataCast { largest } => {
                     let ptr = self.heap_alloc(largest as i128);
-                    // todo!("... wait a second, why are we constructing this?");
 
                     let mut offset = 0;
                     for v in values {
@@ -368,7 +361,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             },
             lir::Entry::SumField { of, offset } => match of {
                 lir::Value::V(v) => match self.f.vmap[*v].clone() {
-                    // VEntry::Direct(ptr) => self.deref_type(ptr, *offset, ty).0,
                     VEntry::SumPayload { ptr, .. } => self.deref_type(ptr, *offset, ty).0,
                     other => panic!("impossible source of sum data payload: {other:#?}"),
                 },
@@ -597,8 +589,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 let params = self.params(params);
                 self.ins().jump(clblock, &params);
 
-                self.f.seal_block_if_last(*block);
-                self.lower_block_if_first(*block);
+                self.lower_block_if_last_predecessor(*block);
             }
             lir::ControlFlow::Unreachable => {
                 self.ins().trap(TrapCode::UnreachableCodeReached);
@@ -620,8 +611,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                     .brif(int, block_then, &then_params, block_else, &else_params);
 
                 for block in [on_true.0, on_false.0] {
-                    self.f.seal_block_if_last(block);
-                    self.lower_block_if_first(block);
+                    self.lower_block_if_last_predecessor(block);
                 }
             }
             lir::ControlFlow::JmpTable(of, against, blocks) => {
@@ -654,8 +644,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 self.ins().trap(TrapCode::UnreachableCodeReached);
 
                 for block in blocks {
-                    self.f.seal_block_if_last(*block);
-                    self.lower_block_if_first(*block);
+                    self.lower_block_if_last_predecessor(*block);
                 }
             }
         }

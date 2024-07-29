@@ -59,7 +59,7 @@ impl<'a> FuncLower<'a> {
                 for (i, ty) in params.into_iter().enumerate() {
                     let generic = Generic::new(key::Generic(i as u32), GenericKind::Entity);
                     let mono = morph.apply(&ty);
-                    tmap.generics.push((generic, (ty, mono)));
+                    tmap.push(generic, ty, mono);
                 }
 
                 match key.value {

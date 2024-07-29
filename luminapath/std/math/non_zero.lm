@@ -1,0 +1,7 @@
+type NonZero n {
+  inner n
+}
+
+when n can Num + Compare
+pub fn non_zero n as n -> Maybe (NonZero n) =
+  if n == Num:zero then Nothing else Just { inner = n }

@@ -6,8 +6,9 @@ use derive_more::{Display, From};
 use either::Either;
 use hir::HIR;
 use lumina_typesystem::{
-    Bitsize, Constraint, Container, Finalizer, Forall, ForeignInst, FuncKind, Generic, GenericKind,
-    IType, ImplIndex, Prim, RecordError, RecordVar, TEnv, Type, TypeSystem, Var,
+    Bitsize, CircularRecursionInst, Constraint, Container, Finalizer, Forall, ForeignInst,
+    FuncKind, Generic, GenericKind, IType, ImplIndex, Prim, RecordError, RecordVar, TEnv, Type,
+    TypeSystem, Var,
 };
 use lumina_util::Highlighting;
 use owo_colors::OwoColorize;
@@ -478,22 +479,45 @@ impl<'a, 's> Verify<'a, 's> {
         let forall = self.fdef.forall.borrow();
         let typing = &self.fdef.typing;
 
-        let inst = ForeignInst::<Var>::new(&mut self.tenvs[self.current.fkey])
-            // TODO: using `with_self` for all recursive functions is questionable.
-            .with_self(span)
+        let mut inst = ForeignInst::<Var>::new(&mut self.tenvs[self.current.fkey])
             .forall(span, &forall)
-            .iforall_cons(&forall)
-            .build();
+            .iforall_cons(&forall);
 
-        let ptypes = typing
-            .params
-            .values()
-            .map(|ty| inst.applyi(ty).tr(ty.span))
-            .collect::<Vec<_>>();
-        let returns = inst.applyi(&typing.returns).tr(typing.returns.span);
+        if inst.env.self_.is_some() {
+            inst = inst.with_self(span);
+        }
+
+        let inst = inst.build();
+
+        let (ptypes, returns) = typing.map(|ty| inst.applyi(*ty));
 
         let module = self.module();
         InstInfo::new(module, inst, ptypes, returns.clone())
+    }
+
+    pub fn inst_indirect_recursion(&mut self, span: Span, key: M<key::Func>) -> InstInfo {
+        let target = self.hir.funcs[key].as_defined();
+        let mut forall = target.forall.borrow_mut();
+        let [from, to] = self.tenvs.get_both([self.current.fkey, key]);
+        let mut cinst = ForeignInst::<Var>::circular(from, to, &mut *forall, span)
+            .forall()
+            .iforall_cons();
+
+        let (ptypes, returns) = target.typing.map(|ty| cinst.applyi(*ty));
+
+        let (inst, failures) = cinst.finalize();
+        for fspan in failures {
+            self.hir
+                .sources
+                .error("inference failure")
+                .m(key.module)
+                .eline(fspan, "")
+                .m(self.current.fkey.module)
+                .iline(span, "caused by this recursive call")
+                .emit();
+        }
+
+        InstInfo::new(key.module, inst, ptypes, returns.clone())
     }
 
     pub fn module_of_type(&mut self, ty: Tr<&IType>) -> Option<key::Module> {

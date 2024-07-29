@@ -105,6 +105,10 @@ impl Blocks {
         self.blocks.push(BasicBlock::new(params))
     }
 
+    pub fn set_predecessors(&mut self, block: Block, pred: u16) {
+        self.blocks[block].predecessors = pred;
+    }
+
     pub fn get_block_param(&self, block: Block, pid: u32) -> V {
         let params = self.blocks[block].parameters;
         assert!(params > pid);
@@ -140,16 +144,6 @@ impl Blocks {
 
         if self.blocks[block].tail != ControlFlow::Unreachable {
             panic!("assignment in block that's already been sealed");
-        }
-
-        if let Some(next_block) = self.blocks.get(Block(block.0 + 1)) {
-            if let Some((start, _)) = next_block.offset {
-                assert!(
-                    v < start,
-                    "{block} declared {v} already declared in {}",
-                    Block(block.0 + 1),
-                );
-            }
         }
 
         v

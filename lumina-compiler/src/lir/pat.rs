@@ -8,6 +8,7 @@ impl<'a> FuncLower<'a> {
     pub fn to_pat_lower<'f, 'v>(
         &'f mut self,
         branches: &'v Map<key::DecisionTreeTail, mir::Expr>,
+        pred: &'v Map<key::DecisionTreeTail, u16>,
     ) -> PatLower<'f, 'v, 'a> {
         PatLower {
             continuation_block: None,
@@ -16,6 +17,7 @@ impl<'a> FuncLower<'a> {
             expressions: branches.keys().map(|_| None).collect(),
 
             branches,
+            predecessors: pred,
 
             f: self,
 
@@ -34,10 +36,11 @@ pub struct PatLower<'f, 'v, 'a> {
     // All branches put their yielded value as a parameter to this block and jump to it
     //
     // This desugars `f (match ...)`
-    continuation_block: Option<ssa::Block>,
+    continuation_block: Option<(ssa::Block, MonoType)>,
     continuation_value: Option<ssa::Value>,
 
     branches: &'v Map<key::DecisionTreeTail, mir::Expr>,
+    predecessors: &'v Map<key::DecisionTreeTail, u16>,
     expressions: Map<key::DecisionTreeTail, Option<Block>>,
 
     constructors: Vec<VecDeque<Value>>,
@@ -55,7 +58,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         self.f.lir.functions[self.f.current.mfkey].blocks.block()
     }
 
-    pub fn run(&mut self, on: ssa::Value, tree: &mir::DecTree) -> Value {
+    pub fn run(mut self, on: ssa::Value, tree: &mir::DecTree) -> Value {
         self.tree(on, tree);
 
         if self.can_skip_continuation {
@@ -63,8 +66,9 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             self.continuation_value.unwrap()
         } else {
             assert_eq!(self.continuation_value, None);
-            let block = self.continuation_block.unwrap();
+            let (block, con_ty) = self.continuation_block.take().unwrap();
             self.ssa().switch_to_block(block);
+            self.ssa().add_block_param(block, con_ty);
             self.ssa().get_block_param(block, 0).value()
         }
     }
@@ -100,47 +104,58 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         match tail {
             TreeTail::Poison => {}
             TreeTail::Unreached(_) => {}
-            TreeTail::Reached(table, _excess, tail) => match self.expressions[*tail] {
-                Some(branch_expr_block) => {
-                    let branch_expr_params = table
-                        .binds
-                        .iter()
-                        .map(|(_, depth)| self.map[*depth])
-                        .collect();
-
-                    self.ssa().jump(branch_expr_block, branch_expr_params);
-                }
-                None => {
-                    let branch_expr_block = self.ssa().new_block(table.binds.len() as u32);
-                    self.expressions[*tail] = Some(branch_expr_block);
-
-                    let branch_expr_params = table
-                        .binds
-                        .iter()
-                        .map(|(bind, depth)| {
-                            let v = self.map[*depth];
-                            let ty = self.f.type_of_value(v);
-                            let bparam = self.ssa().add_block_param(branch_expr_block, ty);
-                            self.f.current.bindmap.insert(*bind, bparam.value());
-                            v
-                        })
-                        .collect();
-
-                    self.ssa().jump(branch_expr_block, branch_expr_params);
-
-                    self.ssa().switch_to_block(branch_expr_block);
-                    let expr = &self.branches[*tail];
-                    let v = self.f.expr_to_value(expr);
-
-                    if self.can_skip_continuation {
-                        self.continuation_value = Some(v);
-                    } else {
-                        let ty = self.f.type_of_value(v);
-                        let con = self.get_continuation(ty);
-                        self.ssa().jump(con, vec![v]);
+            TreeTail::Reached(table, _excess, tail) => {
+                let branch_expr_block = match &mut self.expressions[*tail] {
+                    Some(existing) => existing,
+                    None => {
+                        let branch_expr_block = self.ssa().new_block(table.binds.len() as u32);
+                        self.expressions[*tail] = Some(branch_expr_block);
+                        self.expressions[*tail].as_mut().unwrap()
                     }
-                }
-            },
+                };
+                let branch_expr_block = *branch_expr_block;
+
+                let branch_expr_params = table
+                    .binds
+                    .iter()
+                    .map(|(_, depth)| self.map[*depth])
+                    .collect();
+
+                self.ssa().jump(branch_expr_block, branch_expr_params);
+
+                self.lower_expr_branch_if_last_predecessor(*tail, table);
+            }
+        }
+    }
+
+    fn lower_expr_branch_if_last_predecessor(
+        &mut self,
+        tail: key::DecisionTreeTail,
+        table: &mir::pat::PointTable,
+    ) {
+        let branch_expr_block = self.expressions[tail].unwrap();
+        let pred = self.ssa().predecessors(branch_expr_block);
+
+        // If this is the last predecessor then jump to and lower the branch expr
+        if pred == self.predecessors[tail] {
+            for (bind, depth) in table.binds.iter() {
+                let v = self.map[*depth];
+                let ty = self.f.type_of_value(v);
+                let bparam = self.ssa().add_block_param(branch_expr_block, ty);
+                self.f.current.bindmap.insert(*bind, bparam.value());
+            }
+
+            self.ssa().switch_to_block(branch_expr_block);
+            let expr = &self.branches[tail];
+            let v = self.f.expr_to_value(expr);
+
+            if self.can_skip_continuation {
+                self.continuation_value = Some(v);
+            } else {
+                let ty = self.f.type_of_value(v);
+                let con = self.get_continuation(ty);
+                self.ssa().jump(con, vec![v]);
+            }
         }
     }
 
@@ -430,11 +445,10 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
     pub fn get_continuation(&mut self, ty: MonoType) -> Block {
         match self.continuation_block {
-            Some(block) => block,
+            Some((block, _)) => block,
             None => {
                 let block = self.ssa().new_block(1);
-                self.ssa().add_block_param(block, ty);
-                self.continuation_block = Some(block);
+                self.continuation_block = Some((block, ty));
                 block
             }
         }

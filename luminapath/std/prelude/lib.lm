@@ -1,9 +1,9 @@
 pub use std:math [Num [..], Compare [..]]
 pub use std:maybe [Maybe [..]]
-pub use std:string [string]
+pub use std:string [string, ToString [show], <:>, <++>]
 pub use std:nothing [nothing]
 use std:ptr
-use std:list [Listable [:], List]
+use std:list [Listable [:], List, ++]
 use std:list:vec [Vec]
 use std:gc
 use std:env [process_arguments]

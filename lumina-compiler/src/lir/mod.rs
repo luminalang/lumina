@@ -380,7 +380,7 @@ impl LIR {
                         let field = key::RecordField(i.0);
                         let mk = ssa.type_of(cap_param).as_key();
                         let v = ssa.field(cap_param.value(), mk, field, ty);
-                        bindmap.insert(bind, v.value());
+                        bindmap.insert(bind, v);
                     }
                 }
 
@@ -523,7 +523,7 @@ impl<'a> FuncLower<'a> {
                 self.lir.types.get_or_make_tuple(types).into()
             });
 
-        self.ssa().construct(elems, ty).value()
+        self.ssa().construct(elems, ty)
     }
 
     // Relies on the layout of `std:prelude:List`
@@ -545,21 +545,18 @@ impl<'a> FuncLower<'a> {
         // singleton. But; perhaps it's still a good idea?
         let init = self
             .ssa()
-            .construct(vec![nil_tag, empty_tuple], list_type.clone())
-            .value();
+            .construct(vec![nil_tag, empty_tuple], list_type.clone());
 
         values.into_iter().rev().fold(init, |next, v| {
             let singleton_payload = self.elems_to_tuple(vec![v], Some(payload_size));
 
             let this = self
                 .ssa()
-                .construct(vec![singleton_tag, singleton_payload], list_type.clone())
-                .value();
+                .construct(vec![singleton_tag, singleton_payload], list_type.clone());
 
             let concat_payload = self.elems_to_tuple(vec![this, next], Some(payload_size));
             self.ssa()
                 .construct(vec![concat_tag, concat_payload], list_type.clone())
-                .value()
         })
     }
 
@@ -595,7 +592,6 @@ impl<'a> FuncLower<'a> {
 
         self.ssa()
             .call(mfunc, vec![Value::ReadOnly(ro), len], string)
-            .value()
     }
 
     fn string_to_readonly(&mut self, str: Vec<u8>) -> M<key::ReadOnly> {
@@ -616,7 +612,6 @@ impl<'a> FuncLower<'a> {
         inst: &ConcreteInst,
     ) -> (MonoFunc, ssa::Value, MonoTypeKey, MonoType) {
         let (func, captures) = self.get_lambda_origin(self.current.origin.clone(), lambda);
-        dbg!(&captures, &self.current.bindmap);
 
         let kinds = [GenericKind::Entity, GenericKind::Lambda(lambda)];
         let mut tmap = self.morphise_inst(kinds, inst);
@@ -675,7 +670,7 @@ impl<'a> FuncLower<'a> {
                 .construct(values, MonoType::Monomorphised(capture_tuple_ty))
         };
 
-        (mfunc, captures.value(), capture_tuple_ty, return_ty)
+        (mfunc, captures, capture_tuple_ty, return_ty)
     }
 
     fn get_lambda_origin(

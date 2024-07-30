@@ -135,11 +135,10 @@ impl<'a> FuncLower<'a> {
 
         let largest = self.lir.types.types.size_of_defined(reflect_mono) - mono::TAG_SIZE.0 as u32;
         let dataty = MonoType::SumDataCast { largest };
-        let parameters = self.ssa().construct(params, dataty).value();
+        let parameters = self.ssa().construct(params, dataty);
 
         self.ssa()
             .construct(vec![tag, parameters], reflect_mono.into())
-            .value()
     }
 }
 

@@ -40,7 +40,7 @@ impl BasicBlock {
             offset: None,
             predecessors: 0,
             parameters,
-            tail: ControlFlow::Unreachable,
+            tail: ControlFlow::Empty,
         }
     }
 }
@@ -66,7 +66,10 @@ impl Blocks {
         self.in_block(block, |this| {
             let v = this.vtypes.next_key();
             let entry = Entry::BlockParam(v);
-            assert_eq!(v, this.assign(entry, ty));
+            let Value::V(got) = this.assign(entry, ty) else {
+                unreachable!();
+            };
+            assert_eq!(v, got);
             v
         })
     }
@@ -124,8 +127,18 @@ impl Blocks {
         self.current = block;
     }
 
-    fn assign(&mut self, entry: Entry, ty: MonoType) -> V {
+    fn assign(&mut self, entry: Entry, ty: MonoType) -> Value {
         let block = self.current;
+
+        match self.blocks[block].tail {
+            ControlFlow::Empty => {}
+            ControlFlow::Unreachable => {
+                info!("skipping unreacahble assignment {entry}");
+                return Value::UInt(0, Bitsize(64));
+            }
+            _ => panic!("assignment in block that's already been sealed"),
+        }
+
         trace!(
             "assign {} {} {entry} {} {}",
             self.ventries.next_key(),
@@ -142,11 +155,7 @@ impl Blocks {
             Some((_, end)) => end.0 += 1,
         }
 
-        if self.blocks[block].tail != ControlFlow::Unreachable {
-            panic!("assignment in block that's already been sealed");
-        }
-
-        v
+        v.value()
     }
 
     pub fn entries(&self, block: Block) -> impl Iterator<Item = V> + 'static {
@@ -179,6 +188,17 @@ impl Blocks {
 
     #[track_caller]
     fn set_tail(&mut self, flow: ControlFlow) {
+        let block = self.current;
+
+        if self.blocks[block].tail == ControlFlow::Unreachable {
+            return;
+        }
+        match &self.blocks[block].tail {
+            ControlFlow::Empty => {}
+            ControlFlow::Unreachable => return,
+            other => panic!("already assigned tail for {block}: {other}"),
+        }
+
         // Increment predecessors
         match &flow {
             ControlFlow::JmpBlock(block, _) => {
@@ -196,46 +216,42 @@ impl Blocks {
             _ => {}
         }
 
-        let block = self.current;
         trace!("setting tail of {block} to:\n{flow}");
-        match &self.blocks[block].tail {
-            ControlFlow::Unreachable => {}
-            other => panic!("already assigned tail for {block}: {other}"),
-        }
+
         self.blocks[block].tail = flow;
     }
 
-    pub fn write(&mut self, ptr: Value, value: Value) -> V {
+    pub fn write(&mut self, ptr: Value, value: Value) -> Value {
         let entry = Entry::WritePtr { ptr, value };
         let ty = MonoType::Monomorphised(UNIT);
         self.assign(entry, ty)
     }
 
-    pub fn call<C: Callable>(&mut self, call: C, params: Vec<Value>, ret: MonoType) -> V {
+    pub fn call<C: Callable>(&mut self, call: C, params: Vec<Value>, ret: MonoType) -> Value {
         let entry = C::construct(call, params);
         self.assign(entry, ret)
     }
 
-    pub fn call_extern(&mut self, key: M<key::Func>, params: Vec<Value>, ret: MonoType) -> V {
+    pub fn call_extern(&mut self, key: M<key::Func>, params: Vec<Value>, ret: MonoType) -> Value {
         let entry = Entry::CallExtern(key, params);
         self.assign(entry, ret)
     }
 
-    pub fn construct(&mut self, params: Vec<Value>, ty: MonoType) -> V {
+    pub fn construct(&mut self, params: Vec<Value>, ty: MonoType) -> Value {
         let entry = Entry::Construct(params);
         self.assign(entry, ty)
     }
 
-    pub fn copy(&mut self, value: Value, ty: MonoType) -> V {
+    pub fn copy(&mut self, value: Value, ty: MonoType) -> Value {
         let entry = Entry::Copy(value);
         self.assign(entry, ty)
     }
 
-    pub fn reduce(&mut self, value: Value, ty: MonoType) -> V {
+    pub fn reduce(&mut self, value: Value, ty: MonoType) -> Value {
         let entry = Entry::Reduce(value);
         self.assign(entry, ty)
     }
-    pub fn extend(&mut self, value: Value, from_signed: bool, ty: MonoType) -> V {
+    pub fn extend(&mut self, value: Value, from_signed: bool, ty: MonoType) -> Value {
         let entry = if from_signed {
             Entry::ExtendSigned(value)
         } else {
@@ -244,34 +260,34 @@ impl Blocks {
         self.assign(entry, ty)
     }
 
-    pub fn cmp(&mut self, v: [Value; 2], ord: std::cmp::Ordering, bitsize: Bitsize) -> V {
+    pub fn cmp(&mut self, v: [Value; 2], ord: std::cmp::Ordering, bitsize: Bitsize) -> Value {
         let entry = Entry::IntCmpInclusive(v[0], ord, v[1], bitsize);
         let ty = MonoType::bool();
         self.assign(entry, ty)
     }
-    pub fn eq(&mut self, v: [Value; 2], bitsize: Bitsize) -> V {
+    pub fn eq(&mut self, v: [Value; 2], bitsize: Bitsize) -> Value {
         self.cmp(v, std::cmp::Ordering::Equal, bitsize)
     }
-    pub fn lti(&mut self, v: [Value; 2], bitsize: Bitsize) -> V {
+    pub fn lti(&mut self, v: [Value; 2], bitsize: Bitsize) -> Value {
         self.cmp(v, std::cmp::Ordering::Less, bitsize)
     }
-    pub fn gti(&mut self, v: [Value; 2], bitsize: Bitsize) -> V {
+    pub fn gti(&mut self, v: [Value; 2], bitsize: Bitsize) -> Value {
         self.cmp(v, std::cmp::Ordering::Greater, bitsize)
     }
 
-    pub fn add(&mut self, v: Value, by: Value, ty: MonoType) -> V {
+    pub fn add(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
         let entry = Entry::IntAdd(v, by);
         self.assign(entry, ty)
     }
-    pub fn sub(&mut self, v: Value, by: Value, ty: MonoType) -> V {
+    pub fn sub(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
         let entry = Entry::IntSub(v, by);
         self.assign(entry, ty)
     }
-    pub fn mul(&mut self, v: Value, by: Value, ty: MonoType) -> V {
+    pub fn mul(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
         let entry = Entry::IntMul(v, by);
         self.assign(entry, ty)
     }
-    pub fn div(&mut self, v: Value, by: Value, ty: MonoType) -> V {
+    pub fn div(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
         let entry = Entry::IntDiv(v, by);
         self.assign(entry, ty)
     }
@@ -282,11 +298,11 @@ impl Blocks {
         key: MonoTypeKey,
         field: key::RecordField,
         ty: MonoType,
-    ) -> V {
+    ) -> Value {
         let entry = Entry::Field { of, key, field };
         self.assign(entry, ty)
     }
-    pub fn sum_field(&mut self, of: Value, offset: BitOffset, ty: MonoType) -> V {
+    pub fn sum_field(&mut self, of: Value, offset: BitOffset, ty: MonoType) -> Value {
         let entry = Entry::SumField { of, offset };
         self.assign(entry, ty)
     }
@@ -300,21 +316,21 @@ impl Blocks {
         ty: MonoType,
     ) -> Value {
         if N == 1 {
-            self.cmp([on, values[0]], cmps[0], bitsize).value()
+            self.cmp([on, values[0]], cmps[0], bitsize)
         } else {
             let mut iter = values.into_iter().zip(cmps);
             let (right, ord) = iter.next().unwrap();
 
-            let init = self.cmp([on, right], ord, bitsize).value();
+            let init = self.cmp([on, right], ord, bitsize);
 
             iter.fold(init, |left, (right, ord)| {
-                let v = self.cmp([on, right], ord, bitsize).value();
-                self.bit_and([left, v], ty.clone()).value()
+                let v = self.cmp([on, right], ord, bitsize);
+                self.bit_and([left, v], ty.clone())
             })
         }
     }
 
-    pub fn alloc(&mut self, size: u32, objty: MonoType) -> V {
+    pub fn alloc(&mut self, size: u32, objty: MonoType) -> Value {
         let entry = Entry::Alloc { size };
         let ty = MonoType::Pointer(Box::new(objty));
         self.assign(entry, ty)
@@ -323,18 +339,18 @@ impl Blocks {
         let entry = Entry::Dealloc { ptr };
         self.assign(entry, ty);
     }
-    pub fn deref(&mut self, value: Value, ty: MonoType) -> V {
+    pub fn deref(&mut self, value: Value, ty: MonoType) -> Value {
         let entry = Entry::Deref(value);
         self.assign(entry, ty)
     }
 
-    pub fn val_to_ref(&mut self, val: M<key::Val>, ty: MonoType) -> V {
+    pub fn val_to_ref(&mut self, val: M<key::Val>, ty: MonoType) -> Value {
         let entry = Entry::RefStaticVal(val);
         let ty = MonoType::Pointer(Box::new(ty));
         self.assign(entry, ty)
     }
 
-    pub fn bit_and(&mut self, values: [Value; 2], ty: MonoType) -> V {
+    pub fn bit_and(&mut self, values: [Value; 2], ty: MonoType) -> Value {
         let entry = Entry::BitAnd(values);
         self.assign(entry, ty)
     }
@@ -343,6 +359,11 @@ impl Blocks {
     pub fn jump<J: Jumpable>(&mut self, j: J, params: Vec<Value>) {
         let flow = J::construct(j, params);
         self.set_tail(flow);
+    }
+
+    pub fn unreachable(&mut self) {
+        let flow = ControlFlow::Unreachable;
+        self.set_tail(flow)
     }
 
     pub fn return_(&mut self, value: Value) {
@@ -417,6 +438,7 @@ pub enum ControlFlow {
     JmpFunc(MonoFunc, Vec<Value>),
     JmpBlock(Block, Vec<Value>),
     Unreachable,
+    Empty,
     Return(Value),
 
     // Since bools are just ints, the difference is that `Select` allows different block parameters
@@ -648,6 +670,7 @@ impl fmt::Display for ControlFlow {
             ControlFlow::JmpBlock(block, params) => {
                 write!(f, "{} {}", "jump".keyword(), CStyle(block, params))
             }
+            ControlFlow::Empty => "<empty>".keyword().fmt(f),
             ControlFlow::Unreachable => "unreachable".keyword().fmt(f),
             ControlFlow::Return(value) => write!(f, "{} {value}", "return".keyword()),
             ControlFlow::Select { value, on_true, on_false, .. } => {

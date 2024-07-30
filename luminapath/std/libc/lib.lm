@@ -1,30 +1,67 @@
-@[extern "getenv", platform "linux"]
+@[platform ["linux-gnu", "linux-musl"]]
+pub fn errno as i32 =
+  ptr:deref errno_location
+
+@[extern "__errno_location", platform ["linux-gnu", "linux-musl"]]
+pub fn errno_location as *i32
+
+@[extern "getenv", platform ["linux-gnu", "linux-musl"]]
 pub fn getenv as *u8 -> *u8
 
-@[extern "exit", platform "linux"]
+@[extern "exit", platform ["linux-gnu", "linux-musl"]]
 pub fn exit code as int -> ()
 
-@[extern "write", platform "linux"]
-pub fn write as int, *u8, int -> int
+@[extern "write", platform ["linux-gnu", "linux-musl"]]
+pub fn write as i32, *u8, int -> int
 
-@[extern "read", platform "linux"]
-pub fn read as int, *u8, int -> int
+@[extern "read", platform ["linux-gnu", "linux-musl"]]
+pub fn read as i32, *u8, int -> int
 
-@[extern "raise", platform "linux"]
+@[extern "raise", platform ["linux-gnu", "linux-musl"]]
 pub fn raise as int -> ()
 
-@[extern "malloc", platform "linux"]
+@[extern "malloc", platform ["linux-gnu", "linux-musl"]]
 pub fn malloc as int -> *u8
 
-@[extern "free", platform "linux"]
+@[extern "free", platform ["linux-gnu", "linux-musl"]]
 pub fn free as *u8 -> ()
 
-@[extern "open", platform "linux"]
-pub fn open path flags as *u8, i32 -> ()
+@[extern "open", platform ["linux-gnu", "linux-musl"]]
+pub fn open path flags as *u8, i32 -> i32
+
+@[extern "fstat", platform ["linux-gnu", "linux-musl"]]
+pub fn fstat as i32, *stat -> i32
 
 pub fn O_RDONLY as i32 = 0
 pub fn O_WRONLY as i32 = 1
 pub fn O_RDWR as i32 = 2
+
+@[platform ["linux-gnu", "linux-musl"]]
+type stat {
+  st_dev   u64 // dev_t
+  st_ino   u64 // ino_t
+  st_mode  u32 // mode_t
+  st_nlink u64 // nlink_t
+  st_uid   i32 // uid_t
+  st_gid   u32 // gid_t
+  _padding0 u32
+  st_rdev  u64 // dev_t
+  st_size  i64 // off_t
+  st_blksize i64 // blksize_t
+  st_blocks  i64 // blkcnt_t
+
+  st_atim timespec
+  st_mtim timespec
+  st_ctim timespec
+
+  _excess1 u64
+}
+
+@[platform ["linux-gnu", "linux-musl"]]
+type timespec {
+  tv_sec  i64
+  tv_nsec i64
+}
 
 // type size_t = uint
 // type c_int  = i32

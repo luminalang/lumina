@@ -18,6 +18,14 @@ pub fn toByteVec str as string -> Vec u8 =
          . fold #(\i v -> do vec:unsafe_set i v vec then i + 1) 0
       then vec
 
+pub fn to_c_str str as string -> *u8 =
+  let vec = vec:capacity (1 + len str) in
+      do str.inner
+         . fold #(\i v -> do vec:unsafe_set i v vec then i + 1) 0
+      then
+      // TODO: just use a `list_to_vec` method
+        do vec:unsafe_set vec.len 0 vec then vec.ptr
+
 pub trait ToString
   fn show as self -> string
 
@@ -32,6 +40,9 @@ pub fn <:> left right as u8, string -> string =
 pub fn <++> left right as string, string -> string =
   { string | inner = left.inner ++ right.inner }
 
+pub fn <+> left right as string, u8 -> string =
+  { string | inner = left.inner ++ [right] }
+
 impl ToString for string
   fn show str = str
 
@@ -42,6 +53,9 @@ impl ToString for i64
       if n < 0
         then 45 <:> str
         else str
+
+impl ToString for i32
+  fn show n = ToString:show (n as i64)
 
 impl ToString for u8
   fn show n = show (n as u64)
@@ -60,6 +74,10 @@ impl ToString for u64
       | 0 -> ""
       | _ ->
         let c = ((n % 10) as u8) + 48 in
-           c <:> showNext (n / 10)
+           showNext (n / 10) <+> c
 
-        // showNext (n / 10) <+> ((n % 10) as u8) + 48
+// pub fn lines str as string -> [string] =
+//   split_on "\n" str
+// 
+// pub fn split_on c str as string, string -> [string] =
+//   

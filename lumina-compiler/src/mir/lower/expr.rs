@@ -36,7 +36,7 @@ pub enum Expr {
     Write(Box<[Self; 2]>),
     ReflectTypeOf(Type),
     SizeOf(Type),
-    Abort,
+    Unreachable(Type),
 
     Cmp(&'static str, Box<[Expr; 2]>),
     Num(&'static str, Box<[Expr; 2]>),
@@ -119,7 +119,12 @@ impl<'a, 's> Lower<'a, 's> {
                     "deref" => self.lower_builtin(params, |[inner]| Expr::Deref(Box::new(inner))),
                     "write" => self.lower_builtin(params, |p| Expr::Write(Box::new(p))),
                     "offset" => self.lower_builtin(params, |p| Expr::Num("plus", Box::new(p))),
-                    "abort" => self.lower_builtin::<0>(params, |_| Expr::Abort),
+                    "unreachable" => {
+                        let (name, ty) = tanot.for_entity[0].clone();
+                        assert_eq!(*name, "self");
+                        let ty = self.finalizer(|mut fin| (fin.apply(&ty), fin.errors));
+                        self.lower_builtin::<0>(params, |_| Expr::Unreachable(ty))
+                    }
                     "transmute" => self.lower_builtin(params, |[inner]| inner),
                     "val_to_ref" => {
                         self.lower_builtin(params, |[inner]| Expr::ValToRef(Box::new(inner)))
@@ -551,7 +556,7 @@ impl fmt::Display for Expr {
             Expr::ReflectTypeOf(ty) => write!(f, "{op}{} {ty}{cp}", "type-of".keyword()),
             Expr::SizeOf(ty) => write!(f, "{op}{} {ty}{cp}", "size-of".keyword()),
             Expr::Poison => "<poison>".fmt(f),
-            Expr::Abort => write!(f, "{}", "abort".keyword()),
+            Expr::Unreachable(_) => write!(f, "{}", "unreachable".keyword()),
         }
     }
 }

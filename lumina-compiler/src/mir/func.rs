@@ -782,7 +782,7 @@ impl<'a, 's> Verify<'a, 's> {
                     // TODO: 32-bit
                     InstCall::Local(IType::from(Prim::Int(false, Bitsize(64))).tr(span))
                 }
-                "abort" => InstCall::Local(IType::Var(self.vars().var(span)).tr(span)),
+                "unreachable" => InstCall::Local(IType::Var(self.vars().var(span)).tr(span)),
                 "transmute" => {
                     let param = IType::Var(self.vars().var(span));
                     let ptypes = vec![param];

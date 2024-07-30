@@ -209,11 +209,10 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                 if range.con.min != range.start {
                     let high_enough = self.ssa().gti([on, to_value(range.start)], bitsize);
                     let ty = self.f.type_of_value(on);
-                    check = self.ssa().bit_and([check.value(), high_enough.value()], ty);
+                    check = self.ssa().bit_and([check, high_enough], ty);
                 }
                 check
-            }
-            .value();
+            };
 
             self.ssa()
                 .select(check, [(on_true, vec![]), (on_false, vec![])]);
@@ -235,7 +234,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             .fields(mk)
             .map(|field| {
                 let ty = self.f.lir.types.types.type_of_field(mk, field);
-                self.ssa().field(on, mk, field, ty).value()
+                self.ssa().field(on, mk, field, ty)
             })
             .collect();
 
@@ -300,7 +299,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let split = FuncOrigin::Method(ikey, LISTABLE_SPLIT);
         let (split, ret) = self.f.call_to_mfunc(split, tmap);
 
-        let maybe = self.ssa().call(split, vec![on], ret).value();
+        let maybe = self.ssa().call(split, vec![on], ret);
         let maybe_mk = self.f.type_of_value(maybe).as_key();
 
         let tag_ty = MonoType::UInt(mono::TAG_SIZE);
@@ -313,12 +312,9 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         };
         let data = self
             .ssa()
-            .field(maybe, maybe_mk, key::RecordField(1), data_ty)
-            .value();
+            .field(maybe, maybe_mk, key::RecordField(1), data_ty);
 
-        let is_just = self
-            .ssa()
-            .eq([tag.value(), Value::maybe_just()], mono::TAG_SIZE);
+        let is_just = self.ssa().eq([tag, Value::maybe_just()], mono::TAG_SIZE);
 
         let [con_block, nil_block] = [mir::pat::LIST_CONS, mir::pat::LIST_NIL].map(|constr| {
             let vblock = self.ssa().new_block(0);
@@ -337,8 +333,8 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
                 let xs = self.ssa().sum_field(data, offset, listmt.clone());
 
-                vparams.push_back(x.value());
-                vparams.push_back(xs.value());
+                vparams.push_back(x);
+                vparams.push_back(xs);
             }
 
             self.constructors.push(vparams);
@@ -356,7 +352,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         });
 
         self.ssa()
-            .select(is_just.value(), [(con_block, vec![]), (nil_block, vec![])]);
+            .select(is_just, [(con_block, vec![]), (nil_block, vec![])]);
     }
 
     fn record(&mut self, on: Value, next: &mir::DecTree) {
@@ -369,7 +365,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             .fields(mk)
             .map(|field| {
                 let ty = self.f.lir.types.types.type_of_field(mk, field);
-                self.ssa().field(on, mk, field, ty).value()
+                self.ssa().field(on, mk, field, ty)
             })
             .collect();
 
@@ -427,7 +423,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                         let offset = base_offset;
                         base_offset.0 += size;
 
-                        self.ssa().sum_field(data_field.value(), offset, ty).value()
+                        self.ssa().sum_field(data_field, offset, ty)
                     })
                     .collect();
 
@@ -440,7 +436,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             })
             .collect();
 
-        self.ssa().jump_table(copy_tag.value(), jmp_table_blocks);
+        self.ssa().jump_table(copy_tag, jmp_table_blocks);
     }
 
     pub fn get_continuation(&mut self, ty: MonoType) -> Block {

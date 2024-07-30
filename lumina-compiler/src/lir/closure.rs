@@ -9,7 +9,7 @@ impl<'a> FuncLower<'a> {
         let given_types = given.iter().map(|v| self.type_of_value(*v)).collect();
         let vtable = self.partial_application_vtable(target, given_types);
         let data = self.ssa().construct(given, vtable.object.into());
-        self.construct_dyn_object(&vtable, data.value())
+        self.construct_dyn_object(&vtable, data)
     }
 
     // Allocates and pairs opaque pointer for data to a vtable
@@ -19,8 +19,7 @@ impl<'a> FuncLower<'a> {
         let vtable_ptr = self.ssa().val_to_ref(vtable.val, vtable.vtable_type.into());
 
         self.ssa()
-            .construct(vec![data_ptr, vtable_ptr.value()], vtable.object.into())
-            .value()
+            .construct(vec![data_ptr, vtable_ptr], vtable.object.into())
     }
 
     // MyTrait:target (impltor as MyTrait) 40
@@ -83,9 +82,10 @@ impl<'a> FuncLower<'a> {
                         if self_bparam.0 == i as u32 {
                             data
                         } else {
-                            blocks.get_block_param(ssa::Block::entry(), i as u32)
+                            blocks
+                                .get_block_param(ssa::Block::entry(), i as u32)
+                                .value()
                         }
-                        .value()
                     })
                     .collect();
 
@@ -179,11 +179,7 @@ impl<'a> FuncLower<'a> {
                 self.lir.types.types[data_type]
                     .fields
                     .iter()
-                    .map(|(field, ty)| {
-                        blocks
-                            .field(data.value(), data_type, field, ty.clone())
-                            .value()
-                    })
+                    .map(|(field, ty)| blocks.field(data, data_type, field, ty.clone()))
                     .collect::<Vec<_>>()
             };
 
@@ -237,7 +233,7 @@ impl<'a> FuncLower<'a> {
 
             let fn_pointers = fns.clone().map(Value::FuncPtr).collect();
             let v = blocks.construct(fn_pointers, vtable.into());
-            blocks.return_(v.value());
+            blocks.return_(v);
 
             let init_name = format!(
                 "VTable_{}_{}^{}_initialiser",

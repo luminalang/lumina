@@ -296,6 +296,10 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
     fn entry(&mut self, entry: &lir::Entry, ty: &MonoType) -> VEntry {
         match entry {
+            // lir::Entry::Unreachable => {
+            //     self.ins().trap(TrapCode::UnreachableCodeReached);
+            //     VEntry::ZST // TODO: Will the verifier still complain after trap?
+            // }
             lir::Entry::Copy(value) => self.value_to_entry(*value),
             lir::Entry::BlockParam(_) => VEntry::ZST,
             lir::Entry::CallStatic(mfunc, params) => {
@@ -647,6 +651,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                     self.lower_block_if_last_predecessor(*block);
                 }
             }
+            lir::ControlFlow::Empty => panic!("missing control flow in LIR block"),
         }
     }
 

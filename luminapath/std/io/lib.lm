@@ -1,10 +1,10 @@
 use std:libc
  
 @[platform "linux"]
-pub fn stdout = 1
+pub fn stdout as i32 = 1
 
 @[platform "linux"]
-pub fn stdin  = 0
+pub fn stdin as i32  = 0
 
 @[platform "linux"]
 pub fn print str as string -> () =
@@ -27,3 +27,9 @@ when s can ToString
 pub fn trace s as s -> s =
   do print (ToString:show s) then 
     do print "\n" then s
+
+@[platform ["linux-gnu", "linux-musl"]]
+pub fn crash text as string -> a =
+  do println text then
+  do libc:exit 1 then
+   builtin:unreachable(self as a)

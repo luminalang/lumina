@@ -66,16 +66,16 @@ impl<'a> Parser<'a> {
         let mut header = Header { when, typing: None, params, name: name.tr(span) };
 
         let body = select! { self, "`=` or `as`", span;
-             T::Equal => self.func_body(where_kw),
+             T::Equal => self.func_body(span, where_kw),
              T::As => {
                  let (typing, encountered_eq) = self.func_typing(span)?;
                  header.typing = Some(typing);
 
                  if encountered_eq {
-                     self.func_body(where_kw)
+                     self.func_body(span, where_kw)
                  } else {
                      select! { self, "`=` or end of declaration" peeked: true;
-                         T::Equal => self.next_then(|parser| parser.func_body(where_kw)),
+                         T::Equal => self.next_then(|parser| parser.func_body(span, where_kw)),
                          T::EOF => None,
                          t if t.is_header() => None,
                      }
@@ -86,10 +86,10 @@ impl<'a> Parser<'a> {
         Some(Declaration { header, body, attributes })
     }
 
-    fn func_body(&mut self, where_kw: Option<Span>) -> Option<Body<'a>> {
+    fn func_body(&mut self, span: Span, where_kw: Option<Span>) -> Option<Body<'a>> {
         let Some(expr) = self.expr() else {
             self.recover_next_toplevel();
-            return None;
+            return Some(Body { where_binds: vec![], expr: Expr::Poison.tr(span) });
         };
 
         let where_binds = match self.next_is(|t| t == T::Where) {

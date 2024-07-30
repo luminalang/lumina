@@ -10,6 +10,7 @@ pub struct Bindings<'s> {
 struct Scope<'s> {
     binds: Vec<(key::Bind, &'s str)>,
     captures: Vec<key::Bind>,
+    references_lambdas: Vec<key::Lambda>,
 }
 
 impl<'s> Default for Bindings<'s> {
@@ -28,8 +29,17 @@ impl<'s> Bindings<'s> {
     pub fn enter(&mut self) {
         self.scopes.push(Scope::default());
     }
-    pub fn leave(&mut self) -> Captures {
-        self.scopes.pop().unwrap().captures
+    pub fn leave(&mut self) -> (Captures, Vec<key::Lambda>) {
+        let scope = self.scopes.pop().unwrap();
+        (scope.captures, scope.references_lambdas)
+    }
+
+    pub fn reference_lambda(&mut self, lambda: key::Lambda) {
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .references_lambdas
+            .push(lambda);
     }
 
     pub fn declare_nameless(&mut self) -> key::Bind {
@@ -46,29 +56,26 @@ impl<'s> Bindings<'s> {
     }
 
     pub fn resolve(&mut self, name: &'s str) -> Option<key::Bind> {
-        let (i, bind) = self
-            .scopes
-            .iter()
-            .rev()
-            .enumerate()
-            .find_map(|(i, scope)| {
-                scope
-                    .binds
-                    .iter()
-                    .find_map(|(bind, n)| (*n == name).then_some((i, *bind)))
-            })?;
-
-        if i != 0 {
-            include(&mut self.scopes.last_mut().unwrap().captures, bind);
-        }
-        self.use_count[bind] += 1;
-
-        Some(bind)
+        Self::resolve_in(&mut self.scopes, name).map(|bind| {
+            self.use_count[bind] += 1;
+            bind
+        })
     }
-}
 
-fn include(captures: &mut Vec<key::Bind>, bind: key::Bind) {
-    if !captures.contains(&bind) {
-        captures.push(bind)
+    fn resolve_in(scopes: &mut [Scope<'s>], name: &'s str) -> Option<key::Bind> {
+        let (scope, xs) = scopes.split_last_mut()?;
+
+        scope
+            .binds
+            .iter()
+            .find_map(|(bind, n)| (name == *n).then_some(*bind))
+            .or_else(|| {
+                Self::resolve_in(xs, name).map(|bind| {
+                    if !scope.captures.contains(&bind) {
+                        scope.captures.push(bind);
+                    }
+                    bind
+                })
+            })
     }
 }

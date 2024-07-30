@@ -616,6 +616,7 @@ impl<'a> FuncLower<'a> {
         inst: &ConcreteInst,
     ) -> (MonoFunc, ssa::Value, MonoTypeKey, MonoType) {
         let (func, captures) = self.get_lambda_origin(self.current.origin.clone(), lambda);
+        dbg!(&captures, &self.current.bindmap);
 
         let kinds = [GenericKind::Entity, GenericKind::Lambda(lambda)];
         let mut tmap = self.morphise_inst(kinds, inst);

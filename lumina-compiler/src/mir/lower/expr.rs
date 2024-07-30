@@ -496,13 +496,17 @@ impl fmt::Display for Expr {
             Expr::Match(on, tree, tails, _) => match tree {
                 // edge-case for formatting `let x = y in` prettily
                 pat::DecTree::End(pat::TreeTail::Reached(table, excess, key))
-                    if excess.is_empty() && table.binds.len() == 1 =>
+                    if excess.is_empty() && table.binds.len() < 2 =>
                 {
                     write!(
                         f,
                         "{} {} {} {on} {}\n  {}",
                         "let".keyword(),
-                        table.binds[0].0,
+                        table
+                            .binds
+                            .get(0)
+                            .map(|(bind, _)| bind.to_string())
+                            .unwrap_or_else(|| String::from("_")),
                         '='.symbol(),
                         "in".keyword(),
                         tails[*key].to_string().lines().format("\n  ")

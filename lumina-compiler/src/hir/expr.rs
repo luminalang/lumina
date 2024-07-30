@@ -19,7 +19,6 @@ pub struct ExprLower<'t, 'a, 's> {
 
     pub type_info: &'t mut TypeEnvInfo<'s>,
     where_binds: &'a [parser::func::Declaration<'s>],
-    // pub foralls: &'a mut Map<key::Func, Forall<'s, IType>>,
 
     #[new(default)]
     pub bindings: Bindings<'s>,
@@ -284,6 +283,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
                             if let Some(lkey) =
                                 self.where_binds.find(|decl| *decl.header.name == name)
                             {
+                                self.bindings.reference_lambda(lkey);
                                 let c = Callable::Lambda(lkey);
                                 return Expr::Call(c, type_annotation, params);
                             }
@@ -333,6 +333,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         };
 
         let lkey = self.lambdas.create_placeholder(body.span, forall, typing);
+        self.bindings.reference_lambda(lkey);
 
         self.bindings.enter();
         self.type_info.enter_lambda(lkey, Forall::new());
@@ -340,11 +341,12 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         let patterns = self.patterns(apatterns);
         let expr = self.expr(body);
 
-        let captures = self.bindings.leave();
+        let (captures, lcaptures) = self.bindings.leave();
         let forall = self.type_info.leave_function();
         assert!(forall.is_empty());
 
-        self.lambdas.complete_lambda(lkey, expr, patterns, captures);
+        self.lambdas
+            .complete_lambda(lkey, expr, patterns, captures, lcaptures);
 
         lkey
     }
@@ -482,6 +484,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
                 }
 
                 if let Some(lkey) = self.where_binds.find(|decl| *decl.header.name == *name) {
+                    self.bindings.reference_lambda(lkey);
                     let params = self.exprs(params);
                     let type_annotation = self.type_annotation(apath, None);
                     return to_out(Callable::Lambda(lkey), type_annotation, params);

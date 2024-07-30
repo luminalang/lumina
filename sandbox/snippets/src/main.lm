@@ -1,8 +1,10 @@
 use std:math [Num [+, -, *, /]]
 use std:io
+use std:libc [exit]
 use maybe [Maybe [Just, Nothing], or, map]
+use fileprinter
 
-fn main = numExit
+fn main = fileprinter:main
 
 fn numExit =
   let n = 5 in 

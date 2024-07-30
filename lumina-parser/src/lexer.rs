@@ -11,7 +11,7 @@ pub enum Token {
     #[regex(r#""(\\[\\"]|[^"])*""#)]
     StringLiteral,
 
-    #[regex("\\d+")]
+    #[regex("\\-?\\d+")]
     Int,
     #[regex("\\-?\\d+\\.\\d+")]
     Float,

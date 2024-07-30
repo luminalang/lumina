@@ -7,6 +7,7 @@ use lumina_typesystem::{
 };
 use lumina_util::{Spanned, Tr};
 use smallvec::SmallVec;
+use std::cmp::Ordering;
 
 pub struct TypeLower<'t, 'a, 's> {
     module: key::Module,
@@ -326,8 +327,45 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
         match self.ast.lookups.resolve_type(self.module, path) {
             Ok(entity) => match entity.key {
                 Entity::Type(tkey) => {
-                    let params = self.tys(params);
-                    T::defined(entity.module.m(tkey), params)
+                    let key = entity.module.m(tkey);
+                    let mut tparams = self.tys(params);
+                    let expected_type_params =
+                        &self.ast.entities.header_of_ty(key).header.type_params;
+
+                    let err = |span, msg| {
+                        self.ast
+                            .sources
+                            .error("invalid type")
+                            .m(self.module)
+                            .eline(span, msg)
+                            .emit()
+                    };
+
+                    let header = || &self.ast.entities.header_of_ty(key).header;
+
+                    match (params.len(), expected_type_params.len()) {
+                        (x, y) if x < y => {
+                            err(
+                                span,
+                                format!("missing {} type parameters for `{}`", y - x, header()),
+                            );
+
+                            while tparams.len() != expected_type_params.len() {
+                                tparams.push(Prim::Poison.into());
+                            }
+                        }
+                        (x, y) if x > y => {
+                            err(
+                                params[params.len() - 1].span,
+                                format!("excess parameter for {}", header()),
+                            );
+
+                            tparams.truncate(expected_type_params.len());
+                        }
+                        (_, _) => {}
+                    }
+
+                    T::defined(key, tparams)
                 }
                 _ => {
                     let name = path.last().unwrap();

@@ -107,6 +107,12 @@ impl Target {
             Platform::Linux { .. } => "o",
         }
     }
+
+    pub fn executable_extension(&self) -> &'static str {
+        match self.platform {
+            Platform::Linux { .. } => "out",
+        }
+    }
 }
 
 impl fmt::Display for Target {

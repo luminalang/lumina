@@ -12,16 +12,10 @@ use tracing::info;
 pub fn link_native_binary(
     target: Target,
     project_name: String,
-    name: Option<&str>,
+    output: &Path,
     luminapath: PathBuf,
-    projectpath: PathBuf,
     object: Vec<u8>,
-) -> ExitCode {
-    let Some(binary_name) = name else {
-        println!(" no output filename specified ");
-        return ExitCode::FAILURE;
-    };
-
+) -> Result<(), ExitCode> {
     let workdir = create_workdir(&luminapath, &project_name);
 
     let objectfile = {
@@ -51,7 +45,7 @@ pub fn link_native_binary(
                 Command::new(bindir.join("ld.lld"))
             };
 
-            linker.arg("-o").arg(binary_name).arg(&objectfile);
+            linker.arg("-o").arg(output).arg(&objectfile);
 
             iter_objects(&sublinuxdir, &["o", "a"], |path| {
                 linker.arg(path);
@@ -73,9 +67,9 @@ pub fn link_native_binary(
 
     if status.success() {
         std::fs::remove_dir_all(workdir).unwrap();
-        ExitCode::SUCCESS
+        Ok(())
     } else {
-        ExitCode::FAILURE
+        Err(ExitCode::FAILURE)
     }
 }
 

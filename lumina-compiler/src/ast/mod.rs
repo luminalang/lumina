@@ -35,8 +35,8 @@ pub struct AST<'s> {
 
 #[derive(From)]
 pub enum Error {
-    ProjectNotDir,
-    LuminaNotDir,
+    ProjectNotDir(PathBuf),
+    LuminaNotDir(PathBuf),
     SrcDir(std::io::Error),
     Config(std::io::Error),
     ConfigError(String, PathBuf, config::Error),
@@ -51,11 +51,11 @@ pub fn parse<'s>(
     target: Target,
 ) -> Result<AST<'s>, Error> {
     if !project.is_dir() {
-        return Err(Error::ProjectNotDir);
+        return Err(Error::ProjectNotDir(project));
     }
 
     if !lumina.is_dir() {
-        return Err(Error::LuminaNotDir);
+        return Err(Error::LuminaNotDir(lumina));
     }
 
     let mut config = {

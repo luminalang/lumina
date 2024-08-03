@@ -6,11 +6,13 @@ use itertools::Itertools;
 use lumina_compiler as compiler;
 use lumina_compiler::ast;
 use lumina_compiler::ast::{CollectError, ConfigError};
+use lumina_compiler::backend::link_native_binary;
 use lumina_compiler::Target;
 use lumina_key as key;
 use lumina_key::M;
 use lumina_util::Span;
 use std::path::PathBuf as FilePathBuf;
+use std::process::Command;
 use std::process::ExitCode;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, registry::Registry, EnvFilter};
@@ -26,6 +28,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     Build(BuildFlags),
+    Run(BuildFlags),
 }
 
 #[derive(Args, Debug)]
@@ -37,12 +40,12 @@ pub struct BuildFlags {
     #[arg(long)]
     epanic: bool,
 
-    /// Path to lumina project, defaults to current directory
-    project: Option<FilePathBuf>,
-
     /// Path of output binary
     #[arg(short = 'o', long)]
     output: Option<String>,
+
+    /// Path to lumina project, defaults to current directory
+    project: Option<FilePathBuf>,
 }
 
 struct Environment {
@@ -91,13 +94,15 @@ fn main() -> ExitCode {
     init_logger();
 
     info!("parsing command line arguments");
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(std::env::args().take_while(|arg| arg != "--"));
 
     info!("initialising lumina environment");
     let env = Environment::parse();
 
+    let run = matches!(&cli.command, Commands::Run(..));
+
     match cli.command {
-        Commands::Build(settings) => {
+        Commands::Run(settings) | Commands::Build(settings) => {
             let mut project_path = env.current_folder.clone();
             if let Some(path) = settings.project {
                 if path.is_absolute() {
@@ -145,14 +150,51 @@ fn main() -> ExitCode {
             let lir = compiler::lir::run(pinfo, target, &iquery, mir);
 
             let object = compiler::backend::cranelift::run(target, lir);
-            compiler::backend::link_native_binary(
-                target,
-                project_name,
-                settings.output.as_deref(),
-                env.lumina_folder,
-                project_path,
-                object,
-            )
+
+            let output = match settings.output.as_deref() {
+                Some(name) => {
+                    let mut path = std::path::PathBuf::from(name);
+                    while path.is_dir() {
+                        path.push(&project_name);
+                    }
+                    path
+                }
+                None if run => {
+                    let mut path = std::env::temp_dir();
+                    path.push(&project_name);
+                    path.set_extension(target.executable_extension());
+                    path
+                }
+                None => {
+                    println!(" no output filename specified ");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            if let Err(code) =
+                link_native_binary(target, project_name, &output, env.lumina_folder, object)
+            {
+                return code;
+            }
+
+            if run {
+                let excess_arguments = std::env::args().skip_while(|arg| arg != "--").skip(1);
+
+                u8::try_from(
+                    Command::new(output)
+                        .args(excess_arguments)
+                        .spawn()
+                        .expect("could not run binary")
+                        .wait()
+                        .unwrap()
+                        .code()
+                        .unwrap_or(0),
+                )
+                .map(ExitCode::from)
+                .unwrap_or(ExitCode::FAILURE)
+            } else {
+                ExitCode::SUCCESS
+            }
         }
     }
 }
@@ -242,10 +284,14 @@ fn project_error(err: compiler::ast::Error) -> lumina_util::Error {
     let error = lumina_util::Error::error("project error");
 
     match err {
-        ast::Error::ProjectNotDir => error.with_text("not a valid lumina project directory"),
-        ast::Error::LuminaNotDir => {
-            error.with_text("LUMINAPATH does not point to a valid directory")
-        }
+        ast::Error::ProjectNotDir(path) => error.with_text(format!(
+            "{}: not a valid lumina project directory",
+            path.display()
+        )),
+        ast::Error::LuminaNotDir(path) => error.with_text(format!(
+            "LUMINAPATH does not point to a valid directory: {}",
+            path.display()
+        )),
         ast::Error::Config(ioerr) => {
             error.with_text(format!("could not open project config: {ioerr}"))
         }

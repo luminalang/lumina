@@ -2,15 +2,15 @@ use super::func::InstInfo;
 use super::Verify;
 use crate::prelude::*;
 
-use lumina_typesystem::{Container, IType, Prim};
+use lumina_typesystem::IType;
 
 impl<'a, 's> Verify<'a, 's> {
     pub fn type_check_pat(&mut self, pat: Tr<&hir::Pattern<'s>>) -> Tr<IType> {
         trace!("checking pattern {}", pat.value);
 
         match pat.value {
-            hir::Pattern::Int(_, nvar) => IType::Var(*nvar),
-            hir::Pattern::Any => IType::Var(self.vars().var(pat.span)),
+            hir::Pattern::Int(_, nvar) => IType::infer(*nvar),
+            hir::Pattern::Any => IType::infer(self.vars().var(pat.span)),
             hir::Pattern::Bind(bind, inner) => {
                 let ty = self.type_check_pat((&**inner).tr(pat.span));
                 self.new_bind_as(*bind, ty.clone());
@@ -38,7 +38,7 @@ impl<'a, 's> Verify<'a, 's> {
 
                 for (varfield, (vname, bind, pat)) in self.vars().iter_var_fields(*var).zip(fields)
                 {
-                    let exp = IType::Field(*var, varfield).tr(vname.span);
+                    let exp = IType::inffield(*var, varfield).tr(vname.span);
                     let name = self.vars().name_of_field(*var, varfield);
                     assert_eq!(name, *vname);
                     let ty = self.type_check_pat(pat.as_ref());
@@ -46,14 +46,14 @@ impl<'a, 's> Verify<'a, 's> {
                     self.new_bind_as(*bind, exp);
                 }
 
-                IType::InferringRecord(*var)
+                IType::infrecord(*var)
             }
             hir::Pattern::Tuple(elems) => {
                 let types = elems
                     .iter()
                     .map(|p| self.type_check_pat(p.as_ref()).value)
                     .collect();
-                IType::Container(Container::Tuple(types))
+                IType::tuple(types)
             }
 
             // TODO: since we decided to desugar patterns early on; we can't use the same
@@ -65,11 +65,11 @@ impl<'a, 's> Verify<'a, 's> {
                 let list = self.items.list_default;
 
                 let value = self.type_check_pat(pats[0].as_ref());
-                let exp = IType::Var(*inner_var).tr(pat.span);
+                let exp = IType::infer(*inner_var).tr(pat.span);
                 self.type_check_and_emit(value.as_ref(), exp.as_ref());
 
                 let ty = self.type_check_pat(pats[1].as_ref());
-                let exp = IType::List(list, vec![IType::Var(*inner_var)]).tr(pats[0].span);
+                let exp = IType::list(list, vec![IType::infer(*inner_var)]).tr(pats[0].span);
                 self.type_check_and_emit(ty.as_ref(), exp.as_ref());
 
                 ty.value
@@ -77,10 +77,9 @@ impl<'a, 's> Verify<'a, 's> {
 
             hir::Pattern::Nil(inner) => {
                 let list = self.items.list_default;
-
-                IType::List(list, vec![IType::Var(*inner)])
+                IType::list(list, vec![IType::infer(*inner)])
             }
-            hir::Pattern::Bool(_) => Prim::Bool.into(),
+            hir::Pattern::Bool(_) => IType::bool(),
             hir::Pattern::String(_) => {
                 let record = self.items.pinfo.string;
                 IType::defined(record, vec![])

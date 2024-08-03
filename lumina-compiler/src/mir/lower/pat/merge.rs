@@ -4,13 +4,19 @@ use super::{
 use crate::prelude::*;
 use hir::Pattern;
 use lumina_key::M as Mod;
-use lumina_typesystem::{Prim, Type};
+use lumina_typesystem::Type;
 use std::collections::VecDeque;
 use std::fmt::Display;
+use std::{file, line};
 
 macro_rules! reachable_as_poison {
     ($expr:expr) => {{
-        warn!("reporting reachability as true due to poison: {}", $expr);
+        warn!(
+            "{}:{} | reporting reachability as true due to poison: {}",
+            file!(),
+            line!(),
+            $expr
+        );
 
         true
     }};
@@ -79,10 +85,10 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                 Pattern::Nil(_) => self.merge_cmp_var(next, LIST_NIL, &[]),
                 _ => reachable_as_poison!(pat),
             },
-            DecTree::Ints { bitsize, signed, next } => {
+            DecTree::Ints { intsize, next } => {
                 expected!(
                     Pattern::Int(bounds, _) =>
-                    self.merge_int_bounds(*signed, *bitsize, next, bounds)
+                    self.merge_int_bounds(*intsize, next, bounds)
                 )
             }
             DecTree::Opaque { .. } => reachable_as_poison!(pat),
@@ -187,8 +193,8 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                     |_, var| if *var == LIST_CONS { 2 } else { 0 },
                 )
             }
-            DecTree::Ints { bitsize, signed, next } => {
-                let full = range::constraints_from_bitsize(*signed, *bitsize);
+            DecTree::Ints { intsize, next } => {
+                let full = range::Constraints::from(*intsize);
                 self.merge_int(next, full.min, full.max)
             }
             DecTree::Bools(next) => self.merge_any_into_branches(span, next, |_, _| 0),
@@ -328,20 +334,6 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
             }
         }
     }
-
-    // pub(super) fn extend_by_types(
-    //     self,
-    //     types: VecDeque<Type>,
-    //     pat: Tr<&'h Pattern<'s>>,
-    // ) -> DecTree<Tail> {
-    //     debug_assert!(!matches!(pat.value, Pattern::Any));
-    //     debug_assert!(!matches!(pat.value, Pattern::Bind(..)));
-
-    //     let mut tree = self.merge.to_init().expand_first_then_extend_excess(types);
-    //     let reachable = self.merge(&mut tree, pat);
-    //     assert!(reachable);
-    //     tree
-    // }
 }
 
 pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {

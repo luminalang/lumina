@@ -1,5 +1,6 @@
 use super::{
-    map_con, Constraint, Container, Forall, FuncKind, Generic, GenericKind, Prim, Type, M,
+    Constraint, Container, Forall, Generic, GenericKind, GenericMapper, IntSize, Static,
+    Transformer, Ty, Type, M,
 };
 use derive_new::new;
 use lumina_key as key;
@@ -25,9 +26,11 @@ type IConcrete = HashMap<ConcreteType, Vec<M<key::Impl>>>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ConcreteType {
-    Prim(Prim),
+    Int(IntSize),
+    Singleton(&'static str),
     Defined(M<key::TypeKind>),
-    Func(FuncKind),
+    Closure,
+    FnPointer,
     Tuple(usize),
     Pointer,
 }
@@ -37,15 +40,13 @@ impl TryFrom<&Type> for ConcreteType {
 
     fn try_from(value: &Type) -> Result<Self, Self::Error> {
         match value {
-            Type::Container(c) => match c {
-                Container::Func(kind, _, _) => Ok(ConcreteType::Func(*kind)),
-                Container::Tuple(elems) => Ok(ConcreteType::Tuple(elems.len())),
-                Container::Pointer(_) => Ok(ConcreteType::Pointer),
-            },
-            Type::List(ty, _) | Type::Defined(ty, _) => Ok(ConcreteType::Defined(*ty)),
-            Type::Prim(prim) => Ok(ConcreteType::Prim(*prim)),
-            Type::Generic(_) => Err(()),
-            Type::Self_ => Err(()),
+            Ty::Int(size) => Ok(ConcreteType::Int(*size)),
+            Ty::Container(Container::FnPointer, _) => Ok(ConcreteType::FnPointer),
+            Ty::Container(Container::Closure, _) => Ok(ConcreteType::Closure),
+            Ty::Container(Container::Tuple, params) => Ok(ConcreteType::Tuple(params.len())),
+            Ty::Container(Container::Pointer, _) => Ok(ConcreteType::Pointer),
+            Ty::Simple(name) => Ok(ConcreteType::Singleton(*name)),
+            _ => Err(()),
         }
     }
 }
@@ -57,7 +58,7 @@ impl ImplIndex {
             .entry(trait_)
             .or_insert_with(|| (Vec::new(), HashMap::new()));
 
-        debug_assert!(!matches!(impltor, Type::Self_));
+        debug_assert!(!matches!(impltor, Type::Simple("self")));
 
         match ConcreteType::try_from(impltor) {
             Ok(c) => concrete.entry(c).or_insert_with(Vec::new).push(ikey),
@@ -99,69 +100,63 @@ impl ImplIndex {
 }
 
 // Getter for the forall of a kind
-type GetForall<'a, 't, 's> = &'a dyn Fn(GenericKind) -> &'t Forall<'s, Type>;
+type GetForall<'a, 't, 's> = &'a dyn Fn(GenericKind) -> &'t Forall<'s, Static>;
 
 // Getter for implementor and trait parameters of specific implementation
 type GetImplData<'a, 't, 's> =
-    &'a dyn Fn(M<key::Impl>) -> (M<key::Trait>, &'t Forall<'s, Type>, &'t Type, &'t [Type]);
+    &'a dyn Fn(M<key::Impl>) -> (M<key::Trait>, &'t Forall<'s, Static>, &'t Type, &'t [Type]);
 
 pub struct Compatibility<'a, 't, 's> {
     impls: &'a ImplIndex,
-    mapping: Vec<Assignment>,
+    mapping: GenericMapper<Static>,
 
     lhs_forall: GetForall<'a, 't, 's>,
-    rhs_forall: &'t Forall<'s, Type>,
+    rhs_forall: &'t Forall<'s, Static>,
 
     get_impl_data: GetImplData<'a, 't, 's>,
-}
-
-#[derive(new)]
-pub struct Assignment {
-    pub key: key::Generic,
-    pub ty: Type,
 }
 
 impl<'a, 't, 's> Compatibility<'a, 't, 's> {
     pub fn new(
         impls: &'a ImplIndex,
         lhs_forall: GetForall<'a, 't, 's>,
-        rhs_forall: &'t Forall<'s, Type>,
+        rhs_forall: &'t Forall<'s, Static>,
         get_impl_data: GetImplData<'a, 't, 's>,
     ) -> Self {
         Self {
             impls,
             lhs_forall,
             rhs_forall,
-            mapping: vec![],
+            mapping: GenericMapper::new(vec![], None),
             get_impl_data,
         }
     }
 
-    pub fn into_assignments(self) -> Vec<Assignment> {
+    pub fn into_assignments(self) -> GenericMapper<Static> {
         self.mapping
     }
 
     pub fn check_all(self) -> bool {
-        self.mapping.iter().all(|assignment| {
-            self.rhs_forall[assignment.key]
-                .trait_constraints
-                .iter()
-                .all(|con| {
+        self.mapping
+            .assignments_by_kind(GenericKind::Parent)
+            .all(|(key, ty)| {
+                self.rhs_forall[key].trait_constraints.iter().all(|con| {
                     // Since all types have already been visited and mapped, we
                     // can instantiate the types in the constraint ahead of time so we don't need
                     // to keep around multiple `mapping`.
-                    let con = map_con(con, |ty| apply_mapping(&self.mapping, ty));
+                    // let con = map_con(con, |ty| apply_mapping(&self.mapping, ty));
+                    let con = (&self.mapping).transform_constraint(con);
 
                     Compatibility::constraint(
                         self.impls,
                         None,
                         self.get_impl_data,
                         self.lhs_forall,
-                        &assignment.ty,
+                        ty,
                         &con,
                     )
                 })
-        })
+            })
     }
 
     /// Check whether `got` satisfies the constraint `con`.
@@ -169,13 +164,13 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
     /// Types in both are assumed to be from the same type environment (represented by lhs_forall)
     pub fn constraint(
         impls: &'a ImplIndex,
-        in_trait: Option<(M<key::Trait>, &'t Forall<'s, Type>)>,
+        in_trait: Option<(M<key::Trait>, &'t Forall<'s, Static>)>,
         get_impl_data: GetImplData<'a, 't, 's>,
         lhs_forall: GetForall<'a, 't, 's>,
         got: &Type,
-        con: &Constraint<Type>,
+        con: &Constraint<Static>,
     ) -> bool {
-        info!("checking if {got} implements {con:?}");
+        info!("checking if {got} implements {con}");
 
         // First check whether the constraint is directly satisfied by the given type being a
         // generic with the same constraint.
@@ -193,14 +188,18 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
                 }
             }
             // Edge-case for `Self` in trait method defaults
-            Type::Self_ => {
+            Type::Simple("self") => {
                 let (trait_, tforall) = in_trait.unwrap();
 
                 if con.trait_ == trait_
-                    && con.params.iter().zip(tforall.keys()).all(|(t, k)| match t {
-                        Type::Generic(Generic { kind: GenericKind::Parent, key }) => k == *key,
-                        _ => false,
-                    })
+                    && con
+                        .params
+                        .iter()
+                        .zip(tforall.generics.keys())
+                        .all(|(t, k)| match t {
+                            Type::Generic(Generic { kind: GenericKind::Parent, key }) => k == *key,
+                            _ => false,
+                        })
                 {
                     return true;
                 }
@@ -226,49 +225,30 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
 
     pub fn cmp(&mut self, got: &Type, exp: &Type) -> bool {
         match (got, exp) {
-            (Type::Prim(gprim), Type::Prim(eprim)) => gprim == eprim,
-
-            (Type::Self_, _) => {
+            (Ty::Int(gsize), Ty::Int(esize)) => gsize == esize,
+            (Ty::Simple("self"), _) => {
                 warn!("indirect lookup for `self` in trait defaults currently isn't implemented");
                 false
             }
-            (_, Type::Self_) => unreachable!(),
-
-            (Type::List(key, params), _) => {
-                let got = Type::Defined(*key, params.clone());
-                self.cmp(&got, exp)
+            (Ty::Simple(g), Ty::Simple(e)) => g == e,
+            (Ty::Container(g, gparams), Ty::Container(e, eparams)) if g == e => {
+                self.cmps(gparams, eparams)
             }
-            (_, Type::List(key, params)) => {
-                let exp = Type::Defined(*key, params.clone());
-                self.cmp(got, &exp)
-            }
-            (Type::Defined(gkind, gp), Type::Defined(ekind, ep)) if gkind == ekind => {
-                self.cmps(gp, ep)
-            }
-            (Type::Container(gcon), Type::Container(econ)) => match (gcon, econ) {
-                (Container::Func(kind, ptypes, ret), Container::Func(ekind, eptypes, eret)) => {
-                    match (kind, ekind) {
-                        (FuncKind::Closure, FuncKind::FnPointer) => {
-                            self.cmps(ptypes, eptypes) && self.cmp(ret, eret)
-                        }
-                        _ if kind == ekind => self.cmps(ptypes, eptypes) && self.cmp(ret, eret),
-                        _ => false,
-                    }
-                }
-                (Container::Tuple(gp), Container::Tuple(ep)) => self.cmps(gp, ep),
-                (Container::Pointer(gp), Container::Pointer(ep)) => self.cmp(gp, ep),
-                _ => false,
-            },
+            (
+                Ty::Container(Container::List(gkey) | Container::Defined(gkey), gparams),
+                Ty::Container(Container::List(ekey) | Container::Defined(ekey), eparams),
+            ) if gkey == ekey => self.cmps(gparams, eparams),
+            (Ty::Special(_), _) | (_, Ty::Special(_)) => unreachable!(),
             (_, Type::Generic(generic)) => self.map(got, *generic),
             _ => false,
         }
     }
 
     fn map(&mut self, got: &Type, exp: Generic) -> bool {
-        match self.mapping.iter().find(|asgn| asgn.key == exp.key) {
-            Some(asgn) => asgn.ty == *got,
+        match self.mapping.find(exp).cloned() {
+            Some(ty) => got == &ty,
             None => {
-                self.mapping.push(Assignment::new(exp.key, got.clone()));
+                self.mapping.push(exp, got.clone());
                 true
             }
         }
@@ -276,37 +256,5 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
 
     pub fn cmps(&mut self, gots: &[Type], exps: &[Type]) -> bool {
         gots.iter().zip(exps).all(|(g, e)| self.cmp(g, e))
-    }
-}
-
-fn apply_mapping(mapping: &[Assignment], ty: &Type) -> Type {
-    match ty {
-        Type::Generic(generic) => {
-            assert_eq!(
-                generic.kind,
-                GenericKind::Parent,
-                "apply_mapping should only be ran on the RHS"
-            );
-
-            // we *don't* want to call apply_mapping recursively because mapping[I].ty already
-            // belongs to the LHS.
-            mapping
-                .iter()
-                .find(|asgn| asgn.key == generic.key)
-                .expect("RHS not assigned when checking child constraints")
-                .ty
-                .clone()
-        }
-        Type::Container(cont) => Type::Container(cont.map(|ty| apply_mapping(mapping, ty))),
-        Type::Prim(prim) => Type::Prim(*prim),
-        Type::Defined(key, params) => {
-            let params = params.iter().map(|ty| apply_mapping(mapping, ty)).collect();
-            Type::Defined(*key, params)
-        }
-        Type::List(key, params) => {
-            let params = params.iter().map(|ty| apply_mapping(mapping, ty)).collect();
-            Type::List(*key, params)
-        }
-        Type::Self_ => unreachable!("Self in constriant wasn't substituted"),
     }
 }

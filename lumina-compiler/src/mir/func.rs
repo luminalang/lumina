@@ -1,24 +1,23 @@
-use super::{lower, tyfmt::TyFmtState, Current, LangItems, RSolver, ReadOnlyBytes, Verify, MIR};
+use super::{lower, tyfmt::TyFmtState, Current, LangItems, RSolver, ReadOnlyBytes, Verify};
 use crate::prelude::*;
-use crate::ProjectInfo;
-use ast::{NFunc, AST};
+use crate::{ProjectInfo, Target};
+use ast::NFunc;
 use derive_more::{Display, From};
 use either::Either;
 use hir::HIR;
 use lumina_typesystem::{
-    Bitsize, CircularRecursionInst, Constraint, Container, Finalizer, Forall, ForeignInst,
-    FuncKind, Generic, GenericKind, IType, ImplIndex, Prim, RecordError, RecordVar, TEnv, Type,
-    TypeSystem, Var,
+    Constraint, Container, DirectRecursion, Finalizer, Forall, Generic, GenericKind, GenericMapper,
+    IType, ImplIndex, Inference, IntSize, RecordAssignment, RecordVar, TEnv, Transformer, Ty, Type,
+    TypeSystem,
 };
 use lumina_util::Highlighting;
-use owo_colors::OwoColorize;
 use std::fmt;
 use tracing::info_span;
 
 #[derive(Clone, new, Debug)]
 pub struct InstInfo {
     pub module: key::Module,
-    pub inst: ForeignInst<Var>,
+    pub inst: GenericMapper<Inference>,
     pub ptypes: Vec<Tr<IType>>,
     pub ret: Tr<IType>,
 }
@@ -82,6 +81,7 @@ fn resolve_listable<'s>(lookups: &ast::Lookups<'s>, module: key::Module) -> Opti
 impl<'a, 's> Verify<'a, 's> {
     pub fn start_at(
         pinfo: ProjectInfo,
+        target: Target,
         hir: &'a HIR<'s>,
         fields: &'a Map<key::Module, HashMap<&'s str, Vec<M<key::Record>>>>,
         tenvs: &mut ModMap<key::Func, TEnv<'s>>,
@@ -98,8 +98,8 @@ impl<'a, 's> Verify<'a, 's> {
             }
             FunctionStatus::Pending => {
                 let (pforall, fdef) = match &hir.funcs[func] {
-                    hir::FuncDefKind::Defined(fdef) => (&Forall::new(), fdef),
-                    hir::FuncDefKind::TraitDefaultMethod(tr, fdef) => {
+                    hir::FuncDefKind::Defined(fdef) => (&Forall::new(0), fdef),
+                    hir::FuncDefKind::TraitDefaultMethod(tr, _, _, fdef) => {
                         let pforall = &hir.traits[*tr].1;
                         (pforall, fdef)
                     }
@@ -113,28 +113,17 @@ impl<'a, 's> Verify<'a, 's> {
                         );
                     }
                     hir::FuncDefKind::TraitHeader(_, forall, typing) => {
-                        let typing = lower::ConcreteTyping {
-                            forall: forall
-                                .values()
-                                .map(|gdata| lumina_typesystem::GenericData {
-                                    name: "_",
-                                    ..gdata.clone()
-                                })
-                                .collect(),
-                            params: typing.params.values().map(|t| t.value.clone()).collect(),
-                            returns: typing.returns.value.clone(),
-                        };
+                        let forall = forall.rename_to_keys();
+                        let typing =
+                            lower::ConcreteTyping::from_hir(forall, typing, |ty| (*ty).clone());
+
                         let function =
                             lower::Function::new(typing, Map::new(), Map::new(), mir::Expr::Poison);
                         funcs[func] = FunctionStatus::Done(function);
                         return;
                     }
                     hir::FuncDefKind::Extern { link_name, typing } => {
-                        let typing = lower::ConcreteTyping {
-                            forall: Forall::new(),
-                            params: typing.params.values().map(|t| t.value.clone()).collect(),
-                            returns: typing.returns.value.clone(),
-                        };
+                        let typing = Self::lower_extern(typing);
                         funcs[func] =
                             FunctionStatus::Extern { link_name: link_name.clone(), typing };
                         return;
@@ -174,7 +163,8 @@ impl<'a, 's> Verify<'a, 's> {
                 let langs = LangItems::new(fdef.list, pinfo);
                 let rsolver = RSolver::new(fields, &hir.records, &hir.field_types, &hir.fnames);
                 let mut lower = Verify::new(
-                    &hir, iquery, tenvs, rsolver, langs, funcs, rotable, current, pforall, fdef,
+                    &hir, iquery, tenvs, rsolver, langs, funcs, rotable, target, current, pforall,
+                    fdef,
                 );
 
                 let function = lower.lower_func();
@@ -199,13 +189,11 @@ impl<'a, 's> Verify<'a, 's> {
             FunctionStatus::Pending => {
                 match &self.hir.funcs[func] {
                     hir::FuncDefKind::Extern { link_name, typing } => {
-                        let typing = lower::ConcreteTyping {
-                            forall: Forall::new(),
-                            params: typing.params.values().map(|t| t.value.clone()).collect(),
-                            returns: typing.returns.value.clone(),
-                        };
+                        let typing = Self::lower_extern(typing);
+
                         self.funcs[func] =
                             FunctionStatus::Extern { link_name: link_name.clone(), typing };
+
                         return Ok(());
                     }
                     other => {
@@ -241,6 +229,10 @@ impl<'a, 's> Verify<'a, 's> {
                 }
             }
         }
+    }
+
+    fn lower_extern(typing: &hir::Typing<Type>) -> lower::ConcreteTyping {
+        lower::ConcreteTyping::from_hir(Forall::new(0), typing, |t| (**t).clone())
     }
 
     fn lower_func(&mut self) -> lower::Function {
@@ -295,6 +287,7 @@ impl<'a, 's> Verify<'a, 's> {
             self.rsolver,
             &self.hir.vnames,
             &self.hir.variant_types,
+            self.target,
         );
 
         let typing = finalization.lower_func_typing(&self.fdef.typing);
@@ -313,7 +306,9 @@ impl<'a, 's> Verify<'a, 's> {
         let (lambdas, errors) = finalization
             .lower_lambda_expressions(&self.fdef.lambdas.bodies, &self.fdef.lambdas.params);
 
-        let mut fin = Finalizer::new(self.type_system(), &mut forall, &mut lforalls, false);
+        let dint_size = IntSize::new(true, self.target.int_size());
+        let ts = self.type_system();
+        let mut fin = Finalizer::new(ts, &mut forall, &mut lforalls, dint_size, false);
         let num_cons = fin.num_constraints();
         let constraints = fin.constraints();
 
@@ -327,50 +322,45 @@ impl<'a, 's> Verify<'a, 's> {
         }
 
         for (span, min, ty) in num_cons {
-            let minbit = min
-                .map(|(i, num)| Bitsize::minimum_for(i, num).max(Bitsize::default()))
-                .unwrap_or_else(Bitsize::default);
-            let num_type = Type::Prim(Prim::Int(true, minbit));
+            let intsize = min
+                .map(|(i, num)| IntSize::minimum_for(i, num).max(dint_size))
+                .unwrap_or(dint_size);
+
+            let num_type = Type::Int(intsize);
 
             match ty.value {
-                Type::Prim(Prim::Int(signed, bitsize)) => {
+                Type::Int(int) => {
                     if let Some((neg, m)) = min {
                         let within = if neg {
-                            bitsize.mini(signed) >= m
+                            int.min_value() as i128 >= m as i128
                         } else {
-                            bitsize.maxi(signed) >= m
+                            int.max_value() as u128 >= m
+                        };
+
+                        let err = |msg| {
+                            self.error("integer not within bounds")
+                                .eline(span, msg)
+                                .emit()
                         };
 
                         if !within {
-                            self.error("integer not within bounds")
-                                .eline(
-                                    span,
-                                    format!(
-                                        "{}{m} does not fit in {}{bitsize}",
-                                        neg.then_some("-").unwrap_or(""),
-                                        signed.then_some("i").unwrap_or("u"),
-                                    ),
-                                )
-                                .emit()
+                            err(format!(
+                                "{}{m} does not fit in {int}",
+                                neg.then_some("-").unwrap_or(""),
+                            ))
                         }
 
-                        if !signed && neg {
-                            self.error("integer not within bounds")
-                                .eline(
-                                    span,
-                                    format!("can not use negative numbers with u{bitsize}"),
-                                )
-                                .emit();
+                        if !int.signed && neg {
+                            err(format!("can not use negative numbers with {int}"))
                         }
                     }
                 }
-                Type::Prim(Prim::Poison) => {}
-                _ => self.emit_type_mismatch(
-                    span,
-                    "",
-                    self.ty_formatter().fmt(&num_type),
-                    self.ty_formatter().fmt(&*ty),
-                ),
+                Type::Simple("poison") => {}
+                _ => {
+                    let got = self.ty_formatter().fmt(&num_type);
+                    let exp = self.ty_formatter().fmt(&*ty);
+                    self.emit_type_mismatch(span, "", got, exp)
+                }
             }
         }
 
@@ -388,7 +378,7 @@ impl<'a, 's> Verify<'a, 's> {
             // now need to partially track `Self` regardless making the effort of substituting
             // `Self` useless.
             let in_trait = match &self.hir.funcs[fkey] {
-                hir::FuncDefKind::TraitDefaultMethod(key, _) => {
+                hir::FuncDefKind::TraitDefaultMethod(key, _, _, _) => {
                     let params = &self.hir.traits[*key].1;
                     Some((*key, params))
                 }
@@ -456,14 +446,8 @@ impl<'a, 's> Verify<'a, 's> {
     }
 
     pub fn ty_formatter(&'a self) -> TyFmtState<'a, 's> {
-        let forall = self
-            .fdef
-            .forall
-            .borrow()
-            .values()
-            .map(|gdata| gdata.name)
-            .collect();
-        let pforall = self.pforall.values().map(|gdata| gdata.name).collect();
+        let forall = self.fdef.forall.borrow().names().collect();
+        let pforall = self.pforall.names().collect();
         TyFmtState::new(self.hir, &self.tenvs[self.current.fkey], forall, pforall)
     }
 
@@ -479,31 +463,29 @@ impl<'a, 's> Verify<'a, 's> {
         let forall = self.fdef.forall.borrow();
         let typing = &self.fdef.typing;
 
-        let mut inst = ForeignInst::<Var>::new(&mut self.tenvs[self.current.fkey])
-            .forall(span, &forall)
-            .iforall_cons(&forall);
+        let mut inst = GenericMapper::inst(&mut self.tenvs[self.current.fkey])
+            .forall(GenericKind::Entity, span, &forall)
+            .icons(GenericKind::Entity, &forall);
 
         if inst.env.self_.is_some() {
             inst = inst.with_self(span);
         }
 
-        let inst = inst.build();
+        let mapper = inst.into_mapper();
 
-        let (ptypes, returns) = typing.map(|ty| inst.applyi(*ty));
+        let (ptypes, returns) = typing.map(|ty| DirectRecursion(&mapper).transform(*ty));
 
         let module = self.module();
-        InstInfo::new(module, inst, ptypes, returns.clone())
+        InstInfo::new(module, mapper, ptypes, returns.clone())
     }
 
     pub fn inst_indirect_recursion(&mut self, span: Span, key: M<key::Func>) -> InstInfo {
         let target = self.hir.funcs[key].as_defined();
         let mut forall = target.forall.borrow_mut();
         let [from, to] = self.tenvs.get_both([self.current.fkey, key]);
-        let mut cinst = ForeignInst::<Var>::circular(from, to, &mut *forall, span)
-            .forall()
-            .iforall_cons();
+        let mut cinst = GenericMapper::circular(from, to, &mut *forall, span);
 
-        let (ptypes, returns) = target.typing.map(|ty| cinst.applyi(*ty));
+        let (ptypes, returns) = target.typing.map(|ty| cinst.transform(*ty));
 
         let (inst, failures) = cinst.finalize();
         for fspan in failures {
@@ -522,33 +504,9 @@ impl<'a, 's> Verify<'a, 's> {
 
     pub fn module_of_type(&mut self, ty: Tr<&IType>) -> Option<key::Module> {
         match &ty.value {
-            IType::List(key, _) | IType::Defined(key, _) => Some(key.module),
-            IType::InferringRecord(rvar) => {
-                let env = &mut self.tenvs[self.current.fkey];
-                match env.get_record(*rvar) {
-                    lumina_typesystem::RecordAssignment::Ok(key, _) => Some(key.module),
-                    lumina_typesystem::RecordAssignment::Redirect(var) => {
-                        let ty = IType::InferringRecord(*var).tr(ty.span);
-                        self.module_of_type(ty.as_ref())
-                    }
-                    lumina_typesystem::RecordAssignment::NotRecord(t) => {
-                        let t = t.clone().tr(ty.span);
-                        self.module_of_type(t.as_ref())
-                    }
-                    lumina_typesystem::RecordAssignment::Unknown(_) => None,
-                    lumina_typesystem::RecordAssignment::None => None,
-                }
-            }
-            IType::Container(Container::Pointer(_)) => {
-                self.warning("unimplemented")
-                    .eline(
-                        ty.span,
-                        "calling functions from std:ptr with dot-pipes currently isn't allowed",
-                    )
-                    .emit();
-                None
-            }
-            IType::Var(var) => {
+            IType::Simple(_) => None,
+            IType::Container(Container::List(key) | Container::Defined(key), _) => Some(key.module),
+            IType::Special(Inference::Var(var)) => {
                 let vinfo = self.vars().get(*var);
                 match vinfo.value {
                     Some(ty) => {
@@ -558,10 +516,28 @@ impl<'a, 's> Verify<'a, 's> {
                     None => Some(self.module()),
                 }
             }
-            IType::Field(rvar, rfield) => {
+            IType::Special(Inference::Record(record)) => {
+                let env = &mut self.tenvs[self.current.fkey];
+                match env.get_record(*record) {
+                    RecordAssignment::Ok(key, _) => Some(key.module),
+                    RecordAssignment::Redirect(var) => {
+                        let ty = IType::infrecord(*var).tr(ty.span);
+                        self.module_of_type(ty.as_ref())
+                    }
+                    RecordAssignment::NotRecord(t) => {
+                        let t = t.clone().tr(ty.span);
+                        self.module_of_type(t.as_ref())
+                    }
+                    RecordAssignment::Unknown(_) => None,
+                    RecordAssignment::None => None,
+                }
+            }
+            IType::Special(Inference::Field(rvar, rfield)) => {
                 let fname = self.tenvs[self.current.fkey].name_of_field(*rvar, *rfield);
                 self.module_of_field_by_name(ty.span, *rvar, fname)
             }
+            IType::Container(Container::Pointer, _) => self.hir.lookups.find_lib(&["std", "ptr"]),
+            IType::Int(_) => self.hir.lookups.find_lib(&["std", "math"]),
             _ => None,
         }
     }
@@ -593,23 +569,22 @@ impl<'a, 's> Verify<'a, 's> {
         span: Span,
         sum: M<key::Sum>,
         var: key::SumVariant,
-    ) -> (ForeignInst<Var>, Vec<Tr<IType>>, Tr<IType>) {
+    ) -> (GenericMapper<Inference>, Vec<Tr<IType>>, Tr<IType>) {
         let forall = &self.hir.sums[sum].1;
         let vars = self.vars();
 
-        let finst = ForeignInst::<Var>::new(vars)
-            // .with_self(span)
-            .forall(span, forall)
-            .forall_cons(forall)
-            .build();
+        let finst = GenericMapper::inst(vars)
+            .forall(GenericKind::Entity, span, forall)
+            .cons(GenericKind::Entity, forall)
+            .into_mapper();
 
         let ptypes = self.hir.variant_types[sum][var]
             .iter()
-            .map(|ty| finst.apply(&**ty).tr(ty.span))
+            .map(|ty| (&finst).transform(&**ty).tr(ty.span))
             .collect();
 
         let key = sum.map(key::TypeKind::Sum);
-        let returns = finst.to_itype(key);
+        let returns = finst.to_defined(GenericKind::Entity, key);
 
         (finst, ptypes, returns.tr(span))
     }
@@ -634,13 +609,15 @@ impl<'a, 's> Verify<'a, 's> {
     ) -> IType {
         let lhs = params.last();
         match self.type_of_callable(span, lhs, call, params.len(), tanot) {
-            InstCall::LocalCall(_, ptypes, returns, kind) => {
+            InstCall::LocalCall(_, ptypes, returns, cont) => {
                 let (applicated, xs) = ptypes.split_at(params.len());
                 params.iter().zip(applicated).for_each(|(g, e)| {
                     self.type_check_and_emit(g.as_ref(), e.tr(span));
                 });
 
-                IType::Container(Container::Func(kind, xs.to_vec(), Box::new(returns)))
+                let mut remaining = xs.to_vec();
+                remaining.push(returns);
+                IType::Container(cont, remaining)
             }
             InstCall::Local(_) if !params.is_empty() => todo!("ET: can not take parameters"),
             InstCall::Local(_) => todo!("turn it into a function"),
@@ -674,20 +651,7 @@ impl<'a, 's> Verify<'a, 's> {
 
         self.current.push_inst(span, Some(instinfo));
 
-        // let kind = if params.len() == 0 {
-        //     FuncKind::FnPointer
-        // } else {
-        //     FuncKind::Closure
-        // };
-        //
-        // Let's not infer this anymore. In the future we're gonna add explicit syntax for raw
-        // pointers.
-        //
-        // It's a niche systems-level use-case regardless so; we shouldn't bother ordinary users
-        // with it.
-        let kind = FuncKind::Closure;
-
-        IType::Container(Container::Func(kind, ptypes, Box::new(ret)))
+        IType::closure(ptypes, ret)
     }
 
     pub fn type_of_callable(
@@ -746,59 +710,56 @@ impl<'a, 's> Verify<'a, 's> {
             }
             hir::Callable::Builtin(name) => match *name {
                 "plus" | "minus" | "mul" | "div" => {
-                    let any = IType::Var(self.vars().var(span));
+                    let any = Ty::infer(self.vars().var(span));
                     let ptypes = vec![any.clone(), any.clone()];
-                    InstCall::LocalCall(span, ptypes, any, FuncKind::FnPointer)
+                    InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
                 }
                 "eq" | "lt" | "gt" => {
-                    let any = IType::Var(self.vars().var(span));
+                    let any = Ty::infer(self.vars().var(span));
                     let ptypes = vec![any.clone(), any];
-                    InstCall::LocalCall(span, ptypes, Prim::Bool.into(), FuncKind::FnPointer)
+                    InstCall::LocalCall(span, ptypes, Ty::bool(), Container::FnPointer)
                 }
                 "deref" => {
-                    let any = IType::Var(self.vars().var(span));
-                    let ptypes = vec![Container::Pointer(Box::new(any.clone())).into()];
-                    InstCall::LocalCall(span, ptypes, any, FuncKind::FnPointer)
+                    let any = Ty::infer(self.vars().var(span));
+                    let ptypes = vec![Ty::pointer(any.clone())];
+                    InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
                 }
                 "write" => {
-                    let any = IType::Var(self.vars().var(span));
-                    let ptypes = vec![
-                        Container::Pointer(Box::new(any.clone())).into(),
-                        any.clone(),
-                    ];
-                    let ret = IType::Container(Container::Tuple(vec![]));
-                    InstCall::LocalCall(span, ptypes, ret, FuncKind::FnPointer)
+                    let any = Ty::infer(self.vars().var(span));
+                    let ptypes = vec![Ty::pointer(any.clone()), any.clone()];
+                    let ret = Ty::tuple(vec![]);
+                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
                 }
                 "offset" => {
-                    let any = IType::Var(self.vars().var(span));
-                    let ptr: IType = Container::Pointer(Box::new(any.clone())).into();
-                    let ptypes = vec![ptr.clone(), Prim::Int(true, Bitsize::default()).into()];
-                    InstCall::LocalCall(span, ptypes, ptr, FuncKind::FnPointer)
+                    let any = Ty::infer(self.vars().var(span));
+                    let ptr = Ty::pointer(any.clone());
+                    let ptypes = vec![ptr.clone(), Ty::int(true, self.target.int_size())];
+                    InstCall::LocalCall(span, ptypes, ptr, Container::FnPointer)
                 }
                 "reflect_type" => {
-                    InstCall::Local(IType::defined(self.items.pinfo.reflect_type, vec![]).tr(span))
+                    InstCall::Local(Ty::defined(self.items.pinfo.reflect_type, vec![]).tr(span))
                 }
                 "size_of" => {
                     // TODO: 32-bit
-                    InstCall::Local(IType::from(Prim::Int(false, Bitsize(64))).tr(span))
+                    InstCall::Local(Ty::int(false, self.target.int_size()).tr(span))
                 }
-                "unreachable" => InstCall::Local(IType::Var(self.vars().var(span)).tr(span)),
+                "unreachable" => InstCall::Local(Ty::infer(self.vars().var(span)).tr(span)),
                 "transmute" => {
-                    let param = IType::Var(self.vars().var(span));
+                    let param = Ty::infer(self.vars().var(span));
                     let ptypes = vec![param];
-                    let ret = IType::Var(self.vars().var(span));
-                    InstCall::LocalCall(span, ptypes, ret, FuncKind::FnPointer)
+                    let ret = Ty::infer(self.vars().var(span));
+                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
                 }
                 "val_to_ref" => {
-                    let any = IType::Var(self.vars().var(span));
-                    let ptr = Container::Pointer(Box::new(any.clone())).into();
+                    let any = Ty::infer(self.vars().var(span));
+                    let ptr = Ty::pointer(any.clone());
                     let ptypes = vec![any];
                     let ret = ptr;
-                    InstCall::LocalCall(span, ptypes, ret, FuncKind::FnPointer)
+                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
                 }
                 _ => {
                     self.error("unrecognised builtin").eline(span, "").emit();
-                    InstCall::Local(IType::Prim(Prim::Poison).tr(span))
+                    InstCall::Local(Ty::poison().tr(span))
                 }
             },
             hir::Callable::Func(mnfunc) => {
@@ -820,17 +781,13 @@ impl<'a, 's> Verify<'a, 's> {
         let forall = &self.fdef.lambdas.foralls.borrow()[lkey];
         let typing = &self.fdef.lambdas.typings[lkey];
 
-        let inst = ForeignInst::<Var>::new(&mut self.tenvs[self.current.fkey])
-            .forall(span, &forall)
-            .iforall_cons(&forall)
-            .build();
+        let inst = GenericMapper::inst(&mut self.tenvs[self.current.fkey])
+            .forall(GenericKind::Lambda(lkey), span, &forall)
+            .icons(GenericKind::Lambda(lkey), &forall)
+            .into_mapper();
 
-        let ptypes = typing
-            .params
-            .values()
-            .map(|ty| inst.applyi(ty).tr(ty.span))
-            .collect::<Vec<_>>();
-        let returns = inst.applyi(&typing.returns).tr(typing.returns.span);
+        let (ptypes, returns) =
+            DirectRecursion(&inst).transform_typing(&typing.params, &typing.returns);
 
         let module = self.module();
         let iinfo = InstInfo::new(module, inst, ptypes, returns.clone());
@@ -873,26 +830,23 @@ impl<'a, 's> Verify<'a, 's> {
             hir::FuncDefKind::TraitHeader(trait_, forall, typing) => {
                 let vars = &mut self.tenvs[self.current.fkey];
                 let pforall = &self.hir.traits[*trait_].1;
-                let finst = ForeignInst::<Var>::new(vars)
+                let finst = GenericMapper::inst(vars)
                     .with_self(span)
-                    .forall(span, forall)
-                    .parent(span, pforall)
-                    .forall_cons(forall)
-                    .parent_cons(pforall)
-                    .build();
+                    .forall(GenericKind::Entity, span, forall)
+                    .forall(GenericKind::Parent, span, pforall)
+                    .cons(GenericKind::Entity, forall)
+                    .cons(GenericKind::Parent, pforall)
+                    .into_mapper();
 
-                let (ptypes, returns) = apply_finst(
-                    &finst,
-                    typing.params.values().map(|t| t.as_ref()),
-                    typing.returns.as_ref(),
-                );
+                let (ptypes, returns) = (&finst).transform_typing(&typing.params, &typing.returns);
                 self.apply_tanot(tanot, &finst, Either::Left(func.map(NFunc::Key)));
+                let Some(Ty::Special(Inference::Var(self_var))) = finst.self_ else {
+                    panic!("non-var assignment to `self` from instantiation");
+                };
 
-                let params = finst.get_trait_type_params();
-                self.vars().push_iconstraint(
-                    finst.self_.unwrap(),
-                    Constraint { span, trait_: *trait_, params },
-                );
+                let params = finst.to_types(GenericKind::Parent);
+                self.vars()
+                    .push_iconstraint(self_var, Constraint { span, trait_: *trait_, params });
 
                 let linfo = InstInfo::new(func.module, finst, ptypes, returns);
 
@@ -902,14 +856,14 @@ impl<'a, 's> Verify<'a, 's> {
                 Ok(_) => {
                     let typing = self.funcs[func].as_typing();
                     let vars = &mut self.tenvs[self.current.fkey];
-                    let finst = ForeignInst::<Var>::new(vars);
+                    let finst = GenericMapper::inst(vars);
                     let forall = &typing.forall;
 
                     // Attach the impl blocks `forall` to the instantiation if this function is
                     // defined as a member to an implementation.
                     let pforall = match &self.hir.funcs[func] {
                         hir::FuncDefKind::ImplMethod(imp, _) => Some(&self.hir.impls[*imp]),
-                        hir::FuncDefKind::TraitDefaultMethod(tr, _) => {
+                        hir::FuncDefKind::TraitDefaultMethod(tr, _, _, _) => {
                             Some(&self.hir.traits[*tr].1)
                         }
                         _ => None,
@@ -918,32 +872,38 @@ impl<'a, 's> Verify<'a, 's> {
                     let finst = match pforall {
                         Some(pforall) => finst
                             .with_self(span)
-                            .forall(span, forall)
-                            .parent(span, pforall)
-                            .forall_cons(forall)
-                            .parent_cons(pforall)
-                            .build(),
-                        None => finst.forall(span, forall).forall_cons(forall).build(),
+                            .forall(GenericKind::Entity, span, forall)
+                            .forall(GenericKind::Parent, span, pforall)
+                            .cons(GenericKind::Entity, forall)
+                            .cons(GenericKind::Parent, pforall)
+                            .into_mapper(),
+                        None => finst
+                            .forall(GenericKind::Entity, span, forall)
+                            .cons(GenericKind::Entity, forall)
+                            .into_mapper(),
                     };
 
                     // Attach the constraint from `self` if this is a method
-                    if let Some(var) = finst.self_ {
+                    if let Some(var) = &finst.self_ {
                         let (trait_, params) = match &self.hir.funcs[func] {
-                            hir::FuncDefKind::TraitDefaultMethod(trait_, _) => {
-                                (*trait_, finst.get_trait_type_params())
+                            hir::FuncDefKind::TraitDefaultMethod(trait_, _, _, _) => {
+                                (*trait_, finst.to_types(GenericKind::Parent))
                             }
                             hir::FuncDefKind::ImplMethod(ikey, _) => {
                                 let (trait_, i_trait_params) = &self.hir.itraits[*ikey];
-                                let trait_params =
-                                    i_trait_params.iter().map(|p| finst.apply(p)).collect();
+                                let trait_params = (&finst).transforms(i_trait_params);
                                 (*trait_, trait_params)
                             }
                             hir::FuncDefKind::InheritedDefault(_, _) => todo!(),
                             _ => panic!("unexpected `self`"),
                         };
 
+                        let Ty::Special(Inference::Var(self_var)) = var else {
+                            panic!("non-var assignment to `self` from instantiation");
+                        };
+
                         self.tenvs[self.current.fkey]
-                            .push_iconstraint(var, Constraint { span, trait_, params });
+                            .push_iconstraint(*self_var, Constraint { span, trait_, params });
                     }
 
                     // HACK: we need the spans from the HIR as they weren't copied to the MIR.
@@ -964,7 +924,7 @@ impl<'a, 's> Verify<'a, 's> {
                             (types, ret)
                         }
                         hir::FuncDefKind::ImplMethod(_, f)
-                        | hir::FuncDefKind::TraitDefaultMethod(_, f)
+                        | hir::FuncDefKind::TraitDefaultMethod(_, _, _, f)
                         | hir::FuncDefKind::Defined(f) => {
                             let types = typing
                                 .params
@@ -979,7 +939,12 @@ impl<'a, 's> Verify<'a, 's> {
                         hir::FuncDefKind::InheritedDefault(_, _) => unreachable!(),
                     };
 
-                    let (ptypes, returns) = apply_finst(&finst, types.into_iter(), ret);
+                    let ptypes = types
+                        .into_iter()
+                        .map(|ty| (&finst).transform_spanned(ty))
+                        .collect();
+                    let returns = (&finst).transform_spanned(ret);
+
                     self.apply_tanot(tanot, &finst, Either::Left(func.map(NFunc::Key)));
                     let linfo = InstInfo::new(func.module, finst, ptypes, returns);
 
@@ -994,7 +959,7 @@ impl<'a, 's> Verify<'a, 's> {
     pub fn apply_tanot(
         &mut self,
         tanot: &hir::TypeAnnotation<'s>,
-        finst: &ForeignInst<Var>,
+        finst: &GenericMapper<Inference>,
         func: Either<M<NFunc>, key::Lambda>,
     ) -> Option<Span> {
         use Either::*;
@@ -1018,24 +983,33 @@ impl<'a, 's> Verify<'a, 's> {
             (_, true) => {}
             (Some(lookup), false) => {
                 for (name, ty) in tanot.for_type.iter() {
-                    let tr = |t: &IType| t.clone().tr(name.span);
-
                     if **name == "self" {
-                        self.type_system().assign_self(finst, tr(ty));
+                        // self.type_system().assign_self(finst, tr(ty));
+                        let Some(self_ty) = &finst.self_ else {
+                            self.error("unknown generic")
+                                .eline(name.span, "type has no `self` parameter")
+                                .emit();
+
+                            continue;
+                        };
+
+                        self.type_check_and_emit((ty).tr(name.span), (self_ty).tr(name.span));
+
                         self_span = Some(name.span);
                         continue;
                     }
 
-                    let Some(generic) = lookup.find(|n| n.name == **name) else {
+                    let Some(generic) = lookup.find(**name) else {
                         // TODO: merge multiple unknown generics
-                        self.error("unknown generic")
-                            .m(self.module())
-                            .eline(name.span, "")
-                            .emit();
+                        self.error("unknown generic").eline(name.span, "").emit();
                         continue;
                     };
 
-                    self.type_system().assign_pgeneric(&finst, generic, tr(ty));
+                    let exp = finst
+                        .find(Generic::new(generic, GenericKind::Parent))
+                        .unwrap();
+
+                    self.type_check_and_emit((ty).tr(name.span), (exp).tr(name.span));
                 }
             }
             (None, false) => panic!("ET: invalid generic annotation"),
@@ -1055,12 +1029,10 @@ impl<'a, 's> Verify<'a, 's> {
                 Left(M { module, value }) => match value {
                     NFunc::Key(func) => match &self.hir.funcs[module.m(func)] {
                         hir::FuncDefKind::ImplMethod(_, fdef) | hir::FuncDefKind::Defined(fdef) => {
-                            fdef.forall.borrow().find(|gdata| gdata.name == **name)
+                            fdef.forall.borrow().find(**name)
                         }
-                        hir::FuncDefKind::TraitDefaultMethod(_, fdef) => todo!(),
-                        hir::FuncDefKind::TraitHeader(_, forall, _) => {
-                            forall.find(|gdata| gdata.name == **name)
-                        }
+                        hir::FuncDefKind::TraitDefaultMethod(_, forall, _, _)
+                        | hir::FuncDefKind::TraitHeader(_, forall, _) => forall.find(**name),
                         hir::FuncDefKind::InheritedDefault(_, _) => unreachable!(),
                         hir::FuncDefKind::Extern { .. } => {
                             panic!("generics for extern function")
@@ -1069,21 +1041,21 @@ impl<'a, 's> Verify<'a, 's> {
                     NFunc::Method(trait_, method) => {
                         let func = self.hir.methods[module.m(trait_)][method];
                         let forall = &self.hir.funcs[module.m(func)].as_defined().forall.borrow();
-                        forall.find(|gdata| gdata.name == **name)
+                        forall.find(**name)
                     }
                     NFunc::SumVar(_, _) => todo!(),
                     NFunc::Val(_) => todo!(),
                 },
-                Right(lkey) => {
-                    self.fdef.lambdas.foralls.borrow()[lkey].find(|gdata| gdata.name == **name)
-                }
-                _ => unreachable!(),
+                Right(lkey) => self.fdef.lambdas.foralls.borrow()[lkey].find(**name),
             };
 
             match generic {
                 Some(generic) => {
-                    self.type_system()
-                        .assign_generic(finst, generic, (ty.clone()).tr(name.span));
+                    let exp = finst
+                        .find(Generic::new(generic, GenericKind::Entity))
+                        .unwrap();
+
+                    self.type_check_and_emit((ty).tr(name.span), (exp).tr(name.span));
                 }
                 None => {
                     let err = self
@@ -1092,9 +1064,7 @@ impl<'a, 's> Verify<'a, 's> {
                         .eline(name.span, "the function does not have this generic");
 
                     if **name == "self"
-                        || ty_lookup
-                            .map(|forall| forall.find(|gdata| gdata.name == **name).is_some())
-                            == Some(true)
+                        || ty_lookup.map(|forall| forall.find(**name).is_some()) == Some(true)
                     {
                         err.text(
                             "the type this function is a member of does however have that generic",
@@ -1112,23 +1082,13 @@ impl<'a, 's> Verify<'a, 's> {
 
     pub fn assign_ty_to_rvar(&mut self, span: Span, var: RecordVar, ty: Tr<&IType>) {
         let result = self.type_system().ascribe_record(ty, span, var);
-        self.emit_type_errors((ty, IType::InferringRecord(var).tr(span).as_ref(), result));
+        self.emit_type_errors((ty, IType::infrecord(var).tr(span).as_ref(), result));
     }
-}
-
-fn apply_finst<'t, 's>(
-    finst: &ForeignInst<Var>,
-    types: impl Iterator<Item = Tr<&'t Type>>,
-    ret: Tr<&'t Type>,
-) -> (Vec<Tr<IType>>, Tr<IType>) {
-    let ptypes = types.map(|p| finst.apply(*p).tr(p.span)).collect();
-    let returns = finst.apply(*ret).tr(ret.span);
-    (ptypes, returns)
 }
 
 #[derive(Debug)]
 pub enum InstCall {
-    LocalCall(Span, Vec<IType>, IType, FuncKind),
+    LocalCall(Span, Vec<IType>, IType, Container),
     Local(Tr<IType>),
     Instantiated(InstInfo),
     DirectRecursion,

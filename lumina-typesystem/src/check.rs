@@ -1,11 +1,15 @@
-use super::*;
+use super::{
+    tenv, Container, GenericKind, GenericMapper, IType as Ty, Inference as Inf, IntConstraint,
+    IntSize, RecordAssignment, RecordError, RecordVar, Transformer, TypeSystem, Var,
+};
 use derive_more::From;
-use lumina_key::LinearFind;
+use lumina_key as key;
+use lumina_key::{LinearFind, M};
 use lumina_util::{Span, Spanned, Tr};
+use std::collections::HashMap;
 use tenv::RecordVarInfo;
 use tracing::trace;
 use tracing::warn;
-use IType as Ty;
 
 #[derive(From, Debug)]
 pub enum CheckResult<'s> {
@@ -20,8 +24,8 @@ pub enum CheckResult<'s> {
 }
 
 pub enum NumError {
-    NegativeForUnsigned(Span, Bitsize),
-    NumberTooLarge(Span, u128, (bool, Bitsize)),
+    NegativeForUnsigned(Span, IntSize),
+    NumberTooLarge(Span, u128, IntSize),
 }
 
 use CheckResult::Ok as ok;
@@ -61,58 +65,40 @@ impl<'a, 's> TypeSystem<'a, 's> {
         trace!("{got} ∈ {exp}");
 
         match (*got, *exp) {
-            // Dismissed cases
-            (Ty::Prim(Prim::Poison), _) => ok,
-            (_, Ty::Prim(Prim::Poison)) => ok,
-            (Ty::Prim(Prim::Never), _) => ok,
-            (_, Ty::Prim(Prim::Never)) => ok,
+            // Dismissed
+            (Ty::Simple("poison"), _) => ok,
+            (_, Ty::Simple("poison")) => ok,
 
             // Concrete checks
-            (
-                Ty::List(gtype, gp) | Ty::Defined(gtype, gp),
-                Ty::List(etype, ep) | Ty::Defined(etype, ep),
-            ) if gtype == etype => self.checks(got.span, exp.span, gp, ep),
-            (Ty::Prim(gprim), Ty::Prim(eprim)) if gprim == eprim => ok,
+            (Ty::Simple(gname), Ty::Simple(ename)) if gname == ename => ok,
             (Ty::Generic(ggen), Ty::Generic(egen)) if ggen == egen => ok,
-            (Ty::Self_, Ty::Self_) => ok,
+            (Ty::Container(gcon, gparams), Ty::Container(econ, eparams))
+                if (gcon == econ) && gparams.len() == eparams.len() =>
+            {
+                self.checks(got.span, exp.span, gparams, eparams)
+            }
+            // Edge-case for using a list with sugar against concrete type and vice-versa
+            (
+                Ty::Container(Container::List(gkey) | Container::Defined(gkey), gparams),
+                Ty::Container(Container::List(ekey) | Container::Defined(ekey), eparams),
+            ) if gkey == ekey => self.checks(got.span, exp.span, gparams, eparams),
+            (Ty::Int(gsize), Ty::Int(esize)) if gsize == esize => ok,
 
             // Self Substitution
-            (Ty::Self_, _) if self.env.self_.is_some() => {
+            (Ty::Simple("self"), _) if self.env.self_.is_some() => {
                 let got = self.env.self_.clone().unwrap().tr(got.span);
                 self.check(got.as_ref(), exp)
             }
-            (_, Ty::Self_) if self.env.self_.is_some() => {
+            (_, Ty::Simple("self")) if self.env.self_.is_some() => {
                 let exp = self.env.self_.clone().unwrap().tr(got.span);
                 self.check(got, exp.as_ref())
             }
 
-            (
-                Ty::Container(Container::Func(gkind, gptypes, gret)),
-                Ty::Container(Container::Func(ekind, eptypes, eret)),
-            ) if ekind == gkind => self
-                .checks(got.span, exp.span, gptypes, eptypes)
-                .and_then(|| self.check((&**gret).tr(got.span), (&**eret).tr(exp.span))),
-
-            (Ty::Container(Container::Tuple(gp)), Ty::Container(Container::Tuple(ep))) => {
-                if ep.len() == gp.len() {
-                    self.checks(got.span, exp.span, gp, ep)
-                } else {
-                    CheckResult::fail(got, exp, "tuples differ in amount of parameters")
-                }
-            }
-            (Ty::Container(Container::Pointer(gp)), Ty::Container(Container::Pointer(ep))) => {
-                self.check((&**gp).tr(got.span), (&**ep).tr(exp.span))
-            }
-
             // TVar direct checks
-            (Ty::Var(gvar), Ty::Var(evar)) if gvar == evar => ok,
-            (Ty::InferringRecord(grvar), Ty::InferringRecord(ervar)) if grvar == ervar => ok,
-            (Ty::Field(gvar, gfvar), Ty::Field(evar, efvar)) if evar == gvar && gfvar == efvar => {
-                ok
-            }
+            (Ty::Special(ginf), Ty::Special(einf)) if ginf == einf => ok,
 
             // TVar merging
-            (Ty::Var(g), Ty::Var(e)) => {
+            (Ty::Special(Inf::Var(g)), Ty::Special(Inf::Var(e))) => {
                 let [gdata, edata] = self.env.vars.get_many_mut([*g, *e]).unwrap();
 
                 match (gdata.assignment.clone(), edata.assignment.clone()) {
@@ -133,10 +119,10 @@ impl<'a, 's> TypeSystem<'a, 's> {
                     (Some(g), Some(e)) => self.check((&*g).tr(got.span), (&*e).tr(exp.span)),
                 }
             }
-            (Ty::InferringRecord(grvar), Ty::InferringRecord(ervar)) => {
+            (Ty::Special(Inf::Record(grvar)), Ty::Special(Inf::Record(ervar))) => {
                 self.merge_records((got.span, *grvar), (exp.span, *ervar))
             }
-            (Ty::Field(gvar, gfvar), Ty::Field(evar, efvar)) => {
+            (Ty::Special(Inf::Field(gvar, gfvar)), Ty::Special(Inf::Field(evar, efvar))) => {
                 let [gfield, efield] = [
                     self.env.records[*gvar].fields[*gfvar],
                     self.env.records[*evar].fields[*efvar],
@@ -145,18 +131,18 @@ impl<'a, 's> TypeSystem<'a, 's> {
             }
 
             // TVar assignments
-            (_, Ty::Var(evar)) => self.assign_var(true, *evar, got),
-            (Ty::Var(gvar), _) => self.assign_var(false, *gvar, exp),
-            (_, Ty::Field(evar, efvar)) => {
+            (_, Ty::Special(Inf::Var(evar))) => self.assign_var(true, *evar, got),
+            (Ty::Special(Inf::Var(gvar)), _) => self.assign_var(false, *gvar, exp),
+            (_, Ty::Special(Inf::Field(evar, efvar))) => {
                 let fname = self.env.records[*evar].fields[*efvar];
                 self.check_record_field(true, exp.span, (*evar, fname), got)
             }
-            (Ty::Field(gvar, gfvar), _) => {
+            (Ty::Special(Inf::Field(gvar, gfvar)), _) => {
                 let fname = self.env.records[*gvar].fields[*gfvar];
                 self.check_record_field(false, got.span, (*gvar, fname), exp)
             }
-            (Ty::InferringRecord(rvar), _) => self.check_rvar(false, got.span, *rvar, exp),
-            (_, Ty::InferringRecord(rvar)) => self.check_rvar(true, exp.span, *rvar, got),
+            (Ty::Special(Inf::Record(rvar)), _) => self.check_rvar(false, got.span, *rvar, exp),
+            (_, Ty::Special(Inf::Record(rvar))) => self.check_rvar(true, exp.span, *rvar, got),
 
             _ => CheckResult::fail(got, exp, ""),
         }
@@ -167,13 +153,13 @@ impl<'a, 's> TypeSystem<'a, 's> {
         flip: bool,
         span: Span,
         rvar: RecordVar,
-        other: Tr<&IType>,
+        other: Tr<&Ty>,
     ) -> CheckResult<'s> {
         let assgn = self.env.records[rvar].assignment.clone();
         match assgn {
             tenv::RecordAssignment::Redirect(_) => todo!(),
             tenv::RecordAssignment::Ok(key, params) => {
-                let ty = IType::defined(key, params).tr(span);
+                let ty = Ty::defined(key, params).tr(span);
                 self.checkf(flip, ty.as_ref(), other)
             }
             tenv::RecordAssignment::None => self.assign_to_unassigned_rvar(flip, span, rvar, other),
@@ -189,24 +175,26 @@ impl<'a, 's> TypeSystem<'a, 's> {
         flip: bool,
         span: Span,
         rvar: RecordVar,
-        other: Tr<&IType>,
+        other: Tr<&Ty>,
     ) -> CheckResult<'s> {
         let assignment = &mut self.env.records[rvar].assignment;
         assert!(matches!(assignment, RecordAssignment::None));
         match other.value {
-            IType::List(key, params) | IType::Defined(key, params) => match key.value {
-                key::TypeKind::Record(rkey) => {
-                    let key = key.module.m(rkey);
-                    *assignment = RecordAssignment::Ok(key, params.clone());
-                    ok
+            Ty::Container(Container::List(key) | Container::Defined(key), params) => {
+                match key.value {
+                    key::TypeKind::Record(rkey) => {
+                        let key = key.module.m(rkey);
+                        *assignment = RecordAssignment::Ok(key, params.clone());
+                        ok
+                    }
+                    _ => {
+                        warn!("Assuming we will error on the incorrect record assignment during type finalization");
+                        *assignment = RecordAssignment::NotRecord(other.value.clone());
+                        ok
+                    }
                 }
-                _ => {
-                    warn!("Assuming we will error on the incorrect record assignment during type finalization");
-                    *assignment = RecordAssignment::NotRecord(other.value.clone());
-                    ok
-                }
-            },
-            IType::Var(var) => {
+            }
+            Ty::Special(Inf::Var(var)) => {
                 let vdata = &self.env.vars[*var];
                 match vdata.assignment.clone() {
                     Some(other) => self.assign_to_unassigned_rvar(flip, span, rvar, other.as_ref()),
@@ -214,18 +202,20 @@ impl<'a, 's> TypeSystem<'a, 's> {
                         Some(IntConstraint { .. }) => todo!("error: or buffer?"),
                         None => {
                             self.env
-                                .assign(*var, IType::InferringRecord(rvar).tr(other.span));
+                                .assign(*var, Ty::Special(Inf::Record(rvar)).tr(other.span));
 
                             ok
                         }
                     },
                 }
             }
-            IType::Field(_, _) => todo!("follow"),
-            IType::InferringRecord(orvar) if flip => {
+            Ty::Special(Inf::Field(rvar, varfield)) => todo!("follow & infer"),
+            Ty::Special(Inf::Record(orvar)) if flip => {
                 self.merge_records((other.span, *orvar), (span, rvar))
             }
-            IType::InferringRecord(orvar) => self.merge_records((span, rvar), (other.span, *orvar)),
+            Ty::Special(Inf::Record(orvar)) => {
+                self.merge_records((span, rvar), (other.span, *orvar))
+            }
             _ => {
                 warn!("Assuming we will error on the incorrect record assignment during type finalization");
                 *assignment = RecordAssignment::NotRecord(other.value.clone());
@@ -248,8 +238,8 @@ impl<'a, 's> TypeSystem<'a, 's> {
 
             // Direct comparison between two records
             (RecordAssignment::Ok(gkey, gparams), RecordAssignment::Ok(ekey, eparams)) => {
-                let got = IType::defined(*gkey, gparams.to_vec()).tr(got.0);
-                let exp = IType::defined(*ekey, eparams.to_vec()).tr(exp.0);
+                let got = Ty::defined(*gkey, gparams.to_vec()).tr(got.0);
+                let exp = Ty::defined(*ekey, eparams.to_vec()).tr(exp.0);
                 self.check(got.as_ref(), exp.as_ref())
             }
 
@@ -296,52 +286,8 @@ impl<'a, 's> TypeSystem<'a, 's> {
         }
     }
 
-    pub fn ascribe_record(
-        &mut self,
-        ty: Tr<&IType>,
-        span: Span,
-        var: RecordVar,
-    ) -> CheckResult<'s> {
-        let rdata = &self.env.records[var];
-
-        match rdata.assignment.clone() {
-            RecordAssignment::Ok(key, params) => {
-                let got = IType::defined(key, params).tr(span);
-                self.check(got.as_ref(), ty)
-            }
-            RecordAssignment::Redirect(var) => self.ascribe_record(ty, span, var),
-
-            RecordAssignment::None => match ty.value {
-                IType::List(kind, params) | IType::Defined(kind, params) => match kind.value {
-                    key::TypeKind::Record(key) => {
-                        let key = kind.module.m(key);
-                        self.env.records[var].assignment =
-                            RecordAssignment::Ok(key, params.clone());
-                        ok
-                    }
-                    _ => CheckResult::Record(RecordError::NotARecord),
-                },
-                IType::Var(v) => match self.env.vars[*v].assignment.clone() {
-                    Some(ty) => self.ascribe_record(ty.as_ref(), span, var),
-                    None => ok, // we don't need to do anything on `{ _ | ... }`
-                },
-                IType::Self_ => match self.env.self_.clone() {
-                    Some(sty) => {
-                        let ty = sty.tr(ty.span);
-                        self.ascribe_record(ty.as_ref(), span, var)
-                    }
-                    None => panic!("ET: `Self` not allowed in this context"),
-                },
-                other @ (IType::Field(..) | IType::InferringRecord(..)) => {
-                    panic!("Type ascription by unsupported type: {other}")
-                }
-                _ => CheckResult::Record(RecordError::NotARecord),
-            },
-
-            // Treated as poison
-            RecordAssignment::NotRecord(_) => ok,
-            RecordAssignment::Unknown(_) => ok,
-        }
+    pub fn ascribe_record(&mut self, ty: Tr<&Ty>, span: Span, var: RecordVar) -> CheckResult<'s> {
+        self.check_rvar(false, span, var, ty)
     }
 
     fn check_fields(
@@ -399,7 +345,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
         flip: bool,
         span: Span,
         (var, fname): (RecordVar, Tr<&'s str>),
-        other: Tr<&IType>,
+        other: Tr<&Ty>,
     ) -> CheckResult<'s> {
         match &self.env.records[var].assignment {
             RecordAssignment::Ok(key, params) => {
@@ -421,30 +367,31 @@ impl<'a, 's> TypeSystem<'a, 's> {
 
     pub fn call_as_function(
         &mut self,
-        ty: Tr<&IType>,
+        ty: Tr<&Ty>,
         params: usize,
-    ) -> Option<Result<(FuncKind, Vec<IType>, IType), CheckResult<'s>>> {
+    ) -> Option<Result<(Container, Vec<Ty>, Ty), CheckResult<'s>>> {
         match ty.value {
-            IType::Container(Container::Func(kind, ptypes, returns)) => {
-                Some(Ok((*kind, ptypes.clone(), (**returns).clone())))
+            Ty::Container(kind @ (Container::Closure | Container::FnPointer), params) => {
+                let mut ptypes = params.clone();
+                let ret = ptypes.pop().unwrap();
+                Some(Ok((*kind, ptypes, ret)))
             }
-            IType::Var(var) => {
+            Ty::Special(Inf::Var(var)) => {
                 let idata = &mut self.env.vars[*var];
                 match idata.assignment.clone() {
                     Some(ty) => self.call_as_function(ty.as_ref(), params),
                     None if params == 0 => None,
                     None => {
-                        let kind = FuncKind::Closure;
                         let (ptypes, returns) = self.generate_closure(ty.span, params);
                         self.env.assign(
                             *var,
-                            IType::closure(ptypes.clone(), returns.clone()).tr(ty.span),
+                            Ty::closure(ptypes.clone(), returns.clone()).tr(ty.span),
                         );
-                        Some(Ok((kind, ptypes, returns)))
+                        Some(Ok((Container::Closure, ptypes, returns)))
                     }
                 }
             }
-            IType::Field(var, field) => {
+            Ty::Special(Inf::Field(var, field)) => {
                 let fname = self.env.records[*var].fields[*field];
                 self.call_field_as_function(ty.span, *var, fname, params)
             }
@@ -458,7 +405,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
         var: RecordVar,
         fname: Tr<&'s str>,
         params: usize,
-    ) -> Option<Result<(FuncKind, Vec<IType>, IType), CheckResult<'s>>> {
+    ) -> Option<Result<(Container, Vec<Ty>, Ty), CheckResult<'s>>> {
         match self.env.records[var].assignment.clone() {
             RecordAssignment::Redirect(rvar) => {
                 self.call_field_as_function(span, rvar, fname, params)
@@ -485,12 +432,12 @@ impl<'a, 's> TypeSystem<'a, 's> {
         &self,
         key: M<key::Record>,
         fname: Tr<&'s str>,
-        params: &[IType],
-    ) -> Option<IType> {
-        let finst = ForeignInst::from_type_params(params);
+        params: &[Ty],
+    ) -> Option<Ty> {
+        let finst = GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
         self.fnames[key]
             .find(|name| fname == *name)
-            .map(|field| finst.apply(&self.ftypes[key][field]))
+            .map(|field| (&finst).transform(&self.ftypes[key][field]))
     }
 
     pub fn force_record_inference(&mut self, _from: Span, var: RecordVar) {
@@ -513,11 +460,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
                         rdata.assignment = RecordAssignment::Unknown(rerror);
                     }
                     Ok((key, _)) => {
-                        let params = self.records[key]
-                            .1
-                            .keys()
-                            .map(|_| IType::Var(self.env.var(span)))
-                            .collect::<Vec<_>>();
+                        let params = self.env.unify_forall(span, &self.records[key].1);
                         self.env.records[var].assignment = RecordAssignment::Ok(key, params);
                     }
                 }
@@ -526,29 +469,15 @@ impl<'a, 's> TypeSystem<'a, 's> {
         }
     }
 
-    fn as_record(&self, var: Var) -> Option<(M<key::Record>, &[IType])> {
-        dbg!(&var);
-        match self.env.vars[var].assignment.as_ref() {
-            Some(Tr {
-                value:
-                    IType::Defined(M { value: key::TypeKind::Record(key), module }, params)
-                    | IType::List(M { value: key::TypeKind::Record(key), module }, params),
-                ..
-            }) => Some((module.m(*key), params)),
-            Some(Tr { value: IType::Var(var), .. }) => self.as_record(*var),
-            _ => None,
-        }
-    }
-
-    fn generate_closure(&mut self, span: Span, params: usize) -> (Vec<IType>, IType) {
+    fn generate_closure(&mut self, span: Span, params: usize) -> (Vec<Ty>, Ty) {
         let ptypes = (0..params)
-            .map(|_| IType::Var(self.env.var(span)))
+            .map(|_| Ty::infer(self.env.var(span)))
             .collect::<Vec<_>>();
-        let returns = IType::Var(self.env.var(span));
+        let returns = Ty::infer(self.env.var(span));
         (ptypes, returns)
     }
 
-    fn assign_var(&mut self, flip: bool, var: Var, other: Tr<&IType>) -> CheckResult<'s> {
+    fn assign_var(&mut self, flip: bool, var: Var, other: Tr<&Ty>) -> CheckResult<'s> {
         let vdata = &mut self.env.vars[var];
         let vspan = vdata.span;
 

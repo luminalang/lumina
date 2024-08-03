@@ -15,6 +15,8 @@ pub struct PatLower<'a, 's> {
 
     ast: &'a ast::AST<'s>,
 
+    default_int_size: u8,
+
     type_info: &'a mut TypeEnvInfo<'s>,
     bindings: &'a mut Bindings<'s>,
 }
@@ -53,7 +55,6 @@ impl<'a, 's> PatLower<'a, 's> {
                 Pattern::Tuple(params)
             }
             parser::Pattern::Int(bound) => {
-                let lambda = self.type_info.lambda();
                 let var = self.type_info.inference_mut().unwrap().int(pat.span);
                 Pattern::Int(*bound, var)
             }
@@ -74,14 +75,14 @@ impl<'a, 's> PatLower<'a, 's> {
         init: &parser::CurlyInit<'s>,
         fields: &parser::Fields<'s, parser::Pattern<'s>>,
     ) -> Pattern<'s> {
-        let lambda = self.type_info.lambda();
         let inf = self.type_info.inference_mut().unwrap();
         let var = inf.record(span);
 
         match init {
             parser::CurlyInit::Modify(_) => panic!("modify is not allowed in this context"),
             parser::CurlyInit::Construct(ty) => {
-                let ty = ty::TypeLower::new(self.module, self.ast, self.type_info)
+                let int_size = self.default_int_size;
+                let ty = ty::TypeLower::new(self.module, self.ast, int_size, self.type_info)
                     .ty_spanned(ty.as_ref());
 
                 let fields = self.record_fields(fields);
@@ -95,7 +96,6 @@ impl<'a, 's> PatLower<'a, 's> {
     }
 
     fn list(&mut self, span: Span, elems: &[Tr<parser::Pattern<'s>>]) -> Pattern<'s> {
-        let lambda = self.type_info.lambda();
         let inf = self.type_info.inference_mut().unwrap();
         let ivar = inf.var(elems.get(0).map(|p| p.span).unwrap_or(span));
 

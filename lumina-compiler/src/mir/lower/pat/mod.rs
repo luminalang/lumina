@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use lumina_typesystem::{Bitsize, Type};
+use lumina_typesystem::{IntSize, Type};
 use std::collections::VecDeque;
 
 mod range;
@@ -44,8 +44,7 @@ pub enum DecTree<Tail> {
         ty: Type,
     },
     Ints {
-        bitsize: Bitsize,
-        signed: bool,
+        intsize: IntSize,
         next: Branching<Range, Tail>,
     },
     Bools(Branching<bool, Tail>),
@@ -203,10 +202,7 @@ impl<Tail: std::fmt::Display> std::fmt::Display for DecTree<Tail> {
             }
             DecTree::Sum { sum, next, .. } => next.fmt(*sum, f),
             DecTree::List { next, .. } => next.fmt("list", f),
-            DecTree::Ints { bitsize, signed, next } => {
-                let c = signed.then_some('i').unwrap_or('u');
-                next.fmt(format!("{c}{bitsize}"), f)
-            }
+            DecTree::Ints { intsize, next } => next.fmt(intsize, f),
             DecTree::Bools(next) => next.fmt("bool", f),
             DecTree::Opaque { ty, next } => {
                 write!(f, "{ty}\n  {}", next.to_string().lines().format("\n  "))

@@ -5,9 +5,9 @@
 //! Flatten to SSA+CFG with Basic Blocks
 
 use crate::prelude::*;
-use crate::{ProjectInfo, LIST_CONCAT, LIST_NIL, LIST_SINGLETON};
+use crate::{ProjectInfo, Target, LIST_CONCAT, LIST_NIL, LIST_SINGLETON};
 use key::{entity_impl, keys};
-use lumina_typesystem::{Bitsize, ConcreteInst, Generic, GenericKind, ImplIndex, Type};
+use lumina_typesystem::{Generic, GenericKind, GenericMapper, ImplIndex, IntSize, Static, Type};
 use lumina_util::Highlighting;
 use std::fmt;
 use tracing::info_span;
@@ -74,6 +74,8 @@ struct LIR {
     vtables: HashMap<VTableHash, M<key::Val>>,
 
     read_only_table: ModMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
+
+    target: Target,
 
     vals: ModMap<key::Val, MonoType>,
     #[new(default)]
@@ -170,7 +172,7 @@ impl FuncOrigin {
     }
 }
 
-pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mut mir: mir::MIR) -> Output {
+pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: mir::MIR) -> Output {
     info!("starting LIR lower");
 
     let mainfunc = &mir.funcs[info.main].as_done();
@@ -207,7 +209,10 @@ pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mut mir: mir::MIR) -> Outp
             typing.params.is_empty(),
             "static vals cannot take parameters in their initialiser"
         );
-        assert!(typing.forall.is_empty(), "static vals cannot be generic");
+        assert!(
+            typing.forall.generics.is_empty(),
+            "static vals cannot be generic"
+        );
         monomorphization.apply(&typing.returns)
     });
 
@@ -228,7 +233,7 @@ pub fn run<'s>(info: ProjectInfo, iquery: &ImplIndex, mut mir: mir::MIR) -> Outp
         "main function can not take parameters"
     );
 
-    let mut lir = LIR::new(mono, read_only_table, vals);
+    let mut lir = LIR::new(mono, read_only_table, target, vals);
 
     // fn alloc size as int -> *u8 =
     // fn dealloc ptr size as *u8, int -> () =
@@ -489,23 +494,15 @@ impl<'a> FuncLower<'a> {
         params.iter().map(|p| self.expr_to_value(p)).collect()
     }
 
-    fn morphise_inst(&mut self, kinds: [GenericKind; 2], inst: &ConcreteInst) -> TypeMap {
+    fn morphise_inst(&mut self, inst: &GenericMapper<Static>) -> TypeMap {
         let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
 
         let mut tmap = TypeMap::new();
 
-        for (key, hty) in &inst.pgenerics {
+        for (generic, hty) in inst.generics.iter() {
             let ty = morph.apply(hty);
             let weak = morph.apply_weak(hty);
-            let generic = Generic::new(key, kinds[0]);
-            tmap.push(generic, weak, ty);
-        }
-
-        for (key, hty) in &inst.generics {
-            let ty = morph.apply(hty);
-            let weak = morph.apply_weak(hty);
-            let generic = Generic::new(key, kinds[1]);
-            tmap.push(generic, weak, ty);
+            tmap.push(*generic, weak, ty);
         }
 
         if let Some(ty) = inst.self_.as_ref() {
@@ -535,9 +532,9 @@ impl<'a> FuncLower<'a> {
             .into();
 
         let [nil_tag, singleton_tag, concat_tag] = [LIST_NIL, LIST_SINGLETON, LIST_CONCAT]
-            .map(|n| Value::UInt(n.0 as u128, mono::TAG_SIZE));
+            .map(|n| Value::Int(n.0 as i128, mono::TAG_SIZE));
 
-        let payload_size = self.lir.types.types.size_of(&list_type) - mono::TAG_SIZE.0 as u32;
+        let payload_size = self.lir.types.types.size_of(&list_type) - mono::TAG_SIZE.bits() as u32;
 
         let empty_tuple = self.elems_to_tuple(vec![], Some(payload_size));
 
@@ -571,24 +568,29 @@ impl<'a> FuncLower<'a> {
         let tmap = TypeMap::new();
         let typing = MonoTyping::new(
             FuncOrigin::Defined(self.info.string_from_raw_parts),
-            [MonoType::u8_pointer(), MonoType::UInt(Bitsize(64))] // TODO: 32-bit target
-                .into_iter()
-                .collect(),
+            [
+                MonoType::u8_pointer(),
+                MonoType::Int(IntSize::new(false, self.lir.target.int_size())),
+            ]
+            .into_iter()
+            .collect(),
             string_type.clone(),
         );
 
-        (
-            self.lir
-                .func(self.mir, self.iquery, self.info, tmap, typing, None),
-            string_type,
-        )
+        let func = self
+            .lir
+            .func(self.mir, self.iquery, self.info, tmap, typing, None);
+        (func, string_type)
     }
 
     fn string_to_value(&mut self, str: &[u8]) -> Value {
         let (mfunc, string) = self.string_from_raw_parts_mfunc();
 
         let ro = self.string_to_readonly(str.to_vec());
-        let len = Value::UInt(str.len() as u128, Bitsize(64)); // TODO: 32-bit
+        let len = Value::Int(
+            str.len() as i128,
+            IntSize::new(false, self.lir.target.int_size()),
+        );
 
         self.ssa()
             .call(mfunc, vec![Value::ReadOnly(ro), len], string)
@@ -609,12 +611,11 @@ impl<'a> FuncLower<'a> {
     fn morphise_lambda(
         &mut self,
         lambda: key::Lambda,
-        inst: &ConcreteInst,
+        inst: &GenericMapper<Static>,
     ) -> (MonoFunc, ssa::Value, MonoTypeKey, MonoType) {
         let (func, captures) = self.get_lambda_origin(self.current.origin.clone(), lambda);
 
-        let kinds = [GenericKind::Entity, GenericKind::Lambda(lambda)];
-        let mut tmap = self.morphise_inst(kinds, inst);
+        let mut tmap = self.morphise_inst(inst);
 
         let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
 
@@ -624,7 +625,7 @@ impl<'a> FuncLower<'a> {
             .tmap
             .generics
             .iter()
-            .zip(&self.current.tmap.weak_generics)
+            .zip(&self.current.tmap.weak.generics)
         {
             if !matches!(g.kind, GenericKind::Lambda(_)) {
                 morph.tmap.push(*g, ty.clone(), mono.clone());
@@ -633,7 +634,7 @@ impl<'a> FuncLower<'a> {
         if let Some(self_) = self.current.tmap.self_.clone() {
             morph
                 .tmap
-                .set_self(self.current.tmap.weak_self.clone().unwrap(), self_);
+                .set_self(self.current.tmap.weak.self_.clone().unwrap(), self_);
         }
 
         let fdef = self.current.origin.get_root_fdef(self.mir);
@@ -700,8 +701,7 @@ impl<'a> FuncLower<'a> {
         match value {
             ssa::Value::ReadOnly(ro) => self.lir.read_only_table[ro].1.clone(),
             ssa::Value::V(v) => self.ssa().type_of(v).clone(),
-            ssa::Value::Int(_, bitsize) => MonoType::Int(bitsize),
-            ssa::Value::UInt(_, bitsize) => MonoType::UInt(bitsize),
+            ssa::Value::Int(_, intsize) => MonoType::Int(intsize),
             ssa::Value::Float(_) => MonoType::Float,
             ssa::Value::FuncPtr(ptr) => {
                 let func = &self.lir.functions[ptr];
@@ -710,7 +710,11 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    fn resolve_nfunc(&mut self, func: M<ast::NFunc>, inst: &ConcreteInst) -> ResolvedNFunc {
+    fn resolve_nfunc(
+        &mut self,
+        func: M<ast::NFunc>,
+        inst: &GenericMapper<Static>,
+    ) -> ResolvedNFunc {
         match func.value {
             ast::NFunc::Key(key) => {
                 let key = func.module.m(key);
@@ -723,8 +727,7 @@ impl<'a> FuncLower<'a> {
                     }
                     _ => {
                         let func = FuncOrigin::Defined(key);
-                        let tmap =
-                            self.morphise_inst([GenericKind::Parent, GenericKind::Entity], inst);
+                        let tmap = self.morphise_inst(inst);
                         let (mfunc, ret) = self.call_to_mfunc(func, tmap);
                         ResolvedNFunc::Static(mfunc, ret)
                     }
@@ -747,8 +750,7 @@ impl<'a> FuncLower<'a> {
                 let impltor = morph.apply(self_);
 
                 let trtp = inst
-                    .pgenerics
-                    .values()
+                    .types(GenericKind::Parent)
                     .map(|ty| morph.apply_weak(ty))
                     .collect::<Vec<_>>();
 
@@ -763,15 +765,16 @@ impl<'a> FuncLower<'a> {
             ast::NFunc::SumVar(sum, var) => {
                 let sum = func.map(|_| sum);
 
-                let ptypes = inst.generics.values().cloned().collect::<Vec<_>>();
+                let mut tmap = self.morphise_inst(inst);
+                let type_params = tmap.weak.to_types(GenericKind::Entity);
 
-                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
-                let ty = morph.sum(sum, &ptypes);
+                let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
+                let ty = morph.sum(sum, &type_params);
 
-                let tag = Value::UInt(var.0 as u128, mono::TAG_SIZE);
+                let tag = Value::Int(var.0 as i128, mono::TAG_SIZE);
 
                 let (tag_size, payload_size) = self.lir.types.types.as_sum_type(ty).unwrap();
-                assert_eq!(tag_size, mono::TAG_SIZE.0 as u32);
+                assert_eq!(tag_size, mono::TAG_SIZE.bits() as u32);
 
                 ResolvedNFunc::Sum { tag, ty, payload_size }
             }

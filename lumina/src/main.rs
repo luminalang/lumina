@@ -134,15 +134,15 @@ fn main() -> ExitCode {
             };
 
             let project_name = ast.config.name.clone();
-            let (hir, tenvs, mut iquery) = compiler::hir::run(pinfo, ast);
+            let (hir, tenvs, mut iquery) = compiler::hir::run(pinfo, target, ast);
 
-            let (mir, has_failed) = compiler::mir::run(pinfo, hir, tenvs, &mut iquery);
+            let (mir, has_failed) = compiler::mir::run(pinfo, target, hir, tenvs, &mut iquery);
             if has_failed {
                 eprintln!("aborting compilation due to previous errors");
                 return ExitCode::FAILURE;
             }
 
-            let lir = compiler::lir::run(pinfo, &iquery, mir);
+            let lir = compiler::lir::run(pinfo, target, &iquery, mir);
 
             let object = compiler::backend::cranelift::run(target, lir);
             compiler::backend::link_native_binary(

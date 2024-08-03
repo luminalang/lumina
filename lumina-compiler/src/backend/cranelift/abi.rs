@@ -30,9 +30,7 @@ impl lir::Records {
 
     pub(super) fn abi_param(&self, triple: &Triple, ty: &MonoType) -> Param {
         match ty {
-            MonoType::UInt(bitsize) | MonoType::Int(bitsize) => {
-                Param::Direct(Type::int(bitsize.0 as u16).unwrap())
-            }
+            MonoType::Int(bitsize) => Param::Direct(Type::int(bitsize.bits() as u16).unwrap()),
             MonoType::Pointer(_) => Param::Direct(Type::triple_pointer_type(triple)),
             MonoType::FnPointer(params, ret) => {
                 let typing = self.get_abi_typing(triple, params, ret);
@@ -98,8 +96,8 @@ impl lir::Records {
                     StructField::AutoBoxedRecursion(key, Type::triple_pointer_type(triple))
                 } else {
                     match ty {
-                        MonoType::UInt(bitsize) | MonoType::Int(bitsize) => {
-                            StructField::Direct(Type::int(bitsize.0 as u16).unwrap())
+                        MonoType::Int(bitsize) => {
+                            StructField::Direct(Type::int(bitsize.bits() as u16).unwrap())
                         }
                         MonoType::FnPointer(params, ret) => {
                             let typing = self.get_abi_typing(triple, params, ret);

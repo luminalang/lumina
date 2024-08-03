@@ -1,6 +1,6 @@
 use super::*;
 use insta::assert_snapshot;
-use lumina_typesystem::{Container, Generic, GenericKind};
+use lumina_typesystem::{Generic, GenericKind};
 
 macro_rules! snapshot_tree_and_missing {
     ($lower:ident, $tree:expr) => {{
@@ -124,7 +124,7 @@ impl Lower {
 fn instant_wildcard() {
     let mut lower = Lower::new();
 
-    let tuple = Type::Container(Container::Tuple(vec![u8().value, u8().value]));
+    let tuple = Type::tuple(vec![u8().value, u8().value]);
     let any = hir::Pattern::Any.tr(Span::null());
     let tree = lower.first(&tuple, any.as_ref());
     snapshot_tree_and_missing!(lower, tree);
@@ -191,11 +191,11 @@ fn maybe(ty: Tr<Type>) -> Tr<Type> {
 }
 
 fn list(ty: Tr<Type>) -> Tr<Type> {
-    Type::List(m(LIST.into()), vec![ty.value]).tr(Span::null())
+    Type::list(m::<key::Sum>(LIST.into()), vec![ty.value]).tr(Span::null())
 }
 
 fn tuplet<const N: usize>(types: [Tr<Type>; N]) -> Type {
-    Type::Container(Container::Tuple(types.map(|ty| ty.value).to_vec()))
+    Type::tuple(types.map(|ty| ty.value).to_vec())
 }
 
 #[test]

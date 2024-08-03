@@ -7,7 +7,7 @@ use derive_more::From;
 use itertools::Itertools;
 use key::{entity_impl, keys, Map, M};
 use lumina_key as key;
-use lumina_typesystem::Bitsize;
+use lumina_typesystem::IntSize;
 use lumina_util::{Highlighting, ParamFmt};
 use owo_colors::OwoColorize;
 use std::fmt;
@@ -134,7 +134,7 @@ impl Blocks {
             ControlFlow::Empty => {}
             ControlFlow::Unreachable => {
                 info!("skipping unreacahble assignment {entry}");
-                return Value::UInt(0, Bitsize(64));
+                return Value::Int(0, IntSize::new(false, 64));
             }
             _ => panic!("assignment in block that's already been sealed"),
         }
@@ -260,18 +260,18 @@ impl Blocks {
         self.assign(entry, ty)
     }
 
-    pub fn cmp(&mut self, v: [Value; 2], ord: std::cmp::Ordering, bitsize: Bitsize) -> Value {
+    pub fn cmp(&mut self, v: [Value; 2], ord: std::cmp::Ordering, bitsize: IntSize) -> Value {
         let entry = Entry::IntCmpInclusive(v[0], ord, v[1], bitsize);
         let ty = MonoType::bool();
         self.assign(entry, ty)
     }
-    pub fn eq(&mut self, v: [Value; 2], bitsize: Bitsize) -> Value {
+    pub fn eq(&mut self, v: [Value; 2], bitsize: IntSize) -> Value {
         self.cmp(v, std::cmp::Ordering::Equal, bitsize)
     }
-    pub fn lti(&mut self, v: [Value; 2], bitsize: Bitsize) -> Value {
+    pub fn lti(&mut self, v: [Value; 2], bitsize: IntSize) -> Value {
         self.cmp(v, std::cmp::Ordering::Less, bitsize)
     }
-    pub fn gti(&mut self, v: [Value; 2], bitsize: Bitsize) -> Value {
+    pub fn gti(&mut self, v: [Value; 2], bitsize: IntSize) -> Value {
         self.cmp(v, std::cmp::Ordering::Greater, bitsize)
     }
 
@@ -312,19 +312,19 @@ impl Blocks {
         on: Value,
         cmps: [std::cmp::Ordering; N],
         values: [Value; N],
-        bitsize: Bitsize,
+        intsize: IntSize,
         ty: MonoType,
     ) -> Value {
         if N == 1 {
-            self.cmp([on, values[0]], cmps[0], bitsize)
+            self.cmp([on, values[0]], cmps[0], intsize)
         } else {
             let mut iter = values.into_iter().zip(cmps);
             let (right, ord) = iter.next().unwrap();
 
-            let init = self.cmp([on, right], ord, bitsize);
+            let init = self.cmp([on, right], ord, intsize);
 
             iter.fold(init, |left, (right, ord)| {
-                let v = self.cmp([on, right], ord, bitsize);
+                let v = self.cmp([on, right], ord, intsize);
                 self.bit_and([left, v], ty.clone())
             })
         }
@@ -425,11 +425,11 @@ impl V {
 
 impl Value {
     pub fn maybe_just() -> Value {
-        Value::UInt(MAYBE_JUST.0 as u128, TAG_SIZE)
+        Value::Int(MAYBE_JUST.0 as i128, TAG_SIZE)
     }
 
     pub fn maybe_none() -> Value {
-        Value::UInt(MAYBE_NONE.0 as u128, TAG_SIZE)
+        Value::Int(MAYBE_NONE.0 as i128, TAG_SIZE)
     }
 }
 
@@ -489,7 +489,7 @@ pub enum Entry {
     IntSub(Value, Value),
     IntMul(Value, Value),
     IntDiv(Value, Value),
-    IntCmpInclusive(Value, std::cmp::Ordering, Value, Bitsize),
+    IntCmpInclusive(Value, std::cmp::Ordering, Value, IntSize),
 
     Reduce(Value),
     ExtendSigned(Value),
@@ -520,8 +520,7 @@ pub enum Value {
     #[from] FuncPtr(MonoFunc),
     V(V),
     
-    Int(i128, Bitsize),
-    UInt(u128, Bitsize),
+    Int(i128, IntSize),
 
     #[from] Float(f64),
 }
@@ -654,7 +653,6 @@ impl fmt::Display for Value {
             Value::ReadOnly(ro) => ro.fmt(f),
             Value::V(v) => v.fmt(f),
             Value::Int(n, _) => n.fmt(f),
-            Value::UInt(n, _) => n.fmt(f),
             Value::FuncPtr(ptr) => ptr.fmt(f),
             Value::Float(n) => write!(f, "{n:?}"),
         }

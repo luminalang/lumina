@@ -1,36 +1,37 @@
 use super::super::mir::func::Local;
-use super::{pat, pat::Merge, ConcreteInst, FinError, Lower, MatchBranchLower};
+use super::{pat, pat::Merge, FinError, Lower, MatchBranchLower};
 use crate::prelude::*;
 use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY};
 use ast::NFunc;
-use lumina_typesystem::{Bitsize, Constraint, Container, ForeignInst, Prim, Type, Var};
+use lumina_typesystem::{
+    Constraint, Container, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty, Type, Var,
+};
 use lumina_util::Highlighting;
 use std::fmt;
 
 #[derive(Clone, Debug)]
 pub enum Expr {
-    CallFunc(M<NFunc>, ConcreteInst, Vec<Self>),
-    CallLambda(key::Lambda, ConcreteInst, Vec<Self>),
+    CallFunc(M<NFunc>, GenericMapper<Static>, Vec<Self>),
+    CallLambda(key::Lambda, GenericMapper<Static>, Vec<Self>),
     CallLocal(Local, Vec<Self>),
 
-    PartialFunc(M<NFunc>, ConcreteInst, Vec<Self>),
-    PartialLambda(key::Lambda, ConcreteInst, Vec<Self>),
+    PartialFunc(M<NFunc>, GenericMapper<Static>, Vec<Self>),
+    PartialLambda(key::Lambda, GenericMapper<Static>, Vec<Self>),
     PartialLocal(Local, Vec<Self>),
 
     Yield(Local),
-    YieldFunc(M<NFunc>, ConcreteInst),
-    YieldLambda(key::Lambda, ConcreteInst),
+    YieldFunc(M<NFunc>, GenericMapper<Static>),
+    YieldLambda(key::Lambda, GenericMapper<Static>),
 
     Access(Box<Self>, M<key::Record>, Vec<Type>, key::RecordField),
     Record(M<key::Record>, Vec<Type>, Vec<(key::RecordField, Self)>),
 
-    UInt(Bitsize, u128),
-    Int(Bitsize, i128),
+    Int(IntSize, i128),
     Bool(bool),
     Float(f64),
     ReadOnly(M<key::ReadOnly>),
 
-    IntCast(Box<Self>, (bool, Bitsize), (bool, Bitsize)),
+    IntCast(Box<Self>, IntSize, IntSize),
     ObjectCast(Box<Self>, Type, M<key::Trait>, Vec<Type>),
     Deref(Box<Self>),
     Write(Box<[Self; 2]>),
@@ -62,7 +63,7 @@ impl<'a, 's> Lower<'a, 's> {
     fn fin_inst_or_poison(
         &mut self,
         span: Span,
-        f: impl FnOnce(&mut Self, ConcreteInst) -> Expr,
+        f: impl FnOnce(&mut Self, GenericMapper<Static>) -> Expr,
     ) -> Expr {
         match self.current.pop_inst(span) {
             Some(instinfo) => {
@@ -90,10 +91,10 @@ impl<'a, 's> Lower<'a, 's> {
                 }
                 hir::Callable::Binding(bind) => {
                     let ty = self.current.binds[bind].clone();
-                    let ty = self.finalizer(|mut fin| (fin.apply(&ty), fin.errors));
+                    let ty = self.finalizer(|fin| fin.transform(&ty));
                     let local = Local::Binding(*bind);
                     match ty {
-                        Type::Container(Container::Func(..)) => {
+                        Type::Container(Container::FnPointer | Container::Closure, _) => {
                             let params = self.lower_exprs(params);
                             Expr::CallLocal(local, params)
                         }
@@ -122,7 +123,7 @@ impl<'a, 's> Lower<'a, 's> {
                     "unreachable" => {
                         let (name, ty) = tanot.for_entity[0].clone();
                         assert_eq!(*name, "self");
-                        let ty = self.finalizer(|mut fin| (fin.apply(&ty), fin.errors));
+                        let ty = self.finalizer(|fin| fin.transform(&ty));
                         self.lower_builtin::<0>(params, |_| Expr::Unreachable(ty))
                     }
                     "transmute" => self.lower_builtin(params, |[inner]| inner),
@@ -132,13 +133,13 @@ impl<'a, 's> Lower<'a, 's> {
                     "reflect_type" => {
                         let (name, ty) = tanot.for_entity[0].clone();
                         assert_eq!(*name, "self");
-                        let ty = self.finalizer(|mut fin| (fin.apply(&ty), fin.errors));
+                        let ty = self.finalizer(|fin| fin.transform(&ty));
                         Expr::ReflectTypeOf(ty)
                     }
                     "size_of" => {
                         let (name, ty) = tanot.for_entity[0].clone();
                         assert_eq!(*name, "self");
-                        let ty = self.finalizer(|mut fin| (fin.apply(&ty), fin.errors));
+                        let ty = self.finalizer(|fin| fin.transform(&ty));
                         Expr::SizeOf(ty)
                     }
                     _ => panic!("unknown builtin: {name}"),
@@ -173,8 +174,7 @@ impl<'a, 's> Lower<'a, 's> {
                 to_call
             }
             hir::Expr::Access(rvar, object, name) => {
-                let Some((key, params)) = self.finalizer(|mut fin| (fin.record(*rvar), fin.errors))
-                else {
+                let Some((key, params)) = self.finalizer(|fin| fin.record(*rvar)) else {
                     return Expr::Poison;
                 };
                 let object = self.lower_expr((**object).as_ref());
@@ -186,8 +186,7 @@ impl<'a, 's> Lower<'a, 's> {
                 Expr::Access(Box::new(object), key, params, field)
             }
             hir::Expr::Record(rvar, _, modified, fields) => {
-                let Some((key, params)) = self.finalizer(|mut fin| (fin.record(*rvar), fin.errors))
-                else {
+                let Some((key, params)) = self.finalizer(|fin| fin.record(*rvar)) else {
                     return Expr::Poison;
                 };
 
@@ -237,8 +236,8 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Expr::Cast(expr, ty) => {
                 let mexpr = self.lower_expr((**expr).as_ref());
                 let ty_of_expr = self.current.casts_and_matches.pop_front().unwrap();
-                let (ty, ty_of_expr) = self
-                    .finalizer(|mut fin| ((fin.apply(&ty), fin.apply(&ty_of_expr)), fin.errors));
+                let (ty, ty_of_expr) =
+                    self.finalizer(|fin| (fin.transform(&ty), fin.transform(&ty_of_expr)));
                 self.lower_cast(mexpr, ty_of_expr.tr(expr.span), ty)
             }
             hir::Expr::Poison => Expr::Poison,
@@ -267,19 +266,12 @@ impl<'a, 's> Lower<'a, 's> {
         match lit {
             hir::Literal::Bool(b) => Expr::Bool(*b),
             hir::Literal::Int(neg, n, nvar) => {
-                let Type::Prim(Prim::Int(signed, bitsize)) =
-                    self.finalizer(|mut fin| (fin.var(*nvar), fin.errors))
-                else {
+                let Type::Int(intsize) = self.finalizer(|fin| fin.var(*nvar)) else {
                     return Expr::Poison;
                 };
+                let n = *n as i128;
 
-                match signed {
-                    true => Expr::Int(bitsize, neg.then(|| -(*n as i128)).unwrap_or(*n as i128)),
-                    false => {
-                        assert!(!*neg);
-                        Expr::UInt(bitsize, *n)
-                    }
-                }
+                Expr::Int(intsize, neg.then(|| -n).unwrap_or(n))
             }
             hir::Literal::Float(f) => Expr::Float(*f),
             hir::Literal::String(str) => {
@@ -289,9 +281,8 @@ impl<'a, 's> Lower<'a, 's> {
 
                 let func = self.items.pinfo.string_from_raw_parts;
                 let ptr = Expr::ReadOnly(ro_key);
-                let len = Expr::UInt(Bitsize::default(), len as u128); // TODO: 32-bit target
-                let finst =
-                    ForeignInst { generics: Map::new(), pgenerics: Map::new(), self_: None };
+                let len = Expr::Int(IntSize::new(false, self.target.int_size()), len as i128);
+                let finst = GenericMapper::new(vec![], None);
 
                 Expr::CallFunc(func.map(NFunc::Key), finst, vec![ptr, len])
             }
@@ -301,30 +292,36 @@ impl<'a, 's> Lower<'a, 's> {
     fn lower_cast(&mut self, expr: mir::Expr, ty_of_expr: Tr<Type>, to: Type) -> Expr {
         let expr = Box::new(expr);
         match (&ty_of_expr.value, to) {
-            (Type::Prim(Prim::Int(froms, fromb)), Type::Prim(Prim::Int(tos, tob))) => {
-                Expr::IntCast(expr, (*froms, *fromb), (tos, tob))
+            (Ty::Int(fromsize), Ty::Int(tosize)) => Expr::IntCast(expr, *fromsize, tosize),
+            (Ty::Int(intsize), Ty::Simple("f64")) => {
+                todo!("int to float");
             }
-            (Type::Prim(Prim::Int(..)), Type::Prim(Prim::Float)) => {
-                todo!();
+            (Type::Simple("float"), Type::Int(intsize)) => {
+                todo!("float to int");
             }
-            (Type::Prim(Prim::Float), Type::Prim(Prim::Int(..))) => {
-                todo!();
-            }
-            (_, Type::Defined(M { value: key::TypeKind::Trait(value), module }, params)) => {
+            (
+                _,
+                Type::Container(
+                    Container::Defined(M { value: key::TypeKind::Trait(value), module }),
+                    params,
+                ),
+            ) => {
                 let trait_ = M { value, module };
                 let con = Constraint { span: ty_of_expr.span, trait_, params: params.clone() };
                 self.env.push_constraint(ty_of_expr.clone(), con);
                 Expr::ObjectCast(expr, ty_of_expr.value, trait_, params)
             }
-            (Type::Prim(Prim::Int(signed, bitsize)), Type::Container(Container::Pointer(_))) => {
-                Expr::IntCast(expr, (*signed, *bitsize), (false, Bitsize(64)))
+            (Type::Int(intsize), Type::Container(Container::Pointer, _)) => {
+                Expr::IntCast(expr, *intsize, IntSize::new(false, self.target.int_size()))
             }
-            (Type::Container(Container::Pointer(_)), Type::Prim(Prim::Int(signed, bitsize))) => {
-                Expr::IntCast(expr, (false, Bitsize(64)), (signed, bitsize))
+            (Type::Container(Container::Pointer, _), Type::Int(intsize)) => {
+                Expr::IntCast(expr, IntSize::new(false, self.target.int_size()), intsize)
             }
-            (Type::Container(Container::Pointer(_)), Type::Container(Container::Pointer(_))) => {
+
+            (Type::Container(Container::Pointer, _), Type::Container(Container::Pointer, _)) => {
                 // TODO: this cast does nothing. But; we still put it here because we need an expression
-                Expr::IntCast(expr, (false, Bitsize(64)), (false, Bitsize(64)))
+                let ptr = IntSize::new(false, self.target.int_size());
+                Expr::IntCast(expr, ptr, ptr)
             }
             (_, to) => {
                 self.errors.push(FinError::InvalidCast(ty_of_expr, to));
@@ -336,25 +333,26 @@ impl<'a, 's> Lower<'a, 's> {
     fn lower_list(&mut self, elems: &[Tr<hir::Expr<'s>>], ivar: Var) -> Expr {
         let type_ = self.items.list_default;
 
-        let inner = self.finalizer(|mut fin| (fin.var(ivar), fin.errors));
-        let list_type = Type::List(type_, vec![inner.clone()]);
+        let inner = self.finalizer(|fin| fin.var(ivar));
+        let list_type = Type::list(type_, vec![inner.clone()]);
 
         let listable = self.items.pinfo.listable;
         let method = |m| listable.module.m(NFunc::Method(listable.value, m));
 
-        let inst = || ConcreteInst {
-            pgenerics: [inner.clone()].into_iter().collect(),
-            generics: Map::new(),
-            self_: Some(list_type.clone()),
-        };
+        let mut inst =
+            GenericMapper::from_types(GenericKind::Entity, std::iter::once(inner.clone()));
+        inst.self_ = Some(list_type.clone());
 
         match elems {
-            [] => Expr::CallFunc(method(LISTABLE_NEW), inst(), vec![]),
+            [] => Expr::CallFunc(method(LISTABLE_NEW), inst.clone(), vec![]),
             elems => {
                 let new = Expr::CallFunc(
                     method(LISTABLE_WITH_CAPACITY),
-                    inst(),
-                    vec![Expr::Int(Bitsize::default(), elems.len() as i128)],
+                    inst.clone(),
+                    vec![Expr::Int(
+                        IntSize::new(true, self.target.int_size()),
+                        elems.len() as i128,
+                    )],
                 );
 
                 let elems = self.lower_exprs(elems);
@@ -363,7 +361,7 @@ impl<'a, 's> Lower<'a, 's> {
                 // lowers to
                 // Listable:Cons 1 (Listable:Cons 2 (Listable:Cons 3 new))
                 elems.into_iter().rev().fold(new, |xs, x| {
-                    Expr::CallFunc(method(LISTABLE_CONS), inst(), vec![x, xs])
+                    Expr::CallFunc(method(LISTABLE_CONS), inst.clone(), vec![x, xs])
                 })
             }
         }
@@ -377,10 +375,7 @@ impl<'a, 's> Lower<'a, 's> {
     ) -> Expr {
         let on = self.lower_expr(on);
         let ty = self.current.casts_and_matches.pop_front().unwrap();
-        let ty = self.finalizer(|mut fin| {
-            let ty = fin.apply(&ty);
-            (ty, fin.errors)
-        });
+        let ty = self.finalizer(|fin| fin.transform(&ty));
 
         let mut iter = branches.iter();
         let (initp, inite) = iter.next().unwrap();
@@ -492,8 +487,7 @@ impl fmt::Display for Expr {
                     .map(|(k, v)| format!("{k} {} {v}", '='.symbol()))
                     .format(", "),
             ),
-            Expr::UInt(bitsize, n) => write!(f, "{n} {as_} u{bitsize}"),
-            Expr::Int(bitsize, n) => write!(f, "{n} {as_} i{bitsize}"),
+            Expr::Int(intsize, n) => write!(f, "{n} {as_} {intsize}"),
             Expr::Bool(b) => b.fmt(f),
             Expr::Float(n) => n.fmt(f),
             Expr::ReadOnly(k) => k.fmt(f),
@@ -534,13 +528,7 @@ impl fmt::Display for Expr {
                     )
                 }
             },
-            Expr::IntCast(expr, _, to) => write!(
-                f,
-                "{op}{expr} {} {}{}{cp}",
-                "as".keyword(),
-                to.0.then_some('i').unwrap_or('u'),
-                to.1
-            ),
+            Expr::IntCast(expr, _, to) => write!(f, "{op}{expr} {} {to}{cp}", "as".keyword(),),
             Expr::ObjectCast(expr, _, tr, params) => {
                 write!(
                     f,

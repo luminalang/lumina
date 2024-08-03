@@ -1,4 +1,4 @@
-use super::{Constraint, ForeignInst, IType, Type};
+use super::{Constraint, Forall, ForeignInst, IType, Inference, Static, Type};
 use derive_new::new;
 use lumina_key as key;
 use lumina_key::{entity_impl, keys, LinearFind, Map, ModMap, M};
@@ -9,13 +9,12 @@ use tracing::trace;
 /// same context from multiple locations.
 ///
 /// The type environment contains all contexts that types direct to.
-#[derive(Debug)]
 pub struct TEnv<'s> {
     pub self_: Option<IType>,
     pub(crate) records: Map<RecordVar, RecordVarInfo<'s>>,
     pub(crate) vars: Map<Var, VarInfo>,
-    pub(crate) constraint_checks: Vec<(Var, Constraint<IType>)>,
-    pub(crate) concrete_constraint_checks: Vec<(Tr<Type>, Constraint<Type>)>,
+    pub(crate) constraint_checks: Vec<(Var, Constraint<Inference>)>,
+    pub(crate) concrete_constraint_checks: Vec<(Tr<Type>, Constraint<Static>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,7 +32,6 @@ keys! {
     VarTraitConstraint . "vtrait"
 }
 
-#[derive(Debug)]
 pub struct RecordVarInfo<'s> {
     pub(crate) span: Span,
     pub(crate) assignment: RecordAssignment<'s>,
@@ -41,7 +39,7 @@ pub struct RecordVarInfo<'s> {
     pub(crate) verified: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum RecordAssignment<'s> {
     Ok(M<key::Record>, Vec<IType>),
 
@@ -51,7 +49,7 @@ pub enum RecordAssignment<'s> {
     None,                     // The rvar has not yet been assigned to anything
 }
 
-#[derive(new, Debug)]
+#[derive(new)]
 pub struct VarInfo {
     #[new(default)]
     pub(crate) assignment: Option<Tr<IType>>,
@@ -77,6 +75,19 @@ impl<'s> TEnv<'s> {
         }
     }
 
+    pub fn unify_forall(&mut self, span: Span, forall: &Forall<'s, Static>) -> Vec<IType> {
+        forall
+            .generics
+            .values()
+            .map(|gdata| {
+                if !gdata.trait_constraints.is_empty() {
+                    panic!("unify short-hand used for foreign with constraints which need instantiation");
+                };
+                IType::infer(self.var(span))
+            })
+            .collect()
+    }
+
     pub fn set_self(&mut self, ty: IType) {
         self.self_ = Some(ty);
     }
@@ -85,18 +96,6 @@ impl<'s> TEnv<'s> {
         trace!("{var} -> {ty}");
         let previous = self.vars[var].assignment.replace(ty);
         assert!(previous.is_none(), "double assignment")
-    }
-
-    pub fn inst<Ty: Clone, T, F>(&self, params: &[Ty], and_then: F) -> T
-    where
-        F: FnOnce(ForeignInst<Ty>) -> T,
-    {
-        let finst = ForeignInst {
-            generics: params.iter().cloned().collect(),
-            pgenerics: Map::new(),
-            self_: None,
-        };
-        and_then(finst)
     }
 
     pub fn constraint_of(&self, var: Var) -> Option<IntConstraint> {
@@ -135,11 +134,11 @@ impl<'s> TEnv<'s> {
         self.records[var].span
     }
 
-    pub fn push_constraint(&mut self, ty: Tr<Type>, con: Constraint<Type>) {
+    pub fn push_constraint(&mut self, ty: Tr<Type>, con: Constraint<Static>) {
         self.concrete_constraint_checks.push((ty, con))
     }
 
-    pub fn push_iconstraint(&mut self, ty: Var, con: Constraint<IType>) {
+    pub fn push_iconstraint(&mut self, ty: Var, con: Constraint<Inference>) {
         self.constraint_checks.push((ty, con))
     }
 

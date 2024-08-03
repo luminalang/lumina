@@ -1,8 +1,10 @@
-use super::func::{InstInfo, Local};
+use super::func::InstInfo;
 use super::tcheck::emit_record_error;
 use super::tyfmt::TyFmtState;
-use super::{Current, LangItems, RSolver, ReadOnlyBytes, Verify};
+use super::{Current, LangItems, RSolver, ReadOnlyBytes};
 use crate::prelude::*;
+use crate::Target;
+use std::ops::Not;
 
 mod expr;
 pub use expr::Expr;
@@ -10,11 +12,10 @@ pub mod pat;
 
 use derive_new::new;
 use lumina_typesystem::{
-    implicitly_declare_generic, Bitsize, ConcreteInst, Container, Finalizer, Forall, ForeignInst,
-    FuncKind, GenericKind, IType, ImplIndex, RecordVar, TEnv, Type, Var,
+    Finalizer, Forall, GenericMapper, IType, ImplIndex, Inference, IntSize, Static, TEnv,
+    Transformer, Type,
 };
 use lumina_util::Highlighting;
-use lumina_util::ParamFmt;
 use std::fmt;
 
 #[derive(new)]
@@ -29,9 +30,23 @@ pub struct Function {
 
 #[derive(Debug, Clone)]
 pub struct ConcreteTyping {
-    pub forall: Forall<'static, Type>,
+    pub forall: Forall<'static, Static>,
     pub params: Vec<Type>,
     pub returns: Type,
+}
+
+impl ConcreteTyping {
+    pub fn from_hir<T>(
+        forall: Forall<'static, Static>,
+        hir: &hir::Typing<T>,
+        mut f: impl FnMut(Tr<&T>) -> Type,
+    ) -> Self {
+        Self {
+            forall,
+            params: hir.params.values().map(|ty| f(ty.as_ref())).collect(),
+            returns: f(hir.returns.as_ref()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, new)]
@@ -54,8 +69,8 @@ pub struct Lower<'a, 's> {
 
     read_only_table: &'a mut ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
 
-    forall: &'a mut Forall<'s, IType>,
-    lforalls: &'a mut Map<key::Lambda, Forall<'s, IType>>,
+    forall: &'a mut Forall<'s, Inference>,
+    lforalls: &'a mut Map<key::Lambda, Forall<'s, Inference>>,
     pub current: &'a mut Current,
     pub implicits: bool,
 
@@ -63,6 +78,8 @@ pub struct Lower<'a, 's> {
     rsolver: RSolver<'a, 's>,
     vnames: &'a ModMap<key::Sum, Map<key::SumVariant, Tr<&'s str>>>,
     vtypes: &'a ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
+
+    target: Target,
 
     #[new(default)]
     pub errors: Vec<FinError<'s>>,
@@ -81,37 +98,34 @@ pub enum FinError<'s> {
 impl<'a, 's> Lower<'a, 's> {
     fn finalizer<F, T>(&mut self, and_then: F) -> T
     where
-        F: FnOnce(Finalizer<'_, '_, 's>) -> (T, Vec<lumina_typesystem::FinError<'s>>),
+        F: FnOnce(&mut Finalizer<'_, '_, 's>) -> T,
     {
         let module = self.current.fkey.module;
         let system = self.rsolver.as_typesystem(module, self.env);
-        let fin = Finalizer::new(system, self.forall, self.lforalls, self.implicits);
-        let (value, errors) = and_then(fin);
-        self.errors.extend(errors.into_iter().map(FinError::TS));
+        let mut fin = Finalizer::new(
+            system,
+            self.forall,
+            self.lforalls,
+            IntSize::new(true, self.target.int_size()),
+            self.implicits,
+        );
+        let value = and_then(&mut fin);
+        self.errors.extend(fin.errors.into_iter().map(FinError::TS));
         value
     }
 
-    fn fin_typing(&mut self, info: &InstInfo) -> (ConcreteInst, CallTypes) {
+    fn fin_typing(&mut self, info: &InstInfo) -> (GenericMapper<Static>, CallTypes) {
         let inst = self.fin_inst(&info.inst);
-        self.finalizer(|mut fin| {
-            let ptypes = info.ptypes.iter().map(|ty| fin.apply(&**ty)).collect();
-            let returns = fin.apply(&info.ret);
+        self.finalizer(|fin| {
+            let ptypes = info.ptypes.iter().map(|ty| fin.transform(&**ty)).collect();
+            let returns = fin.transform(&info.ret);
             let call = CallTypes::new(ptypes, returns);
-            ((inst, call), fin.errors)
+            (inst, call)
         })
     }
 
-    fn fin_inst(&mut self, info: &ForeignInst<Var>) -> ConcreteInst {
-        self.finalizer(|mut fin| {
-            (
-                ConcreteInst {
-                    generics: info.generics.values().map(|var| fin.var(*var)).collect(),
-                    pgenerics: info.pgenerics.values().map(|var| fin.var(*var)).collect(),
-                    self_: info.self_.map(|var| fin.var(var)),
-                },
-                fin.errors,
-            )
-        })
+    fn fin_inst(&mut self, info: &GenericMapper<Inference>) -> GenericMapper<Static> {
+        self.finalizer(|fin| info.map(|ty| fin.transform(ty)))
     }
 
     pub fn lower_func_typing(&mut self, typing: &hir::Typing<IType>) -> ConcreteTyping {
@@ -162,18 +176,17 @@ impl<'a, 's> Lower<'a, 's> {
     ) -> ConcreteTyping {
         assert_eq!(lambda, self.current.lambda);
 
-        self.finalizer(|mut fin| {
-            (
-                ConcreteTyping {
-                    params: typing.params.values().map(|ty| fin.apply(&*ty)).collect(),
-                    returns: fin.apply(&typing.returns),
-                    forall: {
-                        let cons = fin.forall(lambda).1.clone();
-                        fin.lower_constraints_of(&cons, |_| "_")
-                    },
-                },
-                fin.errors,
-            )
+        self.finalizer(|fin| ConcreteTyping {
+            params: typing
+                .params
+                .values()
+                .map(|ty| fin.transform(&*ty))
+                .collect(),
+            returns: fin.transform(&typing.returns),
+            forall: {
+                let cons = fin.forall(lambda).1.clone();
+                cons.map(|_, ty| fin.transform(ty), Forall::<()>::name_by_key)
+            },
         })
     }
 
@@ -417,6 +430,31 @@ impl fmt::Display for Lambda {
 
 impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let constraints = self
+            .typing
+            .forall
+            .generics
+            .iter()
+            .filter_map(|(generic, gdata)| {
+                let cons = &gdata.trait_constraints;
+                cons.is_empty().not().then(|| {
+                    format!(
+                        "{generic} {} {}",
+                        "can".keyword(),
+                        cons.iter().format(" + ")
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let w = "when".keyword();
+
+        match constraints.as_slice() {
+            [] => Ok(()),
+            [con] => writeln!(f, "{w} {con}"),
+            many => writeln!(f, "{w}\n  {}", many.iter().format("\n  ")),
+        }?;
+
         write!(
             f,
             "{} {} {}\n  {}",
@@ -450,34 +488,10 @@ impl fmt::Display for Function {
 
 impl fmt::Display for ConcreteTyping {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if !self.forall.is_empty() {
-            write!(
-                f,
-                "{} {} . ",
-                '∀'.symbol(),
-                self.forall
-                    .iter()
-                    .map(|(g, gdata)| {
-                        if gdata.trait_constraints.is_empty() {
-                            g.to_string()
-                        } else {
-                            format!(
-                                "({g} {} {})",
-                                "can".keyword(),
-                                gdata
-                                    .trait_constraints
-                                    .iter()
-                                    .map(|con| ParamFmt::new(&con.trait_, &con.params))
-                                    .format(", ")
-                            )
-                        }
-                    })
-                    .format(" ")
-            )?;
-        }
         write!(
             f,
-            "{}{} {} {}{}",
+            "{}{}{} {} {}{}",
+            &self.forall,
             '('.symbol(),
             self.params.iter().format(", "),
             "->".symbol(),

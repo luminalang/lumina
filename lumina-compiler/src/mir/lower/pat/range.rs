@@ -2,7 +2,7 @@ use super::merge::{IsReachable, Merge, Merger};
 use super::{Branching, DecTree, TreeTail};
 use derive_new::new;
 use lumina_parser::pat::Bound;
-use lumina_typesystem::Bitsize;
+use lumina_typesystem::IntSize;
 use std::cmp::Ordering;
 use std::fmt;
 use tracing::warn;
@@ -36,15 +36,11 @@ impl Constraints {
     }
 }
 
-pub fn constraints_from_bitsize(signed: bool, bitsize: Bitsize) -> Constraints {
-    let max = match signed {
-        true => (1 << (bitsize.0 - 1) as i128) - 1,
-        false => (1 << bitsize.0 as i128) - 1,
-    };
-
-    let min = signed.then(|| -max - 1).unwrap_or(0);
-
-    Constraints { min, max }
+impl From<IntSize> for Constraints {
+    fn from(intsize: IntSize) -> Self {
+        let (min, max) = (intsize.min_value() as i128, intsize.max_value() as i128);
+        Constraints { min, max }
+    }
 }
 
 impl<'a, 's, Tail: std::fmt::Display + Clone + PartialEq, M: Merge<'s, Tail>>
@@ -52,12 +48,11 @@ impl<'a, 's, Tail: std::fmt::Display + Clone + PartialEq, M: Merge<'s, Tail>>
 {
     pub fn merge_int_bounds(
         self,
-        signed: bool,
-        bitsize: Bitsize,
+        intsize: IntSize,
         next: &mut Branching<Range, Tail>,
         bounds: &[Bound; 2],
     ) -> IsReachable {
-        let con = constraints_from_bitsize(signed, bitsize);
+        let con = Constraints::from(intsize);
 
         for (range, _) in &next.branches {
             if range.con != con {
@@ -192,22 +187,6 @@ impl<'a, 's, Tail: std::fmt::Display + Clone + PartialEq, M: Merge<'s, Tail>>
 
         let (_, tree) = &mut ints.branches[i];
         reachable | self.next(tree)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn constraints() {
-        let cons = constraints_from_bitsize(true, Bitsize(64));
-        assert_eq!(cons.max, i64::MAX as i128);
-        assert_eq!(cons.min, i64::MIN as i128);
-
-        let cons = constraints_from_bitsize(false, Bitsize(64));
-        assert_eq!(cons.max, u64::MAX as i128);
-        assert_eq!(cons.min, u64::MIN as i128);
     }
 }
 

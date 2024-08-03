@@ -14,12 +14,13 @@
 //! Substitute generic names for generic keys, thus resolving which `Forall` they belong to
 
 use crate::prelude::*;
-use crate::ProjectInfo;
+use crate::{ProjectInfo, Target};
 use ast::{Mod, AST};
 use derive_new::new;
 use lumina_parser as parser;
 use lumina_typesystem::{
-    Constraint, Forall, GenericData, GenericKind, IType, ImplIndex, Prim, TEnv, Type,
+    Constraint, Downgrade, Forall, Generic, GenericKind, IType, ImplIndex, Inference, Static, TEnv,
+    Transformer, Ty, Type,
 };
 use lumina_util::Highlighting;
 use std::cell::RefCell;
@@ -35,23 +36,23 @@ pub use pat::Pattern;
 mod scope;
 mod ty;
 pub use ty::TypeAnnotation;
-use ty::{SelfHandler, Ty, TypeEnvInfo};
+use ty::{SelfHandler, TypeEnvInfo};
 
 pub struct HIR<'s> {
     pub funcs: ModMap<key::Func, FuncDefKind<'s>>,
 
-    pub records: ModMap<key::Record, (Tr<&'s str>, Forall<'s, Type>)>,
+    pub records: ModMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
     pub field_types: ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
 
-    pub sums: ModMap<key::Sum, (Tr<&'s str>, Forall<'s, Type>)>,
+    pub sums: ModMap<key::Sum, (Tr<&'s str>, Forall<'s, Static>)>,
     pub variant_types: ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
 
-    pub traits: ModMap<key::Trait, (Tr<&'s str>, Forall<'s, Type>)>,
+    pub traits: ModMap<key::Trait, (Tr<&'s str>, Forall<'s, Static>)>,
     pub assoc: ModMap<key::Trait, Map<key::AssociatedType, Option<Tr<Type>>>>,
 
-    pub impls: ModMap<key::Impl, Forall<'s, Type>>,
+    pub impls: ModMap<key::Impl, Forall<'s, Static>>,
     pub impltors: ModMap<key::Impl, Tr<Type>>,
-    pub iassoc: ModMap<key::Impl, Map<key::AssociatedType, Tr<Type>>>,
+    pub iassoc: ModMap<key::Impl, Vec<(Tr<&'s str>, Tr<Type>)>>,
     pub itraits: ModMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
 
     pub langitems: Map<key::Module, LangItems<'s>>,
@@ -66,13 +67,13 @@ pub struct HIR<'s> {
     pub methods: ModMap<key::Trait, Map<key::Method, key::Func>>,
     pub imethods: ModMap<key::Impl, Map<key::Method, key::Func>>,
     pub assoc_names: ModMap<key::Trait, Map<key::AssociatedType, Tr<&'s str>>>,
-    pub iassoc_names: ModMap<key::Impl, Map<key::AssociatedType, Tr<&'s str>>>,
 }
 
 type LangItems<'s> = HashMap<&'s str, M<key::TypeKind>>;
 
 pub fn run<'a, 's>(
     info: ProjectInfo,
+    target: Target,
     ast: AST<'s>,
 ) -> (HIR<'s>, ModMap<key::Func, TEnv<'s>>, ImplIndex) {
     let mut tenvs = ast.entities.fheaders.secondary();
@@ -90,51 +91,66 @@ pub fn run<'a, 's>(
     let mut itraits = ast.entities.impls.secondary_inner_capacity();
     let mut langitems = Map::with_capacity(ast.entities.langitems.len());
 
+    let info = Info {
+        ast: &ast,
+        module: key::Module(0),
+        langitems: &HashMap::new(),
+        pinfo: &info,
+        target,
+    };
+
     // Lower type declarations in all modules
     for module in ast.sources.modules() {
-        let litems = lower_langitems(&ast, module, ast.entities.get_langitems(module));
+        let langs = lower_langitems(&ast, module, ast.entities.get_langitems(module));
+
+        let info = Info { module, langitems: &langs, ..info };
 
         ast.entities.sums.iter_module(module).for_each(|sum| {
-            let (variants, forall) = lower_sum(&ast, &litems, sum, &info);
+            let (variants, forall) = lower_sum(info, sum);
             let header = &ast.entities.sums[sum].header;
             sums.push(module, (header.name.tr(header.span), forall));
             variant_types.push_as(sum, variants);
         });
 
         ast.entities.records.iter_module(module).for_each(|record| {
-            let (fields, forall) = lower_record(&ast, &litems, record, &info);
+            let (fields, forall) = lower_record(info, record);
             let header = &ast.entities.records[record].header;
             records.push(module, (header.name.tr(header.span), forall));
             field_types.push_as(record, fields);
         });
 
         ast.entities.traits.iter_module(module).for_each(|trait_| {
-            let (tassoc, forall) = lower_trait(&ast, &litems, trait_, &info);
+            let (tassoc, forall) = lower_trait(info, trait_);
             let header = &ast.entities.traits[trait_].header;
             traits.push_as(trait_, (header.name.tr(header.span), forall));
             assoc.push_as(trait_, tassoc);
         });
 
-        langitems.push_as(module, litems);
+        langitems.push_as(module, langs);
     }
 
     // Lowering an impl requires that the trait it implements is already lowered.
     for module in ast.sources.modules() {
+        let info = Info { module, langitems: &langitems[module], ..info };
+
         for impl_ in ast.entities.impls.iter_module(module) {
-            let langitems = &langitems[module];
-            let parts = lower_impl(&ast, langitems, impl_, &info);
-            impls.push_as(impl_, parts.2);
-            impltors.push_as(impl_, parts.3);
-            iassoc.push_as(impl_, parts.4);
-            itraits.push_as(impl_, (parts.0, parts.1));
+            let parts = lower_impl(info, impl_);
+            let Ok(trait_) = parts.0.value.as_trait() else {
+                todo!();
+            };
+            impls.push_as(impl_, parts.1);
+            impltors.push_as(impl_, parts.2);
+            iassoc.push_as(impl_, parts.3);
+            itraits.push_as(impl_, trait_);
         }
     }
 
     // Lowering functions includes methods, which requires that the impl header is already lowered.
     for module in ast.sources.modules() {
-        let langitems = &langitems[module];
+        let info = Info { module, langitems: &langitems[module], ..info };
+
         ast.entities.fheaders.iter_module(module).for_each(|func| {
-            let (fdef, tenv) = lower_func(&ast, &traits, &impls, &impltors, &langitems, func, info);
+            let (fdef, tenv) = lower_func(info, &traits, &impls, &impltors, func);
             funcs.push_as(func, fdef);
             tenvs.push_as(func, tenv);
         });
@@ -157,18 +173,12 @@ pub fn run<'a, 's>(
         .associated_types
         .map(|(_, assoc)| assoc.values().map(|a| a.name.tr(a.span)).collect());
 
-    let iassoc_names = ast
-        .entities
-        .impls
-        .map(|(_, i)| i.associations.values().map(|a| a.name.tr(a.span)).collect());
-
     (
         HIR {
             fnames: ast.entities.field_names,
             val_initializers: ast.entities.vals,
             func_names,
             assoc_names,
-            iassoc_names,
             sources: ast.sources,
             lookups: ast.lookups,
             methods: ast.entities.methods,
@@ -238,13 +248,11 @@ fn lower_langitems<'a, 's>(
 }
 
 fn lower_func<'a, 's>(
-    ast: &'a AST<'s>,
-    tforalls: &ModMap<key::Trait, (Tr<&'s str>, Forall<'s, Type>)>,
-    iforalls: &ModMap<key::Impl, Forall<'s, Type>>,
+    Info { ast, target, langitems, pinfo, .. }: Info<'a, 's>,
+    tforalls: &ModMap<key::Trait, (Tr<&'s str>, Forall<'s, Static>)>,
+    iforalls: &ModMap<key::Impl, Forall<'s, Static>>,
     impltors: &ModMap<key::Impl, Tr<Type>>,
-    langitems: &LangItems<'s>,
     func: M<key::Func>,
-    pinfo: ProjectInfo,
 ) -> (FuncDefKind<'s>, TEnv<'s>) {
     let module = func.module;
     let header = &ast.entities.fheaders[func];
@@ -264,63 +272,54 @@ fn lower_func<'a, 's>(
     let list = list_from_langs(&flangitems, &langitems, &pinfo);
     let mut tinfo = TypeEnvInfo::new(true, list);
 
-    let string = from_langs("string", &flangitems, langitems)
-        .unwrap_or_else(|| pinfo.string.map(key::TypeKind::Record));
-
     match &ast.entities.fbodies[func] {
         ast::FuncBody::Extern { link_name } => {
-            let typing = lower_extern_func(module, ast, header, list);
+            let typing = ty::TypeLower::new(module, ast, target.int_size(), &mut tinfo)
+                .typing_or_emit_and_poison(header, "extern functions");
             let kind = FuncDefKind::Extern { link_name: link_name.clone(), typing };
             (kind, TEnv::new())
         }
         ast::FuncBody::Val(body, _) | ast::FuncBody::Func(body) => {
-            let to_kind = FuncDefKind::Defined;
             let mut tinfo = tinfo.inference(TEnv::new());
-            ExprLower::new(module, ast, &mut tinfo, &body.where_binds)
-                .lower_func(&header, &body, to_kind, no_mangle)
+            let (fdef, env) = ExprLower::new(module, ast, &mut tinfo, &body.where_binds, target)
+                .lower_func(&header, &body, no_mangle);
+            (FuncDefKind::Defined(fdef), env)
         }
         ast::FuncBody::TraitMethod(Some(body), tr) => {
-            let to_kind = |k| FuncDefKind::TraitDefaultMethod(*tr, k);
             let mut tinfo = tinfo.inference(TEnv::new());
             tinfo.enter_type_or_impl_or_method(tforalls[*tr].1.clone(), GenericKind::Parent);
             tinfo.self_handler = SelfHandler::Direct;
-            ExprLower::new(module, ast, &mut tinfo, &body.where_binds)
-                .lower_func(&header, &body, to_kind, no_mangle)
+            let (fdef, env) = ExprLower::new(module, ast, &mut tinfo, &body.where_binds, target)
+                .lower_func(&header, &body, no_mangle);
+
+            let kind = disallow_inference_in_trait_default(module, ast, *tr, fdef);
+            (kind, env)
         }
         ast::FuncBody::ImplMethod(body, imp) => {
-            let self_ = impltors[*imp].i();
-            let to_kind = |f| FuncDefKind::ImplMethod(*imp, f);
+            let self_ = Downgrade.transform(&impltors[*imp]);
             let mut env = TEnv::new();
             env.set_self(self_);
             let mut tinfo = tinfo.inference(env);
             tinfo.enter_type_or_impl_or_method(iforalls[*imp].clone(), GenericKind::Parent);
             tinfo.self_handler = SelfHandler::Direct;
-            ExprLower::new(module, ast, &mut tinfo, &body.where_binds)
-                .lower_func(&header, &body, to_kind, no_mangle)
+            let (fdef, env) = ExprLower::new(module, ast, &mut tinfo, &body.where_binds, target)
+                .lower_func(&header, &body, no_mangle);
+            (FuncDefKind::ImplMethod(*imp, fdef), env)
         }
         ast::FuncBody::TraitMethod(None, trait_) => {
             tinfo.self_handler = SelfHandler::Direct;
             let tforall = tforalls[*trait_].clone().1;
             tinfo.enter_type_or_impl_or_method(tforall, GenericKind::Parent);
-            tinfo.enter_type_or_impl_or_method(Forall::new(), GenericKind::Entity);
-            let typing = lower_func_typing(ast, module, header, &mut tinfo);
+            tinfo.enter_type_or_impl_or_method(Forall::new(0), GenericKind::Entity);
+
+            let typing = ty::TypeLower::new(module, ast, target.int_size(), &mut tinfo)
+                .typing_or_emit_and_poison(header, "trait methods");
+
             let forall = tinfo.leave_type_or_impl_or_method();
             let kind = FuncDefKind::TraitHeader(*trait_, forall, typing);
             (kind, TEnv::new())
         }
     }
-}
-
-fn lower_extern_func<'s>(
-    module: key::Module,
-    ast: &AST<'s>,
-    header: &parser::func::Header<'s>,
-    list: M<key::TypeKind>,
-) -> Typing<Type> {
-    let mut tinfo = TypeEnvInfo::new(false, list);
-    let typing = lower_func_typing::<Type>(ast, module, header, &mut tinfo);
-    info!("typing lowered to: {typing}");
-    typing
 }
 
 fn tydef_type_env<'s, K: Into<key::TypeKind>>(
@@ -330,23 +329,28 @@ fn tydef_type_env<'s, K: Into<key::TypeKind>>(
 ) -> TypeEnvInfo<'s> {
     let mut tinfo = TypeEnvInfo::new(false, list);
     tinfo.self_handler = SelfHandler::Substituted(kind.map(Into::into));
-    let forall = generics
-        .values()
-        .map(|&name| GenericData::new(name))
-        .collect::<Forall<'s, _>>();
+    let forall = Forall::from_names(generics.values().copied());
 
     tinfo.enter_type_or_impl_or_method(forall, GenericKind::Entity);
 
     tinfo
 }
 
-type LoweredType<'s, K, V> = (Map<K, V>, Forall<'s, Type>);
+/// Information used during the lower of any item
+#[derive(Clone, Copy)]
+struct Info<'a, 's> {
+    ast: &'a AST<'s>,
+    module: key::Module,
+    langitems: &'a LangItems<'s>,
+    pinfo: &'a ProjectInfo,
+    target: Target,
+}
 
-fn lower_sum<'s>(
-    ast: &AST<'s>,
-    lang: &LangItems,
+type LoweredType<'s, K, V> = (Map<K, V>, Forall<'s, Static>);
+
+fn lower_sum<'a, 's>(
+    Info { ast, langitems: lang, pinfo, target, .. }: Info<'a, 's>,
     sum: M<key::Sum>,
-    pinfo: &ProjectInfo,
 ) -> LoweredType<'s, key::SumVariant, Vec<Tr<Type>>> {
     let ty = &ast.entities.sums[sum];
 
@@ -363,7 +367,7 @@ fn lower_sum<'s>(
     let list = list_from_langs(&tlangs, lang, pinfo);
     let mut tinfo = tydef_type_env(sum, &ty.header.type_params, list);
 
-    let mut tlower = ty::TypeLower::new(sum.module, ast, &mut tinfo);
+    let mut tlower = ty::TypeLower::new(sum.module, ast, target.int_size(), &mut tinfo);
 
     let variants = &ast.entities.variant_types[sum];
     (
@@ -372,11 +376,9 @@ fn lower_sum<'s>(
     )
 }
 
-fn lower_record<'s>(
-    ast: &AST<'s>,
-    lang: &LangItems,
+fn lower_record<'a, 's>(
+    Info { ast, langitems: lang, pinfo, target, .. }: Info<'a, 's>,
     rec: M<key::Record>,
-    pinfo: &ProjectInfo,
 ) -> LoweredType<'s, key::RecordField, Tr<Type>> {
     let ty = &ast.entities.records[rec];
 
@@ -392,7 +394,7 @@ fn lower_record<'s>(
     let list = list_from_langs(&tlangs, lang, pinfo);
     let mut tinfo = tydef_type_env(rec, &ty.header.type_params, list);
 
-    let mut tlower = ty::TypeLower::new(rec.module, ast, &mut tinfo);
+    let mut tlower = ty::TypeLower::new(rec.module, ast, target.int_size(), &mut tinfo);
 
     let fields = &ast.entities.field_types[rec];
     (
@@ -404,12 +406,13 @@ fn lower_record<'s>(
     )
 }
 
-fn lower_trait<'s>(
-    ast: &AST<'s>,
-    lang: &LangItems,
+fn lower_trait<'a, 's>(
+    Info { ast, pinfo, langitems, target, .. }: Info<'a, 's>,
     trait_: M<key::Trait>,
-    pinfo: &ProjectInfo,
-) -> (Map<key::AssociatedType, Option<Tr<Type>>>, Forall<'s, Type>) {
+) -> (
+    Map<key::AssociatedType, Option<Tr<Type>>>,
+    Forall<'s, Static>,
+) {
     let module = trait_.module;
     let ty = &ast.entities.traits[trait_];
 
@@ -422,21 +425,16 @@ fn lower_trait<'s>(
 
     let tlangs = lower_langitems(ast, module, &ty.attributes.shared.lang_items);
 
-    let list = list_from_langs(&tlangs, lang, pinfo);
+    let list = list_from_langs(&tlangs, langitems, pinfo);
     let mut tinfo = TypeEnvInfo::new(false, list);
-    let forall = ty
-        .header
-        .type_params
-        .values()
-        .map(|&name| GenericData::new(name))
-        .collect();
+    let forall = Forall::from_names(ty.header.type_params.values().copied());
     tinfo.enter_type_or_impl_or_method(forall, GenericKind::Parent);
     tinfo.self_handler = SelfHandler::Direct;
 
     tinfo.declare_generics = true;
 
     tinfo.declare_generics = false;
-    let mut tlower = ty::TypeLower::new(module, ast, &mut tinfo);
+    let mut tlower = ty::TypeLower::new(module, ast, target.int_size(), &mut tinfo);
 
     let associations = ast.entities.associated_types[trait_]
         .values()
@@ -449,13 +447,15 @@ fn lower_trait<'s>(
     (associations, tinfo.leave_type_or_impl_or_method())
 }
 
+// NOTE: we decided not to support higher-kinded-types for now but some
+// remnents of it still exist like this.
 fn check_generic_param_validity<'s, T>(
     ast: &AST<'s>,
     span: Span,
     module: key::Module,
     forall: &mut Forall<'s, T>,
 ) {
-    for gdata in forall.values_mut() {
+    for gdata in forall.generics.values_mut() {
         if gdata.params == usize::MAX {
             ast.sources
                 .warning("unused type parameter")
@@ -483,17 +483,17 @@ pub enum FuncDefKind<'s> {
         typing: Typing<Type>,
     },
     Defined(FuncDef<'s>),
-    TraitDefaultMethod(M<key::Trait>, FuncDef<'s>),
+    TraitDefaultMethod(M<key::Trait>, Forall<'s, Static>, Typing<Type>, FuncDef<'s>),
     ImplMethod(M<key::Impl>, FuncDef<'s>),
     InheritedDefault(M<key::Trait>, key::Func),
-    TraitHeader(M<key::Trait>, Forall<'s, Type>, Typing<Type>),
+    TraitHeader(M<key::Trait>, Forall<'s, Static>, Typing<Type>),
 }
 
 impl<'s> FuncDefKind<'s> {
     #[track_caller]
     pub fn as_defined(&self) -> &FuncDef<'s> {
         match self {
-            FuncDefKind::TraitDefaultMethod(_, f)
+            FuncDefKind::TraitDefaultMethod(_, _, _, f)
             | FuncDefKind::Defined(f)
             | FuncDefKind::ImplMethod(_, f) => f,
             def => panic!("not a defined function: {def:?}"),
@@ -503,7 +503,7 @@ impl<'s> FuncDefKind<'s> {
 
 #[derive(new, Clone, Debug)]
 pub struct FuncDef<'s> {
-    pub forall: RefCell<Forall<'s, IType>>,
+    pub forall: RefCell<Forall<'s, Inference>>,
     pub typing: Typing<IType>,
     pub list: M<key::TypeKind>,
     pub params: Vec<Tr<Pattern<'s>>>,
@@ -517,7 +517,7 @@ pub struct FuncDef<'s> {
 
 #[derive(Clone, Default, Debug)]
 pub struct Lambdas<'s> {
-    pub foralls: RefCell<Map<key::Lambda, Forall<'s, IType>>>,
+    pub foralls: RefCell<Map<key::Lambda, Forall<'s, Inference>>>,
     pub typings: Map<key::Lambda, Typing<IType>>,
     pub params: Map<key::Lambda, Vec<Tr<Pattern<'s>>>>,
     pub bodies: Map<key::Lambda, Tr<Expr<'s>>>,
@@ -533,7 +533,7 @@ impl<'s> Lambdas<'s> {
     pub fn create_placeholder(
         &mut self,
         span: Span,
-        forall: Forall<'s, IType>,
+        forall: Forall<'s, Inference>,
         typing: Typing<IType>,
     ) -> key::Lambda {
         let lkey = self.foralls.get_mut().push(forall);
@@ -579,30 +579,35 @@ pub struct Typing<T> {
 }
 
 impl<T> Typing<T> {
-    pub fn map<U>(&self, mut f: impl FnMut(Tr<&T>) -> U) -> (Vec<Tr<U>>, Tr<U>) {
+    pub fn map<F, U>(&self, mut f: impl FnMut(Tr<&T>) -> U) -> (F, Tr<U>)
+    where
+        F: FromIterator<Tr<U>>,
+    {
         let ptypes = self
             .params
             .values()
             .map(|ty| f(ty.as_ref()).tr(ty.span))
-            .collect::<Vec<_>>();
+            .collect();
         let returns = f(self.returns.as_ref()).tr(self.returns.span);
         (ptypes, returns)
     }
 }
 
-impl<'s> Typing<IType> {
-    pub fn inferred(
-        span: impl Fn(usize) -> Span,
-        ret_span: Span,
-        params: usize,
-        vars: &mut TEnv<'s>,
-        is_from_lambda: Option<key::Lambda>,
-    ) -> Self {
+impl<'s, T: ty::FromVar> Typing<Ty<T>> {
+    pub fn inferred<U>(params: &[Tr<U>], ret_span: Span, vars: &mut TEnv<'s>) -> Self {
         Self {
-            params: (0..params)
-                .map(|i| IType::Var(vars.var(span(i))).tr(span(i)))
+            params: params
+                .iter()
+                .map(|tr| T::var(vars.var(tr.span)).tr(tr.span))
                 .collect(),
-            returns: IType::Var(vars.var(ret_span)).tr(ret_span),
+            returns: T::var(vars.var(ret_span)).tr(ret_span),
+        }
+    }
+
+    pub fn poisoned<U>(params: &[Tr<U>], ret_span: Span) -> Self {
+        Self {
+            params: params.iter().map(|tr| Ty::poison().tr(tr.span)).collect(),
+            returns: Ty::poison().tr(ret_span),
         }
     }
 }
@@ -612,19 +617,19 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         mut self,
         header: &parser::func::Header<'s>,
         body: &parser::func::Body<'s>,
-        to_kind: impl FnOnce(FuncDef<'s>) -> FuncDefKind<'s>,
         no_mangle: bool,
-    ) -> (FuncDefKind<'s>, TEnv<'s>) {
+    ) -> (FuncDef<'s>, TEnv<'s>) {
         let forall = generics_from_con(&header.when);
         self.type_info.enter_function(forall);
 
         include_constraints(
             (self.ast, self.module, self.type_info),
+            self.target.int_size(),
             &header.when,
             |tinfo, key, cons| tinfo.iforalls.last_mut().unwrap().0[key].trait_constraints = cons,
         );
 
-        let typing = lower_func_typing(self.ast, self.module, &header, self.type_info);
+        let typing = self.to_type_lower().typing_or_inferred(header);
         info!("typing lowered to: {typing}");
 
         self.type_info.declare_generics = false;
@@ -632,7 +637,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         let (params, expr) = self.lower_func_body(header, body);
 
         let forall = self.type_info.leave_function();
-        info!("forall lowered to: {}", forall.keys().format(" "));
+        info!("forall lowered to: {}", forall);
 
         let list = self.type_info.list;
 
@@ -664,7 +669,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         let env = self.type_info.take_inference().unwrap();
 
-        (to_kind(func), env)
+        (func, env)
     }
 
     fn lower_func_body(
@@ -676,10 +681,9 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         for (i, fdecl) in body.where_binds.iter().enumerate() {
             let lkey = key::Lambda(i as u32);
 
-            self.type_info.enter_lambda(lkey, Forall::new());
+            self.type_info.enter_lambda(lkey, Forall::new(0));
 
-            let typing =
-                lower_func_typing(self.ast, self.module, &fdecl.header, &mut self.type_info);
+            let typing = self.to_type_lower().typing_or_inferred(&fdecl.header);
             info!("where-binding typing lowered to: {typing}");
 
             let forall = self.type_info.leave_function();
@@ -721,52 +725,21 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         (params, expr)
     }
-}
 
-fn lower_func_typing<'a, 's, T: Ty>(
-    ast: &'a AST<'s>,
-    module: key::Module,
-    header: &parser::func::Header<'s>,
-    tinfo: &mut TypeEnvInfo<'s>,
-) -> Typing<T> {
-    let mut tlower = ty::TypeLower::new(module, ast, tinfo);
-
-    let (params, returns) = match header.typing.as_ref() {
-        Some(typing) => (
-            typing
-                .ptypes
-                .iter()
-                .map(|ty| tlower.ty_spanned(ty.as_ref()))
-                .collect(),
-            tlower.ty_spanned(typing.returns.as_ref()),
-        ),
-        None => {
-            let vars = tinfo.inference_mut().unwrap();
-            (
-                header
-                    .params
-                    .iter()
-                    .map(|p| T::var(vars.var(p.span)).tr(p.span))
-                    .collect(),
-                T::var(vars.var(header.name.span)).tr(header.name.span),
-            )
-        }
-    };
-
-    Typing { params, returns }
+    pub fn to_type_lower(&mut self) -> ty::TypeLower<'_, 'a, 's> {
+        let int_size = self.target.int_size();
+        ty::TypeLower::new(self.module, self.ast, int_size, self.type_info)
+    }
 }
 
 fn lower_impl<'a, 's>(
-    ast: &'a AST<'s>,
-    langitems: &LangItems<'s>,
+    Info { ast, langitems, pinfo, target, .. }: Info<'a, 's>,
     impl_: M<key::Impl>,
-    pinfo: &ProjectInfo,
 ) -> (
-    M<key::Trait>,
-    Vec<Type>,
-    Forall<'s, Type>,
     Tr<Type>,
-    Map<key::AssociatedType, Tr<Type>>,
+    Forall<'s, Static>,
+    Tr<Type>,
+    Vec<(Tr<&'s str>, Tr<Ty<Static>>)>,
 ) {
     let module = impl_.module;
     let imp = &ast.entities.impls[impl_];
@@ -784,52 +757,38 @@ fn lower_impl<'a, 's>(
     let impl_forall = generics_from_con(&imp.header.when);
     tinfo.enter_type_or_impl_or_method(impl_forall, GenericKind::Parent);
 
-    let mut tlower = ty::TypeLower::new(module, ast, &mut tinfo);
+    let mut tlower = ty::TypeLower::new(module, ast, target.int_size(), &mut tinfo);
 
     let impltor = tlower.ty_spanned(imp.header.impltor.as_ref());
     let trait_ = tlower.ty_spanned(imp.header.trait_.as_ref());
-
-    let (trkey, trparams) = match trait_.value {
-        Type::Defined(M { module, value: key::TypeKind::Trait(trkey) }, params) => {
-            (module.m(trkey), params)
-        }
-        _ => panic!("ET: not a trait"),
-    };
 
     tinfo.self_handler = SelfHandler::Direct;
 
     include_constraints(
         (ast, module, &mut tinfo),
+        target.int_size(),
         &imp.header.when,
         |tinfo, key, cons| tinfo.cforalls[0].0[key].trait_constraints = cons,
     );
 
-    let mut tlower = ty::TypeLower::new(module, ast, &mut tinfo);
+    let mut tlower = ty::TypeLower::new(module, ast, target.int_size(), &mut tinfo);
 
     tlower.type_info.declare_generics = false;
-    let associations = ast.entities.associated_types[trkey]
-        .values()
-        .map(|astassoc| {
-            match imp
-                .associations
-                .values()
-                .find(|assoc| assoc.name == astassoc.name)
-            {
-                Some(parser::r#impl::Association { type_: Some(ty), .. }) => {
-                    tlower.ty_spanned(ty.as_ref())
-                }
-
-                // try a default
-                _ => todo!(
-                    "get default, map the type parameters, or append to missing assoc and poison"
-                ),
-            }
+    let associations = imp
+        .associations
+        .iter()
+        .filter_map(|(_, assoc)| {
+            assoc
+                .type_
+                .as_ref()
+                .map(|ty| tlower.ty_spanned(ty.as_ref()))
+                .map(|ty| (assoc.name.tr(assoc.span), ty))
         })
         .collect();
 
     let forall = tinfo.leave_type_or_impl_or_method();
 
-    (trkey, trparams, forall, impltor, associations)
+    (trait_, forall, impltor, associations)
 }
 
 impl ast::Sources {
@@ -853,14 +812,12 @@ impl ast::Sources {
 }
 
 fn generics_from_con<'s, T>(when: &parser::when::Constraints<'s>) -> Forall<'s, T> {
-    when.generics
-        .iter()
-        .map(|(_, generic, _)| GenericData::new(*generic))
-        .collect()
+    Forall::from_names(when.generics.iter().map(|(_, name, _)| *name))
 }
 
-fn include_constraints<'s, T: ty::Ty>(
+fn include_constraints<'s, T: ty::FromVar>(
     (ast, module, tinfo): (&AST<'s>, key::Module, &mut TypeEnvInfo<'s>),
+    default_int_size: u8,
     when: &parser::when::Constraints<'s>,
     mut attach: impl FnMut(&mut TypeEnvInfo<'s>, key::Generic, Vec<Constraint<T>>),
 ) {
@@ -871,7 +828,8 @@ fn include_constraints<'s, T: ty::Ty>(
         let cons = constraints
             .iter()
             .filter_map(|ty| {
-                let con_ty: T = ty::TypeLower::new(module, ast, tinfo).ty(ty.as_ref());
+                let con_ty: Ty<T> =
+                    ty::TypeLower::new(module, ast, default_int_size, tinfo).ty(ty.as_ref());
 
                 match con_ty.as_trait() {
                     Ok((trait_, params)) => Some(Constraint { span: ty.span, trait_, params }),
@@ -892,17 +850,70 @@ fn include_constraints<'s, T: ty::Ty>(
     }
 }
 
+fn disallow_inference_in_trait_default<'s>(
+    module: key::Module,
+    ast: &AST<'s>,
+    trait_: M<key::Trait>,
+    fdef: FuncDef<'s>,
+) -> FuncDefKind<'s> {
+    let forall = fdef.forall.borrow();
+
+    let mut span = Span::null();
+    let mut transformer = Staticify {
+        on_err: move || {
+            ast.sources
+                .error("invalid inference")
+                .m(module)
+                .eline(span, "type signatures for trait methods are mandatory")
+                .emit()
+        },
+    };
+
+    let (ptypes, ret) = fdef.typing.map(|ty| {
+        span = ty.span;
+        transformer.transform(*ty)
+    });
+
+    let sforall = forall.map(
+        |sp, ty| {
+            span = sp;
+            transformer.transform(ty)
+        },
+        |_, name| name,
+    );
+    drop(forall);
+
+    FuncDefKind::TraitDefaultMethod(trait_, sforall, Typing::new(ptypes, ret), fdef)
+}
+
+struct Staticify<F: FnMut()> {
+    on_err: F,
+}
+
+impl<F: FnMut()> Transformer<Inference> for Staticify<F> {
+    type Output = Static;
+
+    fn special(&mut self, _: &Inference) -> Ty<Self::Output> {
+        (self.on_err)();
+        Ty::poison()
+    }
+
+    fn generic(&mut self, generic: Generic) -> Ty<Self::Output> {
+        Ty::Generic(generic)
+    }
+}
+
 impl<'s> fmt::Display for FuncDef<'s> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let forall = self.forall.borrow();
-        if !forall.is_empty() {
+        if !forall.generics.is_empty() {
             writeln!(f, "{}", "when".keyword())?;
-            for (key, gdata) in forall.iter() {
+            for (key, gdata) in forall.generics.iter() {
                 writeln!(
                     f,
-                    "  {key} {} {:?}",
+                    "  {key} {} {}",
                     "can".keyword(),
-                    gdata.trait_constraints
+                    gdata.trait_constraints.iter().format(" + "),
                 )?;
             }
         }
@@ -921,10 +932,14 @@ impl<'s> fmt::Display for Lambdas<'s> {
         for key in self.typings.keys() {
             writeln!(
                 f,
-                "  {} {key}[{}] {} {} {} {}",
+                "  {} {key}[{}] {} {}{} {} {}",
                 "fn".keyword(),
                 self.captures[key].iter().format(", "),
                 "as".keyword(),
+                self.foralls
+                    .try_borrow()
+                    .map(|forall| forall[key].to_string())
+                    .unwrap_or_else(|_| String::from("<borrowed>")),
                 &self.typings[key],
                 '='.keyword(),
                 &self.bodies[key]

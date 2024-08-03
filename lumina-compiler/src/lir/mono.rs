@@ -1,25 +1,26 @@
-use super::{FuncOrigin, MonoFunc, MonoTyping, UNIT};
+use super::{FuncOrigin, MonoTyping, UNIT};
 use crate::prelude::*;
-use crate::{TRAIT_OBJECT_DATA_FIELD, VTABLE_FIELD};
+use crate::VTABLE_FIELD;
 use derive_more::{Deref, DerefMut};
 use key::{entity_impl, keys};
 use lumina_key as key;
-use lumina_typesystem::{Bitsize, Container, Forall, FuncKind, Generic, GenericKind, Prim, Type};
+use lumina_typesystem::{
+    Container, Forall, Generic, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty, Type,
+};
 use lumina_util::Highlighting;
 use std::collections::HashSet;
 use std::fmt;
 
-pub const TAG_SIZE: Bitsize = Bitsize(32);
-pub const SUM_VARIANT_CHUNK_SIZE: Bitsize = Bitsize(8);
+pub const TAG_SIZE: IntSize = IntSize::new(false, 32);
 
 keys! {
     MonoTypeKey . "mtkey",
     BitOffset . "offset"
 }
 
-impl From<Bitsize> for BitOffset {
-    fn from(value: Bitsize) -> Self {
-        BitOffset(value.0 as u32)
+impl From<IntSize> for BitOffset {
+    fn from(value: IntSize) -> Self {
+        BitOffset(value.bits() as u32)
     }
 }
 
@@ -31,8 +32,7 @@ impl From<u32> for BitOffset {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum MonoType {
-    Int(Bitsize),
-    UInt(Bitsize),
+    Int(IntSize),
     SumDataCast { largest: u32 },
     Array(Box<Self>, usize),
     Pointer(Box<Self>),
@@ -111,8 +111,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &lir::Function> {
 impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoType> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.v {
-            MonoType::Int(bit) => write!(f, "i{bit}"),
-            MonoType::UInt(bit) => write!(f, "u{bit}"),
+            MonoType::Int(intsize) => intsize.fmt(f),
             MonoType::Array(inner, len) => write!(f, "[{}; {len}]", fmt(self.types, &**inner)),
             MonoType::Pointer(inner) => write!(f, "*{}", fmt(self.types, &**inner)),
             MonoType::FnPointer(params, ret) if params.is_empty() => {
@@ -189,7 +188,7 @@ impl Records {
 
         let tag = &self[mk].fields[key::RecordField(0)];
         let tag_size = match tag {
-            MonoType::Int(bitsize) | MonoType::UInt(bitsize) => bitsize.0 as u32,
+            MonoType::Int(intsize) => intsize.bits() as u32,
             _ => return None,
         };
 
@@ -231,8 +230,7 @@ impl Records {
             MonoType::SumDataCast { .. } if sum_are_ptrs => 64,
             MonoType::SumDataCast { largest } => *largest,
             MonoType::Pointer(_) => 64,
-            MonoType::Int(bitsize) => bitsize.0 as u32,
-            MonoType::UInt(bitsize) => bitsize.0 as u32,
+            MonoType::Int(intsize) => intsize.bits() as u32,
             MonoType::Array(inner, times) => self.size_of_ty(&inner, sum_are_ptrs) * *times as u32,
             MonoType::Float => 64,
             MonoType::FnPointer(_, _) => 64,
@@ -251,7 +249,7 @@ impl Records {
                 Some(M { value: key::TypeKind::Sum(_), .. }) => {
                     let field = &self[key].fields[key::RecordField(1)];
                     dbg!(&field, self.size_of_without_ptr_sum(field));
-                    TAG_SIZE.0 as u32 + self.size_of_without_ptr_sum(field)
+                    TAG_SIZE.bits() as u32 + self.size_of_without_ptr_sum(field)
                 }
                 _ => self.size_of(&MonoType::u8_pointer()),
             }
@@ -379,7 +377,7 @@ impl MonomorphisedTypes {
 
 impl MonoType {
     pub fn bool() -> Self {
-        Self::UInt(Bitsize(8))
+        Self::Int(IntSize::new(false, 8))
     }
 
     pub fn pointer(to: MonoType) -> MonoType {
@@ -387,7 +385,11 @@ impl MonoType {
     }
 
     pub fn u8_pointer() -> MonoType {
-        MonoType::pointer(MonoType::UInt(Bitsize(8)))
+        MonoType::pointer(Self::byte())
+    }
+
+    pub fn byte() -> MonoType {
+        MonoType::Int(IntSize::new(false, 8))
     }
 
     pub fn fn_pointer(params: impl Into<Vec<MonoType>>, ret: MonoType) -> MonoType {
@@ -395,7 +397,7 @@ impl MonoType {
     }
 
     pub fn byte_array(len: usize) -> Self {
-        Self::Array(Box::new(Self::UInt(Bitsize(8))), len)
+        Self::Array(Box::new(Self::byte()), len)
     }
 
     #[track_caller]
@@ -425,9 +427,8 @@ impl MonoType {
 #[derive(Clone, Debug)]
 pub struct TypeMap {
     pub generics: Vec<(Generic, MonoType)>,
-    pub weak_generics: Vec<(Generic, Type)>,
     pub self_: Option<MonoType>,
-    pub weak_self: Option<Type>,
+    pub weak: GenericMapper<Static>,
 }
 
 #[derive(new)]
@@ -462,13 +463,13 @@ macro_rules! fork {
 }
 
 impl<'a> Monomorphization<'a> {
-    pub fn substitute_generics_for_unit_type<'s>(&mut self, forall: &Forall<'s, Type>) {
+    pub fn substitute_generics_for_unit_type<'s>(&mut self, forall: &Forall<'s, Static>) {
         let unit = self.mono.get_or_make_tuple(vec![]);
 
-        forall.keys().for_each(|key| {
+        forall.generics.keys().for_each(|key| {
             self.tmap.push(
                 Generic::new(key, GenericKind::Entity),
-                Type::tuple(),
+                Type::tuple(vec![]),
                 MonoType::Monomorphised(unit),
             );
         });
@@ -584,7 +585,7 @@ impl<'a> Monomorphization<'a> {
                 .max()
                 .unwrap();
 
-            let fields = [MonoType::UInt(TAG_SIZE), MonoType::SumDataCast { largest }]
+            let fields = [MonoType::Int(TAG_SIZE), MonoType::SumDataCast { largest }]
                 .into_iter()
                 .collect();
 
@@ -626,7 +627,7 @@ impl<'a> Monomorphization<'a> {
 
             // Create a tmap to monomorphise the generics from the `trait` decl when creating fnpointers
             let mut tmap = TypeMap::new();
-            tmap.set_self(Type::u8_ptr(), MonoType::u8_pointer());
+            tmap.set_self(Type::u8_pointer(), MonoType::u8_pointer());
             tmap.extend(GenericKind::Parent, params.into_iter().zip(key.1));
 
             methods
@@ -667,70 +668,57 @@ impl<'a> Monomorphization<'a> {
         trace!("monomorphising {ty}");
 
         match ty {
-            Type::Container(container) => match container {
-                Container::Func(kind, params, returns) => match kind {
-                    // trait Closure p r
-                    //   fn call as self, p -> r
-                    FuncKind::Closure => {
-                        let params = vec![
-                            Type::Container(Container::Tuple(params.clone())),
-                            (**returns).clone(),
-                        ];
+            Ty::Container(con, params) => match con {
+                Container::FnPointer => {
+                    let mut params: Vec<_> = self.applys(params);
+                    let returns = params.pop().unwrap();
+                    MonoType::fn_pointer(params, returns)
+                }
+                Container::Closure => {
+                    let mut params = params.clone();
+                    let returns = params.pop().unwrap();
 
-                        let object = self.trait_object(self.mono.closure, &params);
-                        MonoType::Monomorphised(object)
-                    }
-                    FuncKind::FnPointer => {
-                        let params = self.applys(params);
-                        let ret = self.apply(returns);
-                        MonoType::FnPointer(params, Box::new(ret))
-                    }
-                },
-                Container::Tuple(elems) => {
-                    let elems = self.applys(elems);
+                    let params = vec![Type::tuple(params), returns];
+                    let object = self.trait_object(self.mono.closure, &params);
+
+                    MonoType::Monomorphised(object)
+                }
+                Container::Tuple => {
+                    let elems = self.applys(params);
                     MonoType::Monomorphised(self.mono.get_or_make_tuple(elems))
                 }
-                Container::Pointer(inner) => MonoType::pointer(self.apply(&inner)),
-            },
-            Type::Prim(prim) => match prim {
-                Prim::Float => MonoType::Float,
-                Prim::Bool => MonoType::UInt(Bitsize(8)),
-                Prim::Int(true, bit) => MonoType::Int(*bit),
-                Prim::Int(false, bit) => MonoType::UInt(*bit),
-                Prim::Never => unreachable!(),
-                Prim::Poison => unreachable!(),
-            },
-            Type::Generic(generic) => self.generic(*generic).1.clone(),
-            Type::Defined(key, params) | Type::List(key, params) => match key.value {
-                key::TypeKind::Record(rkey) => {
-                    let mk = self.record(key.module.m(rkey), params);
-                    MonoType::Monomorphised(mk)
+                Container::Pointer => {
+                    let inner = self.apply(&params[0]);
+                    MonoType::pointer(inner)
                 }
+                Container::List(key) | Container::Defined(key) => match key.value {
+                    key::TypeKind::Record(rkey) => {
+                        let mk = self.record(key.module.m(rkey), params);
+                        MonoType::Monomorphised(mk)
+                    }
 
-                key::TypeKind::Sum(sum) => {
-                    let mk = self.sum(key.module.m(sum), params);
-                    MonoType::Monomorphised(mk)
-                }
+                    key::TypeKind::Sum(sum) => {
+                        let mk = self.sum(key.module.m(sum), params);
+                        MonoType::Monomorphised(mk)
+                    }
 
-                key::TypeKind::Trait(trait_) => {
-                    let mk = self.trait_object(key.module.m(trait_), params);
-                    MonoType::Monomorphised(mk)
-                }
+                    key::TypeKind::Trait(trait_) => {
+                        let mk = self.trait_object(key.module.m(trait_), params);
+                        MonoType::Monomorphised(mk)
+                    }
+                },
             },
-            Type::Self_ => self.tmap.self_.clone().unwrap(),
+            Ty::Generic(generic) => self.generic(*generic).clone(),
+            Ty::Int(intsize) => MonoType::Int(*intsize),
+            Ty::Simple("f64") => MonoType::Float,
+            Ty::Simple("bool") => MonoType::bool(),
+            Ty::Simple("self") => self.tmap.self_.clone().unwrap(),
+            _ => panic!("invalid type for LIR: {ty}"),
         }
     }
 
     pub fn apply_weak(&self, ty: &Type) -> Type {
-        match ty {
-            Type::Container(con) => Type::Container(con.map(|t| self.apply_weak(t))),
-            Type::Prim(prim) => Type::Prim(prim.clone()),
-            Type::Generic(generic) => self.generic(*generic).0.clone(),
-            Type::List(key, params) | Type::Defined(key, params) => {
-                Type::Defined(*key, params.iter().map(|ty| self.apply_weak(ty)).collect())
-            }
-            Type::Self_ => self.tmap.weak_self.clone().unwrap(),
-        }
+        (&self.tmap.weak).transform(ty)
     }
 
     fn new_type_map_by(&mut self, params: &[Type], gkind: GenericKind) -> (TypeMap, Vec<MonoType>) {
@@ -770,11 +758,12 @@ impl<'a> Monomorphization<'a> {
         }
     }
 
-    pub fn generic(&self, generic: Generic) -> (&Type, &MonoType) {
-        match self.tmap.generics.iter().position(|(g, _)| *g == generic) {
-            None => panic!("unknown generic: {generic}"),
-            Some(i) => (&self.tmap.weak_generics[i].1, &self.tmap.generics[i].1),
-        }
+    pub fn generic(&self, generic: Generic) -> &MonoType {
+        self.tmap
+            .generics
+            .iter()
+            .find_map(|(g, ty)| (*g == generic).then_some(ty))
+            .unwrap()
     }
 }
 
@@ -782,9 +771,8 @@ impl TypeMap {
     pub fn new() -> Self {
         Self {
             generics: Vec::new(),
-            weak_generics: Vec::new(),
             self_: None,
-            weak_self: None,
+            weak: GenericMapper::new(vec![], None),
         }
     }
 
@@ -797,20 +785,19 @@ impl TypeMap {
 
     pub fn set_self(&mut self, weak: Type, mono: MonoType) {
         self.self_ = Some(mono);
-        self.weak_self = Some(weak);
+        self.weak.self_ = Some(weak);
     }
 
     pub fn push(&mut self, generic: Generic, weak: Type, mono: MonoType) {
         self.generics.push((generic, mono));
-        self.weak_generics.push((generic, weak));
+        self.weak.push(generic, weak);
     }
 }
 
 impl fmt::Debug for MonoType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            MonoType::Int(bitsize) => write!(f, "i{bitsize}"),
-            MonoType::UInt(bitsize) => write!(f, "u{bitsize}"),
+            MonoType::Int(intsize) => intsize.fmt(f),
             MonoType::SumDataCast { largest } => write!(f, "<sum {largest}>"),
             MonoType::Array(ty, times) => write!(f, "[{ty:?}; {times}]"),
             MonoType::Pointer(ty) => write!(f, "*{ty:?}"),

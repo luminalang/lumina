@@ -74,6 +74,12 @@ impl Target {
         self.to_string()
     }
 
+    pub fn int_size(&self) -> u8 {
+        match self.arch {
+            Arch::X86_64 => 64,
+        }
+    }
+
     pub fn include_for(&self, name: &str) -> bool {
         let mut iter = name.split('-');
 

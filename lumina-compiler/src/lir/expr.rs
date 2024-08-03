@@ -1,5 +1,5 @@
 use super::*;
-use crate::{CLOSURE_CAPTURES, TRAIT_OBJECT_DATA_FIELD, VTABLE_FIELD};
+use crate::{TRAIT_OBJECT_DATA_FIELD, VTABLE_FIELD};
 use ssa::Value;
 use std::cmp::Ordering;
 
@@ -22,9 +22,8 @@ impl<'a> FuncLower<'a> {
             mir::Expr::Yield(local) => self.yield_to_value(*local),
             mir::Expr::YieldFunc(_, _) => todo!(),
             mir::Expr::YieldLambda(_, _) => todo!(),
-            mir::Expr::UInt(bitsize, n) => Value::UInt(*n, *bitsize),
-            mir::Expr::Int(bitsize, n) => Value::Int(*n, *bitsize),
-            mir::Expr::Bool(b) => Value::UInt(*b as u8 as u128, Bitsize(8)),
+            mir::Expr::Int(intsize, n) => Value::Int(*n, *intsize),
+            mir::Expr::Bool(b) => Value::Int(*b as u8 as i128, IntSize::new(false, 8)),
             mir::Expr::Float(n) => Value::Float(*n),
             mir::Expr::ReadOnly(_) => todo!(),
             _ => return None,
@@ -116,9 +115,18 @@ impl<'a> FuncLower<'a> {
                 other => panic!("non-val given to val_to_ref builtin: {other}"),
             },
             mir::Expr::Yield(local) => self.yield_to_value(*local),
-            mir::Expr::YieldFunc(nfunc, inst) => {
-                let mfunc = self.callable_to_mfunc(*nfunc, inst);
-                Value::FuncPtr(mfunc)
+            mir::Expr::YieldFunc(..) => {
+                todo!("passing functions as function pointers instead of closures needs parsing and lowers");
+                // match self.resolve_nfunc(*nfunc, inst) {
+                //     ResolvedNFunc::Extern(_, _) => todo!(),
+                //     ResolvedNFunc::Static(_, _) => todo!(),
+                //     ResolvedNFunc::Sum { tag, payload_size, ty } => {
+                //         todo!("generate a function which returns this sum type")
+                //     }
+                //     ResolvedNFunc::Val(_, _) => todo!(),
+                // }
+                // let mfunc = self.call_to_mfunc(*nfunc, inst);
+                // Value::FuncPtr(mfunc)
             }
             mir::Expr::Access(object, record, types, field) => {
                 let value = self.expr_to_value(object);
@@ -147,9 +155,8 @@ impl<'a> FuncLower<'a> {
 
                 self.ssa().construct(sorted, ty)
             }
-            mir::Expr::UInt(bitsize, n) => Value::UInt(*n, *bitsize),
-            mir::Expr::Int(bitsize, n) => Value::Int(*n, *bitsize),
-            mir::Expr::Bool(b) => Value::UInt(*b as u8 as u128, Bitsize(8)),
+            mir::Expr::Int(intsize, n) => Value::Int(*n, *intsize),
+            mir::Expr::Bool(b) => Value::Int(*b as u8 as i128, IntSize::new(false, 8)),
             mir::Expr::Float(n) => Value::Float(*n),
             mir::Expr::ReadOnly(ro) => Value::ReadOnly(*ro),
             mir::Expr::Tuple(elems) => {
@@ -159,13 +166,11 @@ impl<'a> FuncLower<'a> {
             mir::Expr::IntCast(expr, from, to) => {
                 let inner = self.expr_to_value(&expr);
 
-                let ty =
-                    to.0.then_some(MonoType::Int(to.1))
-                        .unwrap_or(MonoType::UInt(to.1));
+                let ty = MonoType::Int(*to);
 
-                match from.1.cmp(&to.1) {
+                match from.bits().cmp(&to.bits()) {
                     Ordering::Equal => inner,
-                    Ordering::Less => self.ssa().extend(inner, from.0, ty),
+                    Ordering::Less => self.ssa().extend(inner, from.signed, ty),
                     Ordering::Greater => self.ssa().reduce(inner, ty),
                 }
             }
@@ -231,7 +236,10 @@ impl<'a> FuncLower<'a> {
             mir::Expr::SizeOf(ty) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
                 let size = self.lir.types.types.size_of(&ty) / 8;
-                Value::UInt(size as u128, Bitsize(64)) // TODO: 32-bit
+                Value::Int(
+                    size as i128,
+                    IntSize::new(false, self.lir.target.int_size()),
+                )
             }
             mir::Expr::Cmp(cmp, params) => {
                 let params = [
@@ -239,15 +247,15 @@ impl<'a> FuncLower<'a> {
                     self.expr_to_value(&params[1]),
                 ];
 
-                let bitsize = match self.type_of_value(params[0]) {
-                    MonoType::UInt(bitsize) | MonoType::Int(bitsize) => bitsize,
+                let intsize = match self.type_of_value(params[0]) {
+                    MonoType::Int(intsize) => intsize,
                     ty => panic!("not an int: {ty:?}"),
                 };
 
                 match *cmp {
-                    "eq" => self.ssa().cmp(params, Ordering::Equal, bitsize),
-                    "lt" => self.ssa().cmp(params, Ordering::Less, bitsize),
-                    "gt" => self.ssa().cmp(params, Ordering::Greater, bitsize),
+                    "eq" => self.ssa().cmp(params, Ordering::Equal, intsize),
+                    "lt" => self.ssa().cmp(params, Ordering::Less, intsize),
+                    "gt" => self.ssa().cmp(params, Ordering::Greater, intsize),
                     _ => panic!("unknown comparison operator: {cmp}"),
                 }
             }
@@ -270,7 +278,7 @@ impl<'a> FuncLower<'a> {
                 self.ssa().unreachable();
                 // TODO: Do we need to create a tuple of bytes with the same size as `ty` then
                 // transmute? or is this fine?
-                Value::UInt(0, Bitsize(64))
+                Value::Int(0, IntSize::new(false, self.lir.target.int_size()))
                 // let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
                 // self.ssa().unreachable(ty).value()
             }
@@ -281,7 +289,7 @@ impl<'a> FuncLower<'a> {
     pub fn heap_alloc(&mut self, value: lir::Value, ty: MonoType) -> Value {
         let size = self.lir.types.types.size_of(&ty);
         if size == 0 {
-            Value::UInt(0, Bitsize::default()) // TODO: target-dependent pointer size
+            Value::Int(0, IntSize::new(false, self.lir.target.int_size()))
         } else {
             let ptr = self.ssa().alloc(size, ty);
             self.ssa().write(ptr, value);
@@ -292,7 +300,7 @@ impl<'a> FuncLower<'a> {
     fn call_nfunc(
         &mut self,
         func: M<ast::NFunc>,
-        inst: &ConcreteInst,
+        inst: &GenericMapper<Static>,
         params: &[mir::Expr],
     ) -> Value {
         match self.resolve_nfunc(func, inst) {
@@ -358,67 +366,6 @@ impl<'a> FuncLower<'a> {
         self.ssa().call(fnptr, call_method_params, ret)
     }
 
-    fn callable_to_mfunc(&mut self, func: M<ast::NFunc>, inst: &ConcreteInst) -> MonoFunc {
-        todo!("what's the difference between this function and `resolve_nfunc`? this seems overcomplicated");
-        // Think we just accidentally wrote about the same function twice -.-
-        match func.value {
-            ast::NFunc::Key(key) => {
-                let func = FuncOrigin::Defined(func.module.m(key));
-                let tmap = self.morphise_inst([GenericKind::Parent, GenericKind::Entity], inst);
-                let (mfunc, _) = self.call_to_mfunc(func, tmap);
-                mfunc
-            }
-            ast::NFunc::Method(key, method) => {
-                let trait_ = func.module.m(key);
-
-                let morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
-
-                let self_ = inst.self_.as_ref().unwrap();
-
-                todo!();
-                // let trtp = inst
-                //     .pgenerics
-                //     .values()
-                //     .map(|ty| morph.apply_weak(ty))
-                //     .collect::<Vec<_>>();
-
-                // let ikey = self.find_implementation(trait_, &trtp, &weak_impltor);
-
-                // let forigin = FuncOrigin::Method(ikey, method);
-                // let tmap = self.morphise_inst([GenericKind::Parent, GenericKind::Entity], inst);
-
-                // self.call_to_mfunc(forigin, tmap).0
-            }
-            ast::NFunc::SumVar(sum, var) => {
-                // let params = self.params_to_values(params);
-
-                let sum = func.map(|_| sum);
-
-                let ptypes = inst.generics.values().cloned().collect::<Vec<_>>();
-
-                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
-                let mk = morph.sum(sum, &ptypes);
-
-                let tag = Value::UInt(var.0 as u128, mono::TAG_SIZE);
-
-                let size = self.lir.types.types.size_of_defined(mk);
-                let largest = size - mono::TAG_SIZE.0 as u32;
-                let inline = largest <= 128;
-                let ty = MonoType::SumDataCast { largest };
-
-                todo!();
-
-                // let parameters = self.ssa().construct(params, ty);
-
-                // self.current
-                //     .ssa
-                //     .construct(vec![tag, parameters.into()], MonoType::Monomorphised(mk))
-                //     .into()
-            }
-            ast::NFunc::Val(_) => todo!(),
-        }
-    }
-
     pub fn find_implementation(
         &mut self,
         trait_: M<key::Trait>,
@@ -461,11 +408,10 @@ impl<'a> FuncLower<'a> {
                 valid.then(|| {
                     let mut tmap = TypeMap::new();
                     tmap.set_self(weak_impltor.clone(), impltor.clone());
-                    for assignment in comp.into_assignments().into_iter() {
-                        let mono = to_morphization!(self.lir, self.mir, &mut TypeMap::new())
-                            .apply(&assignment.ty);
-                        let generic = Generic::new(assignment.key, GenericKind::Parent);
-                        tmap.push(generic, assignment.ty, mono);
+                    for (generic, ty) in comp.into_assignments().generics.into_iter() {
+                        let mono =
+                            to_morphization!(self.lir, self.mir, &mut TypeMap::new()).apply(&ty);
+                        tmap.push(generic, ty, mono);
                     }
                     (imp, tmap)
                 })

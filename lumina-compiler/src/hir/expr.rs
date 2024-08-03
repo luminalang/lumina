@@ -1,12 +1,14 @@
 use super::pat::{PatLower, Pattern};
 use super::ty::{TypeAnnotation, TypeEnvInfo, TypeLower};
-use super::{scope::Bindings, FuncDef, Lambdas};
+use super::Info;
+use super::{scope::Bindings, Lambdas};
 use crate::prelude::*;
+use crate::Target;
 use ast::{Entity, Mod, NFunc};
 use derive_more::Display;
 use derive_more::From;
 use lumina_parser as parser;
-use lumina_typesystem::{Forall, IType, RecordVar, TEnv, Type, Var};
+use lumina_typesystem::{Forall, IType, RecordVar, TEnv, Var};
 use lumina_util::Highlighting;
 use std::fmt;
 use tracing::trace;
@@ -19,6 +21,8 @@ pub struct ExprLower<'t, 'a, 's> {
 
     pub type_info: &'t mut TypeEnvInfo<'s>,
     where_binds: &'a [parser::func::Declaration<'s>],
+
+    pub target: Target,
 
     #[new(default)]
     pub bindings: Bindings<'s>,
@@ -96,7 +100,6 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         match expr.value {
             parser::Expr::Lit(parser::Literal::Int(neg, n)) => {
-                let lambda = self.type_info.lambda();
                 let var = self.vars().int(expr.span);
                 self.vars().hint_min_int(var, *neg, *n);
 
@@ -156,7 +159,6 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             }
             parser::Expr::List(elems) => {
                 let elems = self.exprs(elems);
-                let lambda = self.type_info.lambda();
                 let ivar = self
                     .vars()
                     .var(elems.get(0).map(|elem| elem.span).unwrap_or(expr.span));
@@ -200,8 +202,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             parser::Expr::Pass(inner) => self.pass((**inner).as_ref()),
             parser::Expr::CastAs(expr, ty) => {
                 let expr = self.expr((**expr).as_ref());
-                let ty = TypeLower::new(self.module, self.ast, &mut self.type_info)
-                    .ty_spanned(ty.as_ref());
+                let ty = self.to_type_lower().ty_spanned(ty.as_ref());
                 hir::Expr::Cast(Box::new(expr), ty)
             }
             parser::Expr::Poison => Expr::Poison,
@@ -318,9 +319,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         body: Tr<&parser::Expr<'s>>,
     ) -> key::Lambda {
         let mut tvar =
-            |span| IType::Var(self.type_info.inference_mut().unwrap().var(span)).tr(span);
-
-        let forall = Forall::new();
+            |span| IType::infer(self.type_info.inference_mut().unwrap().var(span)).tr(span);
 
         let typing = match typing {
             None => hir::Typing::new(
@@ -328,22 +327,28 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
                 tvar(body.span),
             ),
             Some(typing) => {
-                todo!("lower the typing");
+                let mut tlower = self.to_type_lower();
+                hir::Typing {
+                    params: tlower.tys_spanned(&typing.ptypes),
+                    returns: tlower.ty_spanned(typing.returns.as_ref()),
+                }
             }
         };
 
-        let lkey = self.lambdas.create_placeholder(body.span, forall, typing);
+        let lkey = self
+            .lambdas
+            .create_placeholder(body.span, Forall::new(0), typing);
         self.bindings.reference_lambda(lkey);
 
         self.bindings.enter();
-        self.type_info.enter_lambda(lkey, Forall::new());
+        self.type_info.enter_lambda(lkey, Forall::new(0));
 
         let patterns = self.patterns(apatterns);
         let expr = self.expr(body);
 
         let (captures, lcaptures) = self.bindings.leave();
         let forall = self.type_info.leave_function();
-        assert!(forall.is_empty());
+        assert!(forall.generics.is_empty());
 
         self.lambdas
             .complete_lambda(lkey, expr, patterns, captures, lcaptures);
@@ -652,7 +657,8 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         let mut type_anot = TypeAnnotation::new();
 
-        let mut tlower = TypeLower::new(self.module, self.ast, &mut self.type_info);
+        let int_size = self.target.int_size();
+        let mut tlower = TypeLower::new(self.module, self.ast, int_size, &mut self.type_info);
 
         for (at, anot) in &apath.for_segments {
             if *at == (len - 1) {
@@ -682,7 +688,13 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
     }
 
     pub fn to_patlower(&mut self) -> PatLower<'_, 's> {
-        PatLower::new(self.module, self.ast, self.type_info, &mut self.bindings)
+        PatLower::new(
+            self.module,
+            self.ast,
+            self.target.int_size(),
+            self.type_info,
+            &mut self.bindings,
+        )
     }
 
     fn desugar_record(
@@ -695,7 +707,8 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         match init {
             parser::CurlyInit::Construct(ty) => {
-                let ty = TypeLower::new(self.module, self.ast, &mut self.type_info)
+                let int_size = self.target.int_size();
+                let ty = TypeLower::new(self.module, self.ast, int_size, &mut self.type_info)
                     .ty_spanned(ty.as_ref());
 
                 let fields = self.record_fields(fields, None);
@@ -850,7 +863,6 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         to: key::Bind,
         assigned_value: Tr<hir::Expr<'s>>,
     ) -> Tr<Expr<'s>> {
-        let lambda = self.type_info.lambda();
         let rvar = self.vars().record(field.span);
         let letvalue = Expr::Access(
             rvar,

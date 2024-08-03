@@ -4,9 +4,10 @@
 //! Resolve & Desugar dot-pipe calls
 
 use crate::prelude::*;
-use crate::{ProjectInfo, TRAIT_OBJECT_DATA_FIELD, VTABLE_FIELD};
+use crate::{ProjectInfo, Target};
 use lumina_typesystem::{
-    ConcreteInst, Container, Forall, Generic, GenericData, GenericKind, IType, TEnv, TypeSystem,
+    Downgrade, Forall, GenericKind, GenericMapper, IType, Inference, Static, TEnv, Transformer, Ty,
+    TypeSystem, Var,
 };
 use lumina_util::Highlighting;
 use std::collections::VecDeque;
@@ -40,7 +41,7 @@ pub struct MIR {
     pub imethods: ModMap<key::Impl, Map<key::Method, Option<M<key::Func>>>>,
     pub field_types: ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
     pub variant_types: ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
-    pub impls: ModMap<key::Impl, Forall<'static, Type>>,
+    pub impls: ModMap<key::Impl, Forall<'static, Static>>,
     pub impltors: ModMap<key::Impl, Tr<Type>>,
     pub itraits: ModMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
     pub val_initializers: ModMap<key::Val, M<key::Func>>,
@@ -69,6 +70,7 @@ pub struct ReadOnlyBytes(pub Box<[u8]>);
 
 pub fn run<'a, 'h, 's>(
     pinfo: ProjectInfo,
+    target: Target,
     hir: hir::HIR<'s>,
     mut tenvs: ModMap<key::Func, TEnv<'s>>,
     iquery: &mut ImplIndex,
@@ -92,6 +94,7 @@ pub fn run<'a, 'h, 's>(
     for func in hir.funcs.iter() {
         Verify::start_at(
             pinfo,
+            target,
             &hir,
             &fields,
             &mut tenvs,
@@ -106,9 +109,10 @@ pub fn run<'a, 'h, 's>(
         methods
             .values()
             .map(|func| match &funcs[tr.module.m(*func)] {
-                FunctionStatus::Done(func) => {
-                    func.typing.params.find(|ty| matches!(ty, Type::Self_))
-                }
+                FunctionStatus::Done(func) => func
+                    .typing
+                    .params
+                    .find(|ty| matches!(ty, Type::Simple("self"))),
                 _ => None,
             })
             .collect()
@@ -117,7 +121,7 @@ pub fn run<'a, 'h, 's>(
     // Rename generics for 'static so we can drop source code
     let mut impls = hir.impls.secondary();
     hir.impls.iter().for_each(|imp| {
-        let foralls = rename_forall(&hir.impls[imp]);
+        let foralls = hir.impls[imp].rename_to_keys();
         impls[imp.module].push(foralls);
     });
 
@@ -171,8 +175,10 @@ pub struct Verify<'a, 's> {
     funcs: &'a mut ModMap<key::Func, FunctionStatus>,
     read_only_table: &'a mut ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
 
+    target: Target,
+
     current: Current,
-    pforall: &'a Forall<'s, Type>,
+    pforall: &'a Forall<'s, Static>,
     fdef: &'a hir::FuncDef<'s>,
 }
 
@@ -196,7 +202,7 @@ pub struct Current {
 #[derive(new, Clone, Copy)]
 struct RSolver<'a, 's> {
     field_lookup: &'a Map<key::Module, HashMap<&'s str, Vec<M<key::Record>>>>,
-    records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Type>)>,
+    records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
     ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
     fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
 }
@@ -280,7 +286,7 @@ fn verify_impl_headers<'s>(
     let (trkey, trparams) = &hir.itraits[impl_];
     let tmod = trkey.module;
 
-    let (trname, tforall) = &hir.traits[*trkey];
+    let (trname, _) = &hir.traits[*trkey];
     let trmethodmap = &hir.methods[*trkey];
     let imethodmap = &hir.imethods[impl_];
 
@@ -297,14 +303,11 @@ fn verify_impl_headers<'s>(
     );
     let _handle = _span.enter();
 
-    let mut missing_methods: Vec<key::Method> = vec![];
+    let mut missing_methods: Vec<(key::Method, &Forall<'s, Static>, hir::Typing<Type>)> = vec![];
     let mut failed_methods: Vec<(M<key::Func>, M<key::Func>, CmpResult)> = vec![];
 
-    let mut inst = ConcreteInst {
-        generics: Map::new(),
-        pgenerics: trparams.iter().cloned().collect(),
-        self_: Some(impltor.value),
-    };
+    let mut tinst = GenericMapper::from_types(GenericKind::Parent, trparams.iter().cloned());
+    tinst.self_ = Some(impltor.value);
 
     let resolved_methods = trmethodmap
         .iter()
@@ -312,12 +315,25 @@ fn verify_impl_headers<'s>(
             let tfkey = tmod.m(*tfkey);
             let mname = &hir.func_names[tfkey];
 
+            let (tmforall, trmtyping) = match &hir.funcs[tfkey] {
+                hir::FuncDefKind::TraitDefaultMethod(_, forall, typing, _)
+                | hir::FuncDefKind::TraitHeader(_, forall, typing) => (forall, typing),
+                _ => unreachable!(),
+            };
+
+            tinst.replicate_entity_forall(tmforall);
+
+            let trmtyping = {
+                let (params, returns) = trmtyping.map(|ty| (&tinst).transform(*ty));
+                hir::Typing { params, returns }
+            };
+
             match imethodmap.find(|func| hir.func_names[imod.m(*func)] == *mname) {
                 None => {
                     match &hir.funcs[tfkey] {
                         hir::FuncDefKind::Defined(_) => unreachable!(),
                         hir::FuncDefKind::TraitHeader(..) => {
-                            missing_methods.push(method);
+                            missing_methods.push((method, tmforall, trmtyping));
                             None
                         }
                         // use the default if it exists
@@ -327,43 +343,41 @@ fn verify_impl_headers<'s>(
                 }
                 Some(matching) => {
                     let ifkey = imod.m(imethodmap[matching]);
-                    let to_generic = |k| Type::Generic(Generic::new(k, GenericKind::Entity));
-                    inst.generics = match &hir.funcs[tfkey] {
-                        hir::FuncDefKind::Defined(fdef) => {
-                            fdef.forall.borrow().keys().map(to_generic).collect()
-                        }
-                        hir::FuncDefKind::TraitHeader(_, forall, _) => {
-                            forall.keys().map(to_generic).collect()
-                        }
-                        _ => unreachable!(),
-                    };
-                    let result = verify_impl_method(hir, tenvs, &mut inst, tfkey, ifkey);
+                    let idef = hir.funcs[ifkey].as_defined();
+
+                    let result = ImplComparison {
+                        env: &mut tenvs[ifkey],
+                        self_: Downgrade.transform(&tinst.self_.as_ref().unwrap()),
+                    }
+                    .typing(&idef.typing, trmtyping);
+
                     if !result.is_ok() {
                         failed_methods.push((tfkey, ifkey, result));
                     }
+
                     Some(ifkey)
                 }
             }
         })
         .collect::<Map<key::Method, _>>();
-    inst.generics = Map::new();
+
+    tinst.clear_assignments_of_kind(GenericKind::Entity);
 
     let mut missing_associations: Vec<key::AssociatedType> = vec![];
 
     let resolved_associations = hir.assoc_names[*trkey]
         .iter()
         .map(
-            |(assoc, &aname)| match hir.iassoc_names[impl_].find(|name| aname == *name) {
+            |(assoc, &aname)| match hir.iassoc[impl_].iter().find(|(name, _)| aname == *name) {
+                Some((_, ty)) => ty.clone(),
+                // Use the default (if it exists)
                 None => match hir.assoc[*trkey][assoc].as_ref() {
-                    Some(ty) => ty.clone(),
+                    Some(ty) => (&tinst).transform(&**ty).tr(ty.span),
                     None => {
                         missing_associations.push(assoc);
                         Type::poison().tr(hir.impltors[impl_].span)
                     }
                 },
-                Some(ty) => {
-                    todo!("verify the assocs");
-                }
             },
         )
         .collect::<Map<key::AssociatedType, _>>();
@@ -373,45 +387,14 @@ fn verify_impl_headers<'s>(
     if missing_methods.len() + missing_associations.len() + failed_methods.len() != 0 {
         let mut error = error.m(imod).eline(hir.impltors[impl_].span, "");
 
-        fn tmethod_to_fstring<'s>(
-            hir: &hir::HIR<'s>,
-            pforall: &Forall<'s, Type>,
-            func: M<key::Func>,
-            env: &TEnv<'s>,
-        ) -> String {
-            let forall = match &hir.funcs[func] {
-                hir::FuncDefKind::TraitDefaultMethod(_, fdef)
-                | hir::FuncDefKind::Defined(fdef)
-                | hir::FuncDefKind::ImplMethod(_, fdef) => fdef
-                    .forall
-                    .borrow()
-                    .values()
-                    .map(|gdata| gdata.name)
-                    .collect(),
-                hir::FuncDefKind::InheritedDefault(_, _) => todo!(),
-                hir::FuncDefKind::TraitHeader(_, forall, _) => {
-                    forall.values().map(|gdata| gdata.name).collect()
-                }
-                hir::FuncDefKind::Extern { .. } => Map::new(),
-            };
-            let pforall = pforall.values().map(|gdata| gdata.name).collect();
-            let tfmt = tyfmt::TyFmtState::new(hir, env, forall, pforall);
-            let fname = hir.func_names[func];
-            match &hir.funcs[func] {
-                hir::FuncDefKind::Defined(fdef)
-                | hir::FuncDefKind::ImplMethod(_, fdef)
-                | hir::FuncDefKind::TraitDefaultMethod(_, fdef) => {
-                    tfmt.function(fname, &fdef.typing)
-                }
-                hir::FuncDefKind::TraitHeader(_, _, typing) => tfmt.function(fname, typing),
-                other => unreachable!("{other:?}"),
-            }
-        }
+        let iforall: Map<_, _> = hir.impls[impl_].names().collect();
 
-        for method in missing_methods {
-            let func = tmod.m(trmethodmap[method]);
+        for (method, forall, typing) in missing_methods {
             let env = TEnv::new();
-            let fstring = tmethod_to_fstring(hir, tforall, func, &env);
+            let fname = hir.func_names[tmod.m(trmethodmap[method])];
+            let forall = forall.names().collect();
+            let fstring =
+                tyfmt::TyFmtState::new(hir, &env, forall, iforall.clone()).function(fname, &typing);
             error = error.text(format!("{}  {}", "missing".symbol(), fstring));
             error = error.text("");
         }
@@ -428,22 +411,16 @@ fn verify_impl_headers<'s>(
 
         for (tfunc, ifunc, result) in failed_methods {
             let env = &tenvs[ifunc];
-            let got = tmethod_to_fstring(hir, tforall, ifunc, env);
-            let env = TEnv::new();
-            // the forall we actually use during instantiation just assumes the same order.
-            //
-            // but it doesn't care about names.
-            // eh. let's use the `got` forall and on missing provide a placeholder.
-            let forall = hir.funcs[ifunc]
-                .as_defined()
-                .forall
-                .borrow()
-                .values()
-                .map(|gdata| gdata.name)
-                .collect();
-            let tforall = tforall.values().map(|gdata| gdata.name).collect();
-            let exp = tyfmt::TyFmtState::new(hir, &env, forall, tforall)
+            let fdef = hir.funcs[ifunc].as_defined();
+            let imforall: Map<_, _> = fdef.forall.borrow().names().collect();
+            let fname = hir.func_names[ifunc];
+
+            let got = tyfmt::TyFmtState::new(hir, &env, imforall.clone(), iforall.clone())
+                .function(fname, &fdef.typing);
+
+            let exp = tyfmt::TyFmtState::new(hir, &TEnv::new(), imforall, iforall.clone())
                 .function(hir.func_names[tfunc], &result.instantiated);
+
             error = error.text(format!("{}      {}", "got".symbol(), got));
             error = error.text(format!("{} {}", "expected".symbol(), exp));
             error = error.text("");
@@ -453,45 +430,6 @@ fn verify_impl_headers<'s>(
     }
 
     (resolved_associations, resolved_methods)
-}
-
-fn verify_impl_method<'s>(
-    hir: &hir::HIR<'s>,
-    tenvs: &mut ModMap<key::Func, TEnv<'s>>,
-    inst: &mut ConcreteInst,
-    tfunc: M<key::Func>,
-    ifunc: M<key::Func>,
-) -> CmpResult {
-    let trmtyping = match &hir.funcs[tfunc] {
-        hir::FuncDefKind::Defined(func) => {
-            todo!();
-            // todo!("for the instantiation to work, we'd have to first upgrade *then* downgrade. Which sucks");
-            // BUT: we also do want to force teh annotation to be there at a
-            // declaration level.
-            //
-            // SO; maybe we should create a `Typing<Type>` and then *also*
-            // downgrade to a `Typing<IType>` in the `FuncDef`? ye that makes
-            // sense.
-        }
-        hir::FuncDefKind::TraitHeader(_, _, typing) => typing,
-        _ => unreachable!(),
-    };
-    let trmtyping = hir::Typing {
-        params: trmtyping
-            .params
-            .values()
-            .map(|ty| inst.apply(ty).tr(ty.span))
-            .collect(),
-        returns: inst.apply(&*trmtyping.returns).tr(trmtyping.returns.span),
-    };
-
-    let idef = hir.funcs[ifunc].as_defined();
-
-    ImplComparison {
-        env: &mut tenvs[ifunc],
-        self_: inst.self_.as_ref().unwrap().i(),
-    }
-    .typing(&idef.typing, trmtyping)
 }
 
 struct ImplComparison<'a, 's> {
@@ -529,7 +467,7 @@ impl<'a, 's> ImplComparison<'a, 's> {
     }
 
     fn cmp(&mut self, span: Span, got: &IType, exp: &Type) -> bool {
-        let exp = exp.i();
+        let exp = Downgrade.transform(&exp);
         self.cmpi(span, got, &exp)
     }
 
@@ -537,55 +475,18 @@ impl<'a, 's> ImplComparison<'a, 's> {
         trace!("impl-comparing {got} & {exp}");
 
         match (got, exp) {
-            (IType::Prim(got), IType::Prim(exp)) => got == exp,
-            (IType::Generic(ggeneric), IType::Generic(egeneric)) => ggeneric == egeneric,
-            (IType::Defined(gkind, gparams), IType::Defined(ekind, eparams)) if gkind == ekind => {
+            (Ty::Int(gsize), Ty::Int(esize)) => gsize == esize,
+            (Ty::Generic(ggeneric), Ty::Generic(egeneric)) => ggeneric == egeneric,
+            (Ty::Simple(g), Ty::Simple(e)) => g == e,
+            (Ty::Container(g, gparams), Ty::Container(e, eparams)) if g == e => {
                 self.cmpis(span, gparams, eparams)
             }
-            (IType::Container(gcon), IType::Container(econ)) => match (gcon, econ) {
-                (Container::Func(gkind, gparams, gret), Container::Func(ekind, eparams, eret)) => {
-                    gkind == ekind
-                        && self.cmpis(span, gparams, eparams)
-                        && self.cmpi(span, gret, eret)
-                }
-                (Container::Tuple(gelems), Container::Tuple(eelems)) => {
-                    self.cmpis(span, gelems, eelems)
-                }
-                (Container::Pointer(g), Container::Pointer(e)) => self.cmpi(span, g, e),
-                _ => false,
-            },
-            (IType::Self_, IType::Self_) => true,
-            (IType::Self_, _) => {
+            (Ty::Special(Inference::Var(var)), ty) => self.assign_or_check(false, span, *var, ty),
+            (ty, Ty::Special(Inference::Var(var))) => self.assign_or_check(true, span, *var, ty),
+            (Ty::Simple("self"), ty) => {
                 let self_ = self.self_.clone();
-                self.cmpi(span, &self_, exp)
+                self.cmpi(span, &self_, ty)
             }
-            (IType::Var(var), ty) => {
-                let asgn = self.env.get(*var).clone();
-                match asgn.value {
-                    None => {
-                        self.env.assign(*var, ty.clone().tr(span));
-                        true
-                    }
-                    Some(ty) => {
-                        let ty = ty.cloned();
-                        self.cmpi(span, got, &ty)
-                    }
-                }
-            }
-            (ty, IType::Var(var)) => {
-                let asgn = self.env.get(*var).clone();
-                match asgn.value {
-                    None => {
-                        self.env.assign(*var, ty.clone().tr(span));
-                        true
-                    }
-                    Some(ty) => {
-                        let ty = ty.cloned();
-                        self.cmpi(span, &ty, exp)
-                    }
-                }
-            }
-            (IType::InferringRecord(_), _) => unreachable!(),
             other => {
                 trace!("the {other:?} comparison yielded false");
                 false
@@ -593,16 +494,27 @@ impl<'a, 's> ImplComparison<'a, 's> {
         }
     }
 
+    fn assign_or_check(&mut self, flip: bool, span: Span, var: Var, ty: &IType) -> bool {
+        let asgn = self.env.get(var);
+        match asgn.value {
+            None => {
+                self.env.assign(var, ty.clone().tr(span));
+                true
+            }
+            Some(var_ty) => {
+                let var_ty = var_ty.cloned();
+                if flip {
+                    self.cmpi(span, &ty, &var_ty)
+                } else {
+                    self.cmpi(span, &var_ty, &ty)
+                }
+            }
+        }
+    }
+
     fn cmpis(&mut self, span: Span, got: &[IType], exp: &[IType]) -> bool {
         got.iter().zip(exp).all(|(g, e)| self.cmpi(span, g, e))
     }
-}
-
-fn rename_forall<T: Clone>(forall: &Forall<'_, T>) -> Forall<'static, T> {
-    forall
-        .values()
-        .map(|gdata| GenericData { name: "_", ..gdata.clone() })
-        .collect()
 }
 
 impl fmt::Display for ReadOnlyBytes {

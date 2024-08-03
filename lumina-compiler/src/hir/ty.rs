@@ -1,24 +1,25 @@
 use crate::prelude::*;
 use ast::Entity;
 use lumina_parser as parser;
+use lumina_parser::func::{Header as FuncHeader, Typing as ParserTyping};
 use lumina_typesystem::{
-    Bitsize, Constraint, Container, Forall, FuncKind, Generic, GenericData, GenericKind, IType,
-    Prim, TEnv, Type, Var,
+    Constraint, Forall, Generic, GenericKind, IType, Inference, IntSize, Static, TEnv, Ty, Var,
 };
 use lumina_util::{Spanned, Tr};
 use smallvec::SmallVec;
-use std::cmp::Ordering;
 
 pub struct TypeLower<'t, 'a, 's> {
     module: key::Module,
     ast: &'a ast::AST<'s>,
 
+    default_int_size: u8,
+
     pub type_info: &'t mut TypeEnvInfo<'s>,
 }
 
 pub struct TypeEnvInfo<'s> {
-    pub(crate) iforalls: SmallVec<[(Forall<'s, IType>, GenericKind); 2]>,
-    pub(crate) cforalls: SmallVec<[(Forall<'s, Type>, GenericKind); 2]>,
+    pub(crate) iforalls: SmallVec<[(Forall<'s, Inference>, GenericKind); 2]>,
+    pub(crate) cforalls: SmallVec<[(Forall<'s, Static>, GenericKind); 2]>,
 
     pub declare_generics: bool,
     pub list: M<key::TypeKind>,
@@ -30,6 +31,22 @@ pub enum SelfHandler {
     Direct,
     Substituted(M<key::TypeKind>),
     Disallowed,
+}
+
+pub(super) trait FromVar: Sized + Clone {
+    fn var(var: Var) -> Ty<Self>;
+}
+
+impl FromVar for Inference {
+    fn var(var: Var) -> Ty<Self> {
+        Ty::infer(var)
+    }
+}
+
+impl FromVar for Static {
+    fn var(_: Var) -> Ty<Self> {
+        unreachable!();
+    }
 }
 
 impl<'s> TypeEnvInfo<'s> {
@@ -51,10 +68,6 @@ impl<'s> TypeEnvInfo<'s> {
         }
     }
 
-    pub fn declare(&mut self) {
-        todo!();
-    }
-
     pub fn inference(mut self, vars: TEnv<'s>) -> Self {
         self.inference = Some(vars);
         self
@@ -67,35 +80,35 @@ impl<'s> TypeEnvInfo<'s> {
         self.inference.as_mut()
     }
 
-    pub fn enter_lambda(&mut self, lkey: key::Lambda, lforall: Forall<'s, IType>) {
+    pub fn enter_lambda(&mut self, lkey: key::Lambda, lforall: Forall<'s, Inference>) {
         self.iforalls.push((lforall, GenericKind::Lambda(lkey)));
     }
 
-    pub fn enter_type_or_impl_or_method(&mut self, forall: Forall<'s, Type>, kind: GenericKind) {
+    pub fn enter_type_or_impl_or_method(&mut self, forall: Forall<'s, Static>, kind: GenericKind) {
         self.cforalls.push((forall, kind));
     }
-    pub fn leave_type_or_impl_or_method(&mut self) -> Forall<'s, Type> {
+    pub fn leave_type_or_impl_or_method(&mut self) -> Forall<'s, Static> {
         self.cforalls.pop().unwrap().0
     }
 
-    pub fn enter_function(&mut self, forall: Forall<'s, IType>) {
+    pub fn enter_function(&mut self, forall: Forall<'s, Inference>) {
         self.iforalls.push((forall, GenericKind::Entity));
     }
-    pub fn leave_function(&mut self) -> Forall<'s, IType> {
+    pub fn leave_function(&mut self) -> Forall<'s, Inference> {
         self.iforalls.pop().unwrap().0
     }
 
     pub fn declare_generic(&mut self, name: &'s str, plen: usize) -> Option<Generic> {
         match self.iforalls.last_mut() {
             Some((forall, kind)) => {
-                let gkey = forall.push(GenericData::new(name));
+                let gkey = forall.push(name);
                 let generic = Generic::new(gkey, *kind);
                 forall[generic.key].set_params(plen);
                 return Some(generic);
             }
             None => {
                 if let Some((forall, kind)) = self.cforalls.last_mut() {
-                    let gkey = forall.push(GenericData::new(name));
+                    let gkey = forall.push(name);
                     let generic = Generic::new(gkey, *kind);
                     forall[generic.key].set_params(plen);
                     return Some(generic);
@@ -107,97 +120,88 @@ impl<'s> TypeEnvInfo<'s> {
     }
 }
 
-pub trait Ty: Clone + From<Prim> {
-    fn var(_: Var) -> Self {
-        panic!("invalid var");
-    }
-    fn defined(key: M<key::TypeKind>, params: Vec<Self>) -> Self;
-    fn list(key: M<key::TypeKind>, params: Vec<Self>) -> Self;
-    fn container(con: Container<Self>) -> Self;
-    fn generic(generic: Generic) -> Self;
-    fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self>;
-    fn primary_generics<'v, 't, 'a, 's>(
-        this: &'v mut TypeEnvInfo<'s>,
-    ) -> Option<&'v mut (Forall<'s, Self>, GenericKind)>;
-    fn self_() -> Self;
-}
-
-#[rustfmt::skip]
-impl Ty for IType {
-    fn var(var: Var) -> Self { IType::Var(var) }
-    fn defined(key: M<key::TypeKind>, params: Vec<Self>) -> Self { IType::Defined(key, params) }
-    fn list(key: M<key::TypeKind>, params: Vec<Self>) -> Self { IType::List(key, params) }
-    fn container(con: Container<Self>) -> Self { IType::Container(con) }
-    fn generic(generic: Generic) -> Self { IType::Generic(generic) }
-    fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self> {
-        match self {
-            IType::Defined(M { value: key::TypeKind::Trait(key) , module}, params) => Ok((module.m(key), params)),
-            other => Err(other),
-        }
-    }
-    fn primary_generics<'v, 't, 'a, 's>(
-        this: &'v mut TypeEnvInfo<'s>,
-    ) -> Option<&'v mut (Forall<'s, Self>, GenericKind)> {
-        this.iforalls.last_mut()
-    }
-    fn self_() -> Self { Self::Self_ }
-}
-
-#[rustfmt::skip]
-impl Ty for Type {
-    fn container(con: Container<Self>) -> Self { Type::Container(con) }
-    fn defined(key: M<key::TypeKind>, params: Vec<Self>) -> Self { Type::Defined(key, params) }
-    fn list(key: M<key::TypeKind>, params: Vec<Self>) -> Self { Type::List(key, params) }
-    fn generic(generic: Generic) -> Self { Type::Generic(generic) }
-    fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self> {
-        match self {
-            Type::List(M { module, value: key::TypeKind::Trait(key) }, params)
-            | Type::Defined(M { module, value: key::TypeKind::Trait(key) }, params) => Ok((module.m(key), params)),
-            other => Err(other),
-        }
-    }
-    fn primary_generics<'v, 't, 'a, 's>(
-        this: &'v mut TypeEnvInfo<'s>,
-    ) -> Option<&'v mut (Forall<'s, Self>, GenericKind)> {
-        this.cforalls.last_mut()
-    }
-    fn self_() -> Self { Self::Self_ }
-}
-
 impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
     pub fn new(
         module: key::Module,
         ast: &'a ast::AST<'s>,
+        default_int_size: u8,
         type_info: &'t mut TypeEnvInfo<'s>,
     ) -> Self {
-        Self { module, ast, type_info }
+        Self { module, ast, type_info, default_int_size }
     }
 
-    pub fn ty_spanned<T: Ty>(&mut self, ty: Tr<&parser::Type<'s>>) -> Tr<T> {
+    pub fn typing<T: FromVar>(&mut self, typing: &ParserTyping<'s>) -> hir::Typing<Ty<T>> {
+        hir::Typing {
+            params: self.tys_spanned(&typing.ptypes),
+            returns: self.ty_spanned(typing.returns.as_ref()),
+        }
+    }
+
+    pub fn typing_or_emit_and_poison(
+        &mut self,
+        header: &FuncHeader<'s>,
+        kind: &str,
+    ) -> hir::Typing<Ty<Static>> {
+        match header.typing.as_ref() {
+            Some(typing) => self.typing(typing),
+            None => {
+                self.ast
+                    .sources
+                    .error("missing function type signature")
+                    .m(self.module)
+                    .eline(
+                        header.name.span,
+                        format!("type signatures for {kind} are mandatory"),
+                    )
+                    .emit();
+
+                hir::Typing::poisoned(&header.params, header.name.span)
+            }
+        }
+    }
+
+    pub fn typing_or_inferred<T>(&mut self, header: &FuncHeader<'s>) -> hir::Typing<Ty<T>>
+    where
+        T: FromVar,
+    {
+        match header.typing.as_ref() {
+            Some(typing) => self.typing(typing),
+            None => {
+                let vars = self
+                    .type_info
+                    .inference_mut()
+                    .expect("optional inference for static signature");
+                hir::Typing::inferred(&header.params, header.name.span, vars)
+            }
+        }
+    }
+
+    pub fn ty_spanned<T: FromVar>(&mut self, ty: Tr<&parser::Type<'s>>) -> Tr<Ty<T>> {
         self.ty::<T>(ty).tr(ty.span)
     }
 
-    pub fn ty<T: Ty>(&mut self, ty: Tr<&parser::Type<'s>>) -> T {
+    pub fn ty<T: FromVar>(&mut self, ty: Tr<&parser::Type<'s>>) -> Ty<T> {
         trace!("lowering type {ty}");
 
         match *ty {
             parser::Type::Closure(ptypes, returns) => {
                 let ptypes = self.tys(ptypes);
                 let returns = self.ty((**returns).as_ref());
-                let con = Container::Func(FuncKind::Closure, ptypes, Box::new(returns));
-                T::container(con)
+                Ty::closure(ptypes, returns)
             }
             parser::Type::FnPointer(ptypes, returns) => {
                 let ptypes = self.tys(ptypes);
                 let returns = self.ty((**returns).as_ref());
-                let con = Container::Func(FuncKind::FnPointer, ptypes, Box::new(returns));
-                T::container(con)
+                Ty::fn_pointer(ptypes, returns)
             }
             parser::Type::Pointer(inner) => {
-                let con = Container::Pointer(Box::new(self.ty((**inner).as_ref())));
-                T::container(con)
+                let inner = self.ty((**inner).as_ref());
+                Ty::pointer(inner)
             }
-            parser::Type::Tuple(elems) => T::container(Container::Tuple(self.tys(elems))),
+            parser::Type::Tuple(elems) => {
+                let elems = self.tys(elems);
+                Ty::tuple(elems)
+            }
             parser::Type::List(inner) => {
                 if inner.len() != 1 {
                     self.ast
@@ -207,30 +211,33 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                         .eline(ty.span, "a list's elements must all be of the same type")
                         .emit();
 
-                    Prim::Poison.into()
+                    Ty::poison()
                 } else {
                     let params = self.tys(inner);
-                    T::list(self.type_info.list, params)
+                    Ty::list(self.type_info.list, params)
                 }
             }
-            parser::Type::Poison => T::from(Prim::Poison),
+            parser::Type::Poison => Ty::poison(),
             parser::Type::Defined(path, params) => self.defined(path.tr(ty.span), params),
         }
     }
 
-    pub fn tys<T: Ty>(&mut self, ty: &[Tr<parser::Type<'s>>]) -> Vec<T> {
+    pub fn tys<T: FromVar>(&mut self, ty: &[Tr<parser::Type<'s>>]) -> Vec<Ty<T>> {
         ty.iter().map(|ty| self.ty(ty.as_ref())).collect()
     }
 
-    pub fn tys_spanned<T: Ty>(&mut self, ty: &[Tr<parser::Type<'s>>]) -> Vec<Tr<T>> {
+    pub fn tys_spanned<F, T: FromVar>(&mut self, ty: &[Tr<parser::Type<'s>>]) -> F
+    where
+        F: FromIterator<Tr<Ty<T>>>,
+    {
         ty.iter().map(|ty| self.ty_spanned(ty.as_ref())).collect()
     }
 
-    fn defined<T: Ty>(
+    fn defined<T: FromVar>(
         &mut self,
         apath: Tr<&parser::AnnotatedPath<'s>>,
         params: &[Tr<parser::Type<'s>>],
-    ) -> T {
+    ) -> Ty<T> {
         if !apath.for_segments.is_empty() {
             self.ast.sources
                 .warning("invalid type annotation")
@@ -253,7 +260,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                         .eline(span, "type inference not allowed in this context")
                         .emit();
 
-                    return T::from(Prim::Poison);
+                    return Ty::poison();
                 }
                 Some(vars) => {
                     let ty = T::var(vars.var(span));
@@ -261,30 +268,27 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                 }
             },
             ["bool"] => {
-                return self.forbid_params(span, T::from(Prim::Bool), params);
+                return self.forbid_params(span, Ty::bool(), params);
             }
             ["int"] => {
-                let int = T::from(Prim::Int(true, Bitsize::default()));
+                let int = Ty::Int(IntSize::new(true, self.default_int_size));
                 return self.forbid_params(span, int, params);
             }
             ["uint"] => {
-                let int = T::from(Prim::Int(false, Bitsize::default()));
+                let int = Ty::Int(IntSize::new(false, self.default_int_size));
                 return self.forbid_params(span, int, params);
             }
             ["float"] => {
-                return self.forbid_params(span, T::from(Prim::Float), params);
+                return self.forbid_params(span, Ty::f64(), params);
             }
             ["self"] => match self.type_info.self_handler {
                 SelfHandler::Substituted(kind) => {
                     let (forall, gkind) = &self.type_info.cforalls.last().unwrap();
                     assert_eq!(*gkind, GenericKind::Entity);
-                    let params = forall
-                        .keys()
-                        .map(|generic| T::generic(Generic::new(generic, *gkind)))
-                        .collect();
-                    return T::defined(kind, params);
+                    let params = forall.to_types(*gkind);
+                    return Ty::defined(kind, params);
                 }
-                SelfHandler::Direct => return T::self_(),
+                SelfHandler::Direct => return Ty::Simple("self"),
                 SelfHandler::Disallowed => {
                     self.ast
                         .sources
@@ -296,28 +300,28 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                         )
                         .emit();
 
-                    return T::from(Prim::Poison);
+                    return Ty::poison();
                 }
             },
             [name] if name.starts_with('u') => {
                 if let Ok(n) = name[1..].parse::<u8>() {
-                    let int = T::from(Prim::Int(false, Bitsize(n)));
+                    let int = Ty::Int(IntSize::new(false, n));
                     return self.forbid_params(span, int, params);
                 }
             }
             [name] if name.starts_with('i') => {
                 if let Ok(n) = name[1..].parse::<u8>() {
-                    let int = T::from(Prim::Int(true, Bitsize(n)));
+                    let int = Ty::Int(IntSize::new(true, n));
                     return self.forbid_params(span, int, params);
                 }
             }
             [name] => match self.try_generic(name, params.len()) {
                 Ok(gen) => {
-                    return self.forbid_params(span, T::generic(gen), params);
+                    return self.forbid_params(span, Ty::Generic(gen), params);
                 }
                 Err(GenericError::InconsistentHKT(exp)) => {
                     self.emit_inconsistent_hkt(span, exp, params.len());
-                    return T::from(Prim::Poison);
+                    return Ty::poison();
                 }
                 Err(GenericError::NotFound) => {}
             },
@@ -351,7 +355,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                             );
 
                             while tparams.len() != expected_type_params.len() {
-                                tparams.push(Prim::Poison.into());
+                                tparams.push(Ty::poison());
                             }
                         }
                         (x, y) if x > y => {
@@ -365,7 +369,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                         (_, _) => {}
                     }
 
-                    T::defined(key, tparams)
+                    Ty::defined(key, tparams)
                 }
                 _ => {
                     let name = path.last().unwrap();
@@ -373,7 +377,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                         .sources
                         .emit_wrong_entity(self.module, span, name, "type", entity.key);
 
-                    T::from(Prim::Poison)
+                    Ty::poison()
                 }
             },
 
@@ -382,12 +386,17 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                     .sources
                     .emit_lookup_err(span, self.module, "type", err);
 
-                T::from(Prim::Poison)
+                Ty::poison()
             }
         }
     }
 
-    fn forbid_params<T: Ty>(&self, span: Span, ty: T, params: &[Tr<parser::Type<'s>>]) -> T {
+    fn forbid_params<T: FromVar>(
+        &self,
+        span: Span,
+        ty: Ty<T>,
+        params: &[Tr<parser::Type<'s>>],
+    ) -> Ty<T> {
         if params.len() == 0 {
             ty
         } else {
@@ -398,7 +407,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                 .eline(span, "this type can not take any type parameters")
                 .emit();
 
-            T::from(Prim::Poison)
+            Ty::poison()
         }
     }
 
@@ -416,7 +425,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
 
     fn try_generic(&mut self, name: &'s str, plen: usize) -> Result<Generic, GenericError> {
         for (forall, kind) in self.type_info.iforalls.iter_mut().rev() {
-            if let Some(generic) = forall.find(|gdata| gdata.name == name) {
+            if let Some(generic) = forall.find(name) {
                 check_param_len(&mut forall[generic].params, plen)
                     .map_err(GenericError::InconsistentHKT)?;
                 return Ok(Generic::new(generic, *kind));
@@ -424,7 +433,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
         }
 
         for (forall, kind) in self.type_info.cforalls.iter_mut().rev() {
-            if let Some(generic) = forall.find(|gdata| gdata.name == name) {
+            if let Some(generic) = forall.find(name) {
                 check_param_len(&mut forall[generic].params, plen)
                     .map_err(GenericError::InconsistentHKT)?;
                 return Ok(Generic::new(generic, *kind));
@@ -441,19 +450,37 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
         Err(GenericError::NotFound)
     }
 
-    pub fn add_constraint<T: Ty>(
+    pub fn add_constraint<T: FromVar>(
         &mut self,
         generic: Generic,
         ty: Tr<&lumina_parser::Type<'s>>,
-    ) -> Result<(), NotATrait<T>> {
-        let (trait_, params) = self.ty::<T>(ty).as_trait().map_err(NotATrait)?;
+    ) -> Result<(), NotATrait> {
+        match self.type_info.iforalls.last_mut() {
+            Some((..)) => {
+                let (trait_, params) =
+                    self.ty::<Inference>(ty).as_trait().map_err(|_| NotATrait)?;
 
-        let (forall, kind) = T::primary_generics(self.type_info).unwrap();
-        assert_eq!(generic.kind, *kind);
+                let (forall, kind) = self.type_info.iforalls.last_mut().unwrap();
+                assert_eq!(generic.kind, *kind);
 
-        forall[generic.key]
-            .trait_constraints
-            .push(Constraint { span: ty.span, trait_, params });
+                forall[generic.key].trait_constraints.push(Constraint {
+                    span: ty.span,
+                    trait_,
+                    params,
+                });
+            }
+            None => {
+                let (trait_, params) = self.ty::<Static>(ty).as_trait().map_err(|_| NotATrait)?;
+                let (forall, kind) = self.type_info.cforalls.last_mut().unwrap();
+                assert_eq!(generic.kind, *kind);
+
+                forall[generic.key].trait_constraints.push(Constraint {
+                    span: ty.span,
+                    trait_,
+                    params,
+                });
+            }
+        }
 
         Ok(())
     }
@@ -468,7 +495,7 @@ fn check_param_len(exp: &mut usize, got: usize) -> Result<(), usize> {
     }
 }
 
-pub struct NotATrait<T>(pub T);
+pub struct NotATrait;
 
 enum GenericError {
     NotFound,

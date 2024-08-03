@@ -1,5 +1,6 @@
 use super::*;
 use crate::LISTABLE_SPLIT;
+use lumina_typesystem::{Container, GenericMapper, IntSize, Transformer};
 use mir::pat::{DecTree, Range, TreeTail};
 use ssa::{Block, Value};
 use std::collections::VecDeque;
@@ -92,7 +93,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             DecTree::Record { next, .. } => self.record(on, next),
             DecTree::Tuple { next, .. } => self.tuple(on, next),
             DecTree::List { next, ty } => self.list(on, ty, next),
-            DecTree::Ints { bitsize, signed, next } => self.ints(on, *signed, *bitsize, next),
+            DecTree::Ints { intsize, next } => self.ints(on, *intsize, next),
             DecTree::Bools(next) => self.bools(on, next),
             DecTree::Sum { sum, params, next } => self.sum(on, *sum, params, next),
             DecTree::Wildcard { next, .. } | DecTree::Opaque { next, .. } => self.next(next),
@@ -175,13 +176,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         }
     }
 
-    fn ints(
-        &mut self,
-        on: ssa::Value,
-        signed: bool,
-        bitsize: Bitsize,
-        next: &mir::Branching<Range>,
-    ) {
+    fn ints(&mut self, on: ssa::Value, intsize: IntSize, next: &mir::Branching<Range>) {
         self.can_skip_continuation &= next.branches.len() == 1;
 
         let resetpoint = self.make_reset();
@@ -193,21 +188,17 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
             let [on_true, on_false] = [self.ssa().new_block(0), self.ssa().new_block(0)];
 
-            let to_value = |n| {
-                if signed {
-                    Value::Int(n, bitsize)
-                } else {
-                    Value::UInt(n as u128, bitsize)
-                }
-            };
-
             let check = if range.end == range.start {
                 // TODO: jump-table optimisation for adjecent single-numbers
-                self.ssa().eq([on, to_value(range.end)], bitsize)
+                self.ssa().eq([on, Value::Int(range.end, intsize)], intsize)
             } else {
-                let mut check = self.ssa().lti([on, to_value(range.end)], bitsize);
+                let mut check = self
+                    .ssa()
+                    .lti([on, Value::Int(range.end, intsize)], intsize);
                 if range.con.min != range.start {
-                    let high_enough = self.ssa().gti([on, to_value(range.start)], bitsize);
+                    let high_enough = self
+                        .ssa()
+                        .gti([on, Value::Int(range.start, intsize)], intsize);
                     let ty = self.f.type_of_value(on);
                     check = self.ssa().bit_and([check, high_enough], ty);
                 }
@@ -278,7 +269,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let listmt = morph.apply(&ty);
         let list = morph.apply_weak(&ty);
         let (_, inner) = match &ty {
-            Type::Defined(kind, params) | Type::List(kind, params) => {
+            Type::Container(Container::Defined(kind) | Container::List(kind), params) => {
                 let inner = params[0].clone();
                 assert_eq!(params.len(), 1);
                 (kind, inner)
@@ -302,13 +293,14 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let maybe = self.ssa().call(split, vec![on], ret);
         let maybe_mk = self.f.type_of_value(maybe).as_key();
 
-        let tag_ty = MonoType::UInt(mono::TAG_SIZE);
+        let tag_ty = MonoType::Int(mono::TAG_SIZE);
         let tag = self
             .ssa()
             .field(maybe, maybe_mk, key::RecordField(0), tag_ty);
 
         let data_ty = MonoType::SumDataCast {
-            largest: self.f.lir.types.types.size_of_defined(maybe_mk) - mono::TAG_SIZE.0 as u32,
+            largest: self.f.lir.types.types.size_of_defined(maybe_mk)
+                - mono::TAG_SIZE.bits() as u32,
         };
         let data = self
             .ssa()
@@ -380,7 +372,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let oblock = self.block();
         let on_mk = self.f.type_of_value(on).as_key();
 
-        let tag_ty = MonoType::UInt(mono::TAG_SIZE);
+        let tag_ty = MonoType::Int(mono::TAG_SIZE);
         let copy_tag = self.ssa().field(on, on_mk, key::RecordField(0), tag_ty);
 
         let data = self
@@ -408,14 +400,14 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
                 let resetpoint = self.make_reset();
 
-                let finst = lumina_typesystem::ForeignInst::from_type_params(params);
+                let finst = GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
                 let raw_var_types = &self.f.mir.variant_types[sum][*var];
 
                 let mut base_offset = BitOffset(0);
                 let params = raw_var_types
                     .iter()
                     .map(|ty| {
-                        let ty = finst.apply(ty);
+                        let ty = (&finst).transform(ty);
                         let ty = to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap)
                             .apply(&ty);
 

@@ -58,6 +58,13 @@ impl<'s> Lookups<'s> {
         Lookups { libs, modules, project: key::Module(u32::MAX) }
     }
 
+    pub fn find_lib(&self, names: &[&'s str]) -> Option<key::Module> {
+        self.libs
+            .get(names[0])
+            .and_then(|lib| lib.get(names[1]))
+            .copied()
+    }
+
     pub fn to_field_lookup(&self) -> Map<key::Module, HashMap<&'s str, Vec<M<key::Record>>>> {
         self.modules
             .values()

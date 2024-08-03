@@ -5,7 +5,7 @@ use cranelift::prelude::*;
 use cranelift_codegen::ir;
 use cranelift_module::{FuncId, Module};
 use lir::{BitOffset, MonoFunc, MonoType, MonoTypeKey};
-use lumina_typesystem::Bitsize;
+use lumina_typesystem::IntSize;
 use lumina_util::Highlighting;
 
 pub struct Translator<'c, 'a, 'f> {
@@ -388,7 +388,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             }
             lir::Entry::IntDiv(left, right) => {
                 let [left, right] = [*left, *right].map(|v| self.value_to_entry(v).as_direct());
-                let v = if as_int(ty).0 {
+                let v = if as_int(ty).signed {
                     self.ins().sdiv(left, right)
                 } else {
                     self.ins().udiv(left, right)
@@ -397,7 +397,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             }
             lir::Entry::IntCmpInclusive(left, cmp, right, bitsize) => {
                 let [left, right] = [*left, *right].map(|v| self.value_to_entry(v).as_direct());
-                let intty = Type::int(bitsize.0 as u16).unwrap();
+                let intty = Type::int(bitsize.bits() as u16).unwrap();
                 assert_eq!(self.f.type_of_value(left), intty);
                 assert_eq!(self.f.type_of_value(right), intty);
 
@@ -415,19 +415,19 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             }
             lir::Entry::Reduce(v) => {
                 let v = self.value_to_entry(*v).as_direct();
-                let ty = Type::int(as_int(ty).1 .0 as u16).unwrap();
+                let ty = Type::int(as_int(ty).bits() as u16).unwrap();
                 let v = self.ins().ireduce(ty, v);
                 VEntry::Direct(v)
             }
             lir::Entry::ExtendSigned(v) => {
                 let v = self.value_to_entry(*v).as_direct();
-                let ty = Type::int(as_int(ty).1 .0 as u16).unwrap();
+                let ty = Type::int(as_int(ty).bits() as u16).unwrap();
                 let v = self.ins().sextend(ty, v);
                 VEntry::Direct(v)
             }
             lir::Entry::ExtendUnsigned(v) => {
                 let v = self.value_to_entry(*v).as_direct();
-                let ty = Type::int(as_int(ty).1 .0 as u16).unwrap();
+                let ty = Type::int(as_int(ty).bits() as u16).unwrap();
                 let v = self.ins().uextend(ty, v);
                 VEntry::Direct(v)
             }
@@ -478,7 +478,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             VEntry::Struct(_, fields) => fields.values().fold(offset, |offset, entry| {
                 self.write_field_to_ptr(ptr, offset, entry)
             }),
-            VEntry::SumPayload { largest, ptr } => {
+            VEntry::SumPayload { .. } => {
                 panic!("opaque SumPayload written to pointer");
                 // We could implement it with memcpy but should we?
             }
@@ -509,7 +509,10 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let alloc = self.ctx.lir.alloc;
         let fheader = self.ctx.funcmap[alloc].clone();
 
-        let size = lir::Value::Int(size, Bitsize(self.ctx.pointer_type().bits() as u8));
+        let size = lir::Value::Int(
+            size,
+            IntSize::new(true, self.ctx.pointer_type().bits() as u8),
+        );
 
         let entry = self.call_func(fheader.id, fheader.ret, &[size]);
         match entry {
@@ -523,7 +526,10 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let fheader = self.ctx.funcmap[dealloc].clone();
         let triple = self.ctx.isa.triple();
 
-        let size = lir::Value::Int(size, Bitsize(triple.pointer_width().unwrap().bits()));
+        let size = lir::Value::Int(
+            size,
+            IntSize::new(true, triple.pointer_width().unwrap().bits()),
+        );
 
         let entry = self.call_func(fheader.id, fheader.ret, &[ptr, size]);
         match entry {
@@ -551,11 +557,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 VEntry::Direct(fptr)
             }
             lir::Value::Int(n, bitsize) => {
-                let ty = Type::int(bitsize.0 as u16).unwrap();
-                VEntry::Direct(self.ins().iconst(ty, n as i64))
-            }
-            lir::Value::UInt(n, bitsize) => {
-                let ty = Type::int(bitsize.0 as u16).unwrap();
+                let ty = Type::int(bitsize.bits() as u16).unwrap();
                 VEntry::Direct(self.ins().iconst(ty, n as i64))
             }
             lir::Value::Float(_) => todo!(),
@@ -699,10 +701,9 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 type VEntry = abi::Entry<Value>;
 type VField = abi::StructField<Value>;
 
-fn as_int(ty: &MonoType) -> (bool, Bitsize) {
+fn as_int(ty: &MonoType) -> IntSize {
     match ty {
-        MonoType::Int(bits) => (true, *bits),
-        MonoType::UInt(bits) => (false, *bits),
+        MonoType::Int(bits) => *bits,
         _ => unreachable!(),
     }
 }

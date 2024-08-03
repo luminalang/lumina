@@ -1,29 +1,29 @@
-use derive_more::From;
 use derive_new::new;
+use itertools::Itertools;
 use key::{Map, ModMap, M};
 use lumina_key as key;
-use lumina_util::{Span, Tr};
+use lumina_util::{Highlighting, Span, Tr};
 use std::collections::HashMap;
-use tracing::error;
+use std::fmt;
 
-mod bitsize;
-pub use bitsize::Bitsize;
-
-mod fin;
-pub use fin::{ConcreteInst, FinError, Finalizer};
-
-mod constr;
-mod fmt;
-
-mod generic;
-pub use generic::{
-    implicitly_declare_generic, Constraint, Forall, Generic, GenericData, GenericKind,
-    IMPLICT_GENERIC_NAMES,
+mod transform;
+pub use transform::{
+    CircularInst, DirectRecursion, Downgrade, ForeignInst, GenericMapper, Transformer,
 };
 
+mod intsize;
+pub use intsize::IntSize;
+
+mod fin;
+pub use fin::{FinError, Finalizer};
+
+mod generic;
+pub use generic::{Constraint, Forall, Generic, GenericData, GenericKind, IMPLICT_GENERIC_NAMES};
+
 mod tenv;
-use tenv::RecordVarField;
-pub use tenv::{IntConstraint, RecordAssignment, RecordError, RecordVar, TEnv, Var, VarInfo};
+pub use tenv::{
+    IntConstraint, RecordAssignment, RecordError, RecordVar, RecordVarField, TEnv, Var, VarInfo,
+};
 
 mod iquery;
 pub use iquery::{Compatibility, ConcreteType, ImplIndex};
@@ -31,7 +31,7 @@ pub use iquery::{Compatibility, ConcreteType, ImplIndex};
 #[derive(new)]
 pub struct TypeSystem<'a, 's> {
     pub env: &'a mut TEnv<'s>,
-    pub records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Type>)>,
+    pub records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
     pub ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
     pub fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
     pub field_lookup: &'a HashMap<&'s str, Vec<M<key::Record>>>,
@@ -40,387 +40,233 @@ pub struct TypeSystem<'a, 's> {
 mod check;
 pub use check::CheckResult;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Container<T> {
-    Func(FuncKind, Vec<T>, Box<T>),
-    Tuple(Vec<T>),
-    Pointer(Box<T>),
-}
+/// A generalised and customizable `Type` type with visitor API's
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum Ty<T> {
+    // Types which contain other types
+    Container(Container, Vec<Self>),
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
-pub enum Prim {
-    Int(bool, Bitsize),
-    Float,
-    Poison,
-    Bool,
-    Never,
+    Generic(Generic),
+    Int(IntSize),
+
+    // Types that are only equal to themselves
+    Simple(&'static str),
+
+    // Special variants that are often transformed.
+    Special(T),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum FuncKind {
-    Closure,
+pub enum Container {
     FnPointer,
+    Closure,
+    Tuple,
+    Pointer,
+    Defined(M<key::TypeKind>),
+    List(M<key::TypeKind>),
 }
 
-#[derive(Clone, Debug, From)]
-pub enum IType {
-    #[from]
-    Container(Container<Self>),
-    #[from]
-    Prim(Prim),
-    #[from]
-    Generic(Generic),
+impl<T> Ty<T> {
+    pub fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self> {
+        match self {
+            Ty::Container(
+                Container::Defined(M { module, value: key::TypeKind::Trait(key) })
+                | Container::List(M { module, value: key::TypeKind::Trait(key) }),
+                params,
+            ) => Ok((module.m(key), params)),
+            other => Err(other),
+        }
+    }
 
-    Self_,
+    pub fn tuple(elems: Vec<Self>) -> Self {
+        Self::Container(Container::Tuple, elems)
+    }
 
-    Defined(M<key::TypeKind>, Vec<Self>),
-    List(M<key::TypeKind>, Vec<Self>),
-    InferringRecord(RecordVar),
+    pub fn defined<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
+        let key = key.map(K::into);
+        Self::Container(Container::Defined(key), params)
+    }
+    pub fn list<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
+        let key = key.map(K::into);
+        Self::Container(Container::List(key), params)
+    }
 
-    // infered types
-    #[from]
+    pub fn fn_pointer(mut params: Vec<Self>, ret: Self) -> Self {
+        params.push(ret);
+        Self::Container(Container::FnPointer, params)
+    }
+    pub fn closure(mut params: Vec<Self>, ret: Self) -> Self {
+        params.push(ret);
+        Self::Container(Container::Closure, params)
+    }
+
+    pub fn pointer(ty: Self) -> Self {
+        let params = vec![ty];
+        Self::Container(Container::Pointer, params)
+    }
+
+    pub fn u8() -> Self {
+        Self::int(false, 8)
+    }
+    pub fn u8_pointer() -> Self {
+        Self::pointer(Self::Int(IntSize::new(false, 8)))
+    }
+
+    pub fn int(signed: bool, size: u8) -> Self {
+        Self::Int(IntSize::new(signed, size))
+    }
+
+    pub fn f64() -> Self {
+        Self::Simple("f64")
+    }
+
+    pub fn f32() -> Self {
+        Self::Simple("f32")
+    }
+
+    pub fn poison() -> Self {
+        Self::Simple("poison")
+    }
+
+    pub fn bool() -> Self {
+        Self::Simple("bool")
+    }
+
+    pub fn self_() -> Self {
+        Self::Simple("self")
+    }
+}
+
+impl Ty<Inference> {
+    pub fn infer(var: Var) -> Self {
+        Self::Special(Inference::Var(var))
+    }
+
+    pub fn infrecord(rvar: RecordVar) -> Self {
+        Self::Special(Inference::Record(rvar))
+    }
+
+    pub fn inffield(rvar: RecordVar, field: RecordVarField) -> Self {
+        Self::Special(Inference::Field(rvar, field))
+    }
+}
+
+pub type IType = Ty<Inference>;
+pub type Type = Ty<Static>;
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Static;
+
+impl fmt::Display for Static {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        "static".fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Inference {
     Var(Var),
-
-    // Record(RecordVar),
+    Record(RecordVar),
     Field(RecordVar, RecordVarField),
 }
 
-#[derive(Clone, Debug, From, PartialEq, Eq, Hash)]
-pub enum Type {
-    #[from]
-    Container(Container<Self>),
-    #[from]
-    Prim(Prim),
-    #[from]
-    Generic(Generic),
-
-    Defined(M<key::TypeKind>, Vec<Self>),
-    List(M<key::TypeKind>, Vec<Self>),
-
-    Self_,
-}
-
-impl<T> Container<T> {
-    pub fn map<U>(&self, mut f: impl FnMut(&T) -> U) -> Container<U> {
+impl Container {
+    pub fn fmt<T>(
+        &self,
+        elems: &[T],
+        format: impl Fn(&T) -> String,
+        f: &mut fmt::Formatter,
+    ) -> fmt::Result {
         match self {
-            Container::Func(kind, ptypes, returns) => {
-                let ret = Box::new(f(&returns));
-                Container::Func(*kind, ptypes.iter().map(f).collect(), ret)
+            Container::FnPointer => Self::fmt_func("fnptr", elems, format, f),
+            Container::Closure => Self::fmt_func("fn", elems, format, f),
+            Container::Tuple => Self::fmt_tuple(elems, format, f),
+            Container::Pointer => write!(f, "*{}", format(&elems[0])),
+            Container::List(key) | Container::Defined(key) => {
+                Self::fmt_defined(key, elems, format, f, true)
             }
-            Container::Tuple(elems) => Container::Tuple(elems.iter().map(f).collect()),
-            Container::Pointer(inner) => Container::Pointer(Box::new(f(*&inner))),
+        }
+    }
+
+    pub fn fmt_defined<T>(
+        header: impl fmt::Display,
+        params: &[T],
+        format: impl Fn(&T) -> String,
+        f: &mut fmt::Formatter,
+        paren: bool,
+    ) -> fmt::Result {
+        if params.is_empty() {
+            write!(f, "{header}")
+        } else {
+            let params = params.iter().format_with(" ", |p, f| f(&format(p)));
+            if paren {
+                write!(f, "({header} {})", params)
+            } else {
+                write!(f, "{header} {}", params)
+            }
+        }
+    }
+
+    pub fn fmt_tuple<T>(
+        elems: &[T],
+        format: impl Fn(&T) -> String,
+        f: &mut fmt::Formatter,
+    ) -> fmt::Result {
+        write!(
+            f,
+            "({})",
+            elems.iter().format_with(", ", |elem, f| f(&format(elem)))
+        )
+    }
+
+    pub fn fmt_func<T>(
+        h: &str,
+        elems: &[T],
+        format: impl Fn(&T) -> String,
+        f: &mut fmt::Formatter,
+    ) -> fmt::Result {
+        let open = '('.symbol();
+        let close = ')'.symbol();
+        if elems.len() == 1 {
+            write!(f, "{h}{open}{}{close}", format(&elems[0]))
+        } else {
+            write!(
+                f,
+                "{h}{open}{} {} {}{close}",
+                elems[..elems.len() - 1]
+                    .iter()
+                    .format_with(", ", |elem, f| f(&format(elem))),
+                "->".symbol(),
+                format(&elems[0])
+            )
         }
     }
 }
 
-type FInst = ForeignInst<Var>;
-
-impl<'a, 's> TypeSystem<'a, 's> {
-    #[track_caller]
-    pub fn assign_pgeneric(&mut self, inst: &FInst, generic: key::Generic, ty: Tr<IType>) {
-        let var = inst.pgenerics[generic];
-        self.raw_assign(var, ty)
-    }
-
-    #[track_caller]
-    pub fn assign_generic(&mut self, inst: &FInst, generic: key::Generic, ty: Tr<IType>) {
-        let var = inst.generics[generic];
-        self.raw_assign(var, ty)
-    }
-
-    #[track_caller]
-    pub fn assign_self(&mut self, inst: &ForeignInst<Var>, ty: Tr<IType>) {
-        let var = inst.self_.unwrap();
-        self.raw_assign(var, ty)
-    }
-
-    fn raw_assign(&mut self, var: Var, ty: Tr<IType>) {
-        let idata = &mut self.env.vars[var];
-        assert!(idata.assignment.is_none(), "Type variable already assigned");
-        idata.assignment = Some(ty);
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ForeignInst<T> {
-    pub generics: Map<key::Generic, T>,
-    pub pgenerics: Map<key::Generic, T>,
-    pub self_: Option<T>,
-}
-
-impl<T> ForeignInst<T> {
-    pub fn new<'a, 's>(env: &'a mut TEnv<'s>) -> ForeignInstBuilder<'a, 's> {
-        ForeignInstBuilder {
-            env,
-            inst: ForeignInst { self_: None, generics: Map::new(), pgenerics: Map::new() },
-        }
-    }
-
-    pub fn circular<'a, 's>(
-        from: &'a mut TEnv<'s>,
-        to: &'a mut TEnv<'s>,
-        to_forall: &'a mut Forall<'s, IType>,
-        span: Span,
-    ) -> CircularRecursionInst<'a, 's> {
-        CircularRecursionInst {
-            from,
-            to,
-            failures: vec![],
-            span,
-            to_forall,
-            inst: ForeignInst { self_: None, generics: Map::new(), pgenerics: Map::new() },
-        }
-    }
-
-    pub fn map<U>(&self, mut f: impl FnMut(&T) -> U) -> ForeignInst<U> {
-        ForeignInst {
-            generics: self.generics.values().map(&mut f).collect(),
-            pgenerics: self.pgenerics.values().map(&mut f).collect(),
-            self_: self.self_.as_ref().map(f),
+impl<T: fmt::Display> fmt::Display for Ty<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Ty::Container(cont, params) => cont.fmt(params, |t| t.to_string(), f),
+            Ty::Generic(generic) => write!(f, "{generic}"),
+            Ty::Int(size) => write!(f, "{size}"),
+            Ty::Simple(name) => name.fmt(f),
+            Ty::Special(special) => special.fmt(f),
         }
     }
 }
 
-impl<T: Clone> ForeignInst<T> {
-    pub fn from_type_params<'a>(params: impl IntoIterator<Item = &'a T>) -> Self
-    where
-        T: 'a,
-    {
-        ForeignInst {
-            generics: params.into_iter().cloned().collect(),
-            pgenerics: Map::new(),
-            self_: None,
+impl fmt::Display for Inference {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Inference::Var(var) => var.fmt(f),
+            Inference::Record(record) => record.fmt(f),
+            Inference::Field(record, field) => write!(f, "{record}.{field}"),
         }
     }
 }
 
-impl ForeignInst<Var> {
-    pub fn to_itype(&self, key: M<key::TypeKind>) -> IType {
-        let params = self.generics.values().copied().map(IType::Var).collect();
-        IType::Defined(key, params)
+impl<T: fmt::Display> fmt::Debug for Ty<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
     }
-
-    pub fn get_trait_type_params(&self) -> Vec<IType> {
-        self.pgenerics.values().copied().map(IType::Var).collect()
-    }
-}
-
-pub struct ForeignInstBuilder<'a, 's> {
-    pub env: &'a mut TEnv<'s>,
-
-    inst: ForeignInst<Var>,
-}
-
-impl<'a, 's> ForeignInstBuilder<'a, 's> {
-    pub fn with_self(mut self, span: Span) -> Self {
-        self.inst.self_ = Some(self.env.var(span));
-        self
-    }
-
-    pub fn annotate_self(self, ty: Tr<IType>) -> Self {
-        self.env.vars[self.inst.self_.unwrap()].assignment = Some(ty);
-        self
-    }
-
-    pub fn forall<T>(mut self, span: Span, forall: &Forall<'s, T>) -> Self {
-        for k in forall.keys() {
-            debug_assert_eq!(k, self.inst.generics.push(self.env.var(span)));
-        }
-        self
-    }
-
-    pub fn parent<T>(mut self, span: Span, forall: &Forall<'s, T>) -> Self {
-        for k in forall.keys() {
-            debug_assert_eq!(k, self.inst.pgenerics.push(self.env.var(span)));
-        }
-        self
-    }
-
-    pub fn forall_cons(self, forall: &Forall<'s, Type>) -> Self {
-        for k in forall.keys() {
-            let var = self.inst.generics[k];
-            for con in &forall[k].trait_constraints {
-                let con = map_con(con, |t| self.inst.apply(t));
-                self.env.constraint_checks.push((var, con));
-            }
-        }
-        self
-    }
-
-    pub fn iforall_cons(self, forall: &Forall<'s, IType>) -> Self {
-        for k in forall.keys() {
-            let var = self.inst.generics[k];
-            for con in &forall[k].trait_constraints {
-                let con = map_con(con, |t| self.inst.applyi(t));
-                self.env.constraint_checks.push((var, con));
-            }
-        }
-        self
-    }
-
-    pub fn parent_cons(self, forall: &Forall<'s, Type>) -> Self {
-        for k in forall.keys() {
-            let var = self.inst.pgenerics[k];
-            for con in &forall[k].trait_constraints {
-                let con = map_con(con, |t| self.inst.apply(t));
-                self.env.constraint_checks.push((var, con));
-            }
-        }
-        self
-    }
-
-    pub fn build(self) -> ForeignInst<Var> {
-        self.inst
-    }
-}
-
-fn map_con<T, U>(con: &Constraint<T>, f: impl FnMut(&T) -> U) -> Constraint<U> {
-    Constraint {
-        span: con.span,
-        trait_: con.trait_,
-        params: con.params.iter().map(f).collect(),
-    }
-}
-
-fn inst_constraint<'s, T>(con: &Constraint<T>, f: impl FnMut(&T) -> IType) -> Constraint<IType> {
-    let params = con.params.iter().map(f).collect();
-    Constraint { span: con.span, trait_: con.trait_, params }
-}
-
-impl<T: Into<IType> + Clone> ForeignInst<T> {
-    pub fn apply(&self, ty: &Type) -> IType {
-        match ty {
-            Type::Container(con) => IType::Container(con.map(|t| self.apply(t))),
-            Type::Prim(prim) => IType::Prim(*prim),
-            Type::Generic(generic) => self.generic(*generic),
-            Type::Defined(key, params) => {
-                IType::Defined(*key, params.iter().map(|t| self.apply(t)).collect())
-            }
-            Type::List(key, params) => {
-                IType::List(*key, params.iter().map(|t| self.apply(t)).collect())
-            }
-            Type::Self_ => self.self_().unwrap_or(IType::Self_),
-        }
-    }
-
-    pub fn applyi(&self, ty: &IType) -> IType {
-        match ty {
-            IType::Container(con) => IType::Container(con.map(|ty| self.applyi(ty))),
-            IType::Generic(generic) => self.generic(*generic),
-            IType::Defined(kind, params) => {
-                IType::Defined(*kind, params.iter().map(|ty| self.applyi(ty)).collect())
-            }
-            IType::List(kind, params) => {
-                IType::List(*kind, params.iter().map(|ty| self.applyi(ty)).collect())
-            }
-            IType::Self_ => self.self_().unwrap_or(IType::Self_),
-            other => other.clone(),
-        }
-    }
-
-    pub fn generic(&self, generic: Generic) -> IType {
-        match generic.kind {
-            GenericKind::Lambda(_) => todo!(),
-            GenericKind::Entity => self.generics[generic.key].clone().into(),
-            GenericKind::Parent => self.pgenerics[generic.key].clone().into(),
-        }
-    }
-
-    fn self_(&self) -> Option<IType> {
-        self.self_.as_ref().map(|var| var.clone().into())
-    }
-}
-
-impl<'a, 's> CircularRecursionInst<'a, 's> {
-    pub fn applyi(&mut self, ty: &IType) -> IType {
-        match ty {
-            IType::Container(con) => IType::Container(con.map(|ty| self.applyi(ty))),
-            IType::Generic(generic) => self.generic(*generic),
-            IType::Defined(kind, params) => {
-                IType::Defined(*kind, params.iter().map(|ty| self.applyi(ty)).collect())
-            }
-            IType::List(kind, params) => {
-                IType::List(*kind, params.iter().map(|ty| self.applyi(ty)).collect())
-            }
-            IType::Self_ => unreachable!(),
-            IType::Prim(prim) => IType::Prim(*prim),
-
-            // TODO: This recursive instantiation is very simple in that it just
-            // fails on anything that isn't yet inferred.
-            //
-            // Having more complex recursive inference would require embedding it into the type
-            // checker. Which seems overkill for now.
-            IType::Var(var) => {
-                let vdata = self.to.get(*var);
-                match vdata.value {
-                    Some(ty) => {
-                        let ty = ty.cloned();
-                        self.applyi(&ty)
-                    }
-                    None => {
-                        self.failures.push(vdata.span);
-                        IType::Var(self.from.var(self.span))
-                    }
-                }
-            }
-            IType::InferringRecord(record) => match self.to.get_record(*record).clone() {
-                RecordAssignment::Ok(key, params) => IType::defined(key, params),
-                RecordAssignment::Redirect(rvar) => {
-                    let ty = IType::InferringRecord(rvar);
-                    self.applyi(&ty)
-                }
-                RecordAssignment::NotRecord(ty) => self.applyi(&ty),
-                RecordAssignment::Unknown(_) => IType::Var(self.from.var(self.span)),
-                RecordAssignment::None => {
-                    self.failures.push(self.to.get_record_span(*record));
-                    IType::Var(self.from.var(self.span))
-                }
-            },
-            IType::Field(record, _) => {
-                self.failures.push(self.to.get_record_span(*record));
-                IType::Var(self.from.var(self.span))
-            }
-        }
-    }
-
-    pub fn generic(&self, generic: Generic) -> IType {
-        match generic.kind {
-            GenericKind::Entity => self.inst.generics[generic.key].clone().into(),
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn forall(mut self) -> Self {
-        for k in self.to_forall.keys() {
-            debug_assert_eq!(k, self.inst.generics.push(self.from.var(self.span)));
-        }
-        self
-    }
-
-    pub fn iforall_cons(mut self) -> Self {
-        for k in self.to_forall.keys() {
-            let var = self.inst.generics[k];
-            for con in self.to_forall[k].trait_constraints.clone() {
-                let con = map_con(&con, |t| self.applyi(t));
-                self.from.constraint_checks.push((var, con));
-            }
-        }
-        self
-    }
-
-    pub fn finalize(self) -> (ForeignInst<Var>, Vec<Span>) {
-        (self.inst, self.failures)
-    }
-}
-
-pub struct CircularRecursionInst<'a, 's> {
-    from: &'a mut TEnv<'s>,
-
-    to: &'a mut TEnv<'s>,
-    to_forall: &'a mut Forall<'s, IType>,
-    span: Span,
-
-    failures: Vec<Span>,
-
-    inst: ForeignInst<Var>,
 }

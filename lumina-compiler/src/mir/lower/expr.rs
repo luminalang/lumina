@@ -20,7 +20,7 @@ pub enum Expr {
     PartialLocal(Local, Vec<Self>),
 
     Yield(Local),
-    YieldFunc(M<NFunc>, GenericMapper<Static>),
+    YieldFunc(M<key::Func>, GenericMapper<Static>),
     YieldLambda(key::Lambda, GenericMapper<Static>),
 
     Access(Box<Self>, M<key::Record>, Vec<Type>, key::RecordField),
@@ -168,6 +168,9 @@ impl<'a, 's> Lower<'a, 's> {
                 hir::Callable::TypeDependentLookup(_) => todo!(),
                 hir::Callable::Builtin(_) => todo!(),
             },
+            hir::Expr::PassFnptr(fkey, _) => {
+                self.fin_inst_or_poison(expr.span, |_, inst| Expr::YieldFunc(*fkey, inst))
+            }
             hir::Expr::PassExpr(inner) => {
                 let to_call = self.lower_expr((**inner).as_ref());
                 // inner == "#(deref v0).funcfield"

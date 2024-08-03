@@ -20,7 +20,11 @@ impl<'a> FuncLower<'a> {
     pub fn expr_to_value_no_side_effects(&mut self, expr: &mir::Expr) -> Option<Value> {
         let simple = match expr {
             mir::Expr::Yield(local) => self.yield_to_value(*local),
-            mir::Expr::YieldFunc(_, _) => todo!(),
+            mir::Expr::YieldFunc(fkey, mapper) => {
+                let tmap = self.morphise_inst(&mapper);
+                let (mfunc, _) = self.call_to_mfunc(FuncOrigin::Defined(*fkey), tmap);
+                Value::FuncPtr(mfunc)
+            }
             mir::Expr::YieldLambda(_, _) => todo!(),
             mir::Expr::Int(intsize, n) => Value::Int(*n, *intsize),
             mir::Expr::Bool(b) => Value::Int(*b as u8 as i128, IntSize::new(false, 8)),
@@ -115,18 +119,10 @@ impl<'a> FuncLower<'a> {
                 other => panic!("non-val given to val_to_ref builtin: {other}"),
             },
             mir::Expr::Yield(local) => self.yield_to_value(*local),
-            mir::Expr::YieldFunc(..) => {
-                todo!("passing functions as function pointers instead of closures needs parsing and lowers");
-                // match self.resolve_nfunc(*nfunc, inst) {
-                //     ResolvedNFunc::Extern(_, _) => todo!(),
-                //     ResolvedNFunc::Static(_, _) => todo!(),
-                //     ResolvedNFunc::Sum { tag, payload_size, ty } => {
-                //         todo!("generate a function which returns this sum type")
-                //     }
-                //     ResolvedNFunc::Val(_, _) => todo!(),
-                // }
-                // let mfunc = self.call_to_mfunc(*nfunc, inst);
-                // Value::FuncPtr(mfunc)
+            mir::Expr::YieldFunc(fkey, mapper) => {
+                let tmap = self.morphise_inst(&mapper);
+                let (mfunc, _) = self.call_to_mfunc(FuncOrigin::Defined(*fkey), tmap);
+                Value::FuncPtr(mfunc)
             }
             mir::Expr::Access(object, record, types, field) => {
                 let value = self.expr_to_value(object);

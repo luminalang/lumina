@@ -79,6 +79,8 @@ pub enum Token {
     Backslash,
     #[token("#")]
     Square,
+    #[token("#!")]
+    SquareExt,
     #[token("fn")]
     Fn,
     #[token("fn(")]
@@ -181,6 +183,7 @@ impl Token {
             T::Do => "start of do expression",
             T::Backslash => "`\\`",
             T::Square => "`#`",
+            T::SquareExt => "`#!`",
             T::Fn => "start of function declaration",
             T::FnOpenParen => "start of closure type",
             T::FnPtrOpenParen => "start of function pointer type",

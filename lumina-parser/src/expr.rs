@@ -4,24 +4,24 @@ use lumina_util::{Highlighting, Identifier, Span, Spanned, Tr};
 use std::fmt;
 
 /// One weird syntactic quirk of using pipe operators in eagerly evaluated language is that the
-/// meaning of `1 >> (f 0)` and `1 >> f 0` are suddenly different. So; Parenthesis become much more
+/// meaning of `1 . (f 0)` and `1 . f 0` are suddenly different. So; Parenthesis become much more
 /// significant. This flag is to mark how many times things are wrapped by parenthesis and thereby are to
 /// be eagerly evaluated instead of further applicated
 ///
 /// Should applicate returnt fn
-/// `1 >> ((\ -> #f))`
+/// `1 . ((\ -> #f))`
 ///
 /// Should applicate returnt fn
-/// `1 >> ((\a -> #f) 0)`
+/// `1 . ((\a -> #f) 0)`
 ///
 /// Should *not* applicate returnt fn
-/// `1 >> (\a -> a)`
+/// `1 . (\a -> a)`
 ///
 /// Should applicate returnt fn
-/// `1 >> (f 0)`
+/// `1 . (f 0)`
 ///
 /// Should *not* applicate returnt fn
-/// `1 >> f 0`
+/// `1 . f 0`
 pub type Sealed = u16;
 
 #[derive(Clone, Debug)]
@@ -47,11 +47,6 @@ pub enum Expr<'a> {
 
     CastAs(Box<Tr<Self>>, Tr<Type<'a>>),
 
-    // Access(Tr<&'a str>, Box<Tr<Self>>),
-
-    // Technically doesn't need to be a builtin but I think it's a good idea for error generation
-    // PipeLeft(Box<[Tr<Self>; 2]>),
-    // PipeRight(Box<[Tr<Self>; 2]>),
     List(Vec<Tr<Self>>),
     Tuple(Vec<Tr<Self>>),
     Record {
@@ -62,7 +57,7 @@ pub enum Expr<'a> {
     Do(Box<[Tr<Self>; 2]>),
     Let(Tr<Pattern<'a>>, Box<[Tr<Self>; 2]>),
     Pass(Box<Tr<Self>>),
-    // PassOperator(Tr<Identifier<'a>>, Option<Box<Tr<Self>>>),
+    PassFptr(AnnotatedPath<'a>),
     Poison,
 }
 
@@ -273,6 +268,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             },
             T::Backslash => self.expr_lambda(span),
             T::Square => self.expr_pass(span),
+            T::SquareExt => self.expr_pass_fnptr(span),
             T::AnnotatedPath => self.expr_anot_path(span.extend_length(-1), true)
         }
     }
@@ -289,6 +285,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             T::OpenCurly => self.expr_record(span),
             T::OpenList => self.expr_list(span),
             T::Square => self.expr_pass(span),
+            T::SquareExt => self.expr_pass_fnptr(span),
             T::AnnotatedPath => self.expr_anot_path(span.extend_length(-1), false)
         }
     }
@@ -589,6 +586,22 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         self.expr_pass_expr(span)
     }
 
+    fn expr_pass_fnptr(&mut self, square_span: Span) -> Option<Tr<Expr<'a>>> {
+        select! {self.parser, "an identifier", span;
+            T::Path => {
+                let fnptr_span = square_span.extend(span);
+                let path = Identifier::parse(self.parser.take(span)).unwrap();
+                Some(Expr::PassFptr(AnnotatedPath::without(path)).tr(fnptr_span))
+            },
+            T::AnnotatedPath => {
+                let fnptr_span = square_span.extend(span);
+                let path = Identifier::parse(self.parser.take(span)).unwrap();
+                self.parser.shared_anot_path(path)
+                    .map(|p| Expr::PassFptr(p).tr(fnptr_span))
+            }
+        }
+    }
+
     fn expr_pass_expr(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
         // Hacky edge-case for partially applicating operators.
         //
@@ -721,6 +734,7 @@ impl T {
             T::OpenCurly,
             T::OpenList,
             T::Square,
+            T::SquareExt,
             T::AnnotatedPath,
         ]
         .contains(&self)
@@ -866,6 +880,7 @@ impl<'a> fmt::Display for Expr<'a> {
                 )
             }
             Expr::Pass(inner) => write!(f, "{}{}", "#".symbol(), inner),
+            Expr::PassFptr(fkey) => write!(f, "{}{}", "#!".symbol(), fkey),
             Expr::Do(exprs) => write!(f, "{do_} {} {then_} {}", exprs[0], exprs[1]),
             Expr::List(elems) => write!(f, "{ol}{}{cl}", elems.iter().format(", ")),
             Expr::Tuple(elems) => write!(f, "{op}{}{cp}", elems.iter().format(", ")),

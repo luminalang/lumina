@@ -169,6 +169,7 @@ impl<'a> Parser<'a> {
     }
 
     fn curly_type(&mut self, start: Span) -> Option<Tr<Type<'a>>> {
+        self.skip_newlines();
         match self.type_with_params() {
             Some(type_) => {
                 self.expect(Token::Bar)?;
@@ -207,7 +208,16 @@ impl<'a> Parser<'a> {
             let ok = ok
                 && match self.lexer.peek() {
                     (Token::CloseCurly, span) => return self.consume(|_| Some((fields, span))),
-                    (Token::Comma, _) => self.consume(|_| true),
+                    (Token::Comma, _) => {
+                        self.progress();
+
+                        // allow trailing comma
+                        if let Some(span) = self.next_is(|t| t == Token::CloseCurly) {
+                            break Some((fields, span));
+                        }
+
+                        true
+                    }
                     got => {
                         self.err_unexpected_token(got, "`,` or `}`");
                         false
@@ -216,7 +226,7 @@ impl<'a> Parser<'a> {
 
             if !ok {
                 match self.recover_for([Token::Comma, Token::CloseCurly], false) {
-                    Token::Comma => self.progress(),
+                    Token::Comma => {}
                     Token::CloseCurly => {
                         break self.consume(|span| Some((fields, span)));
                     }
@@ -317,7 +327,12 @@ impl<'a> Parser<'a> {
             };
 
             select! { self, "`,` or `]`", span;
-                Token::Comma => continue,
+                Token::Comma => {
+                    // allow trailing comma
+                    if let Some(span) = self.next_is(|t| t == Token::CloseList) {
+                        break Some((fields, span))
+                    };
+                },
                 Token::CloseList => break Some((fields, span)),
             }
         }

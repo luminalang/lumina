@@ -27,6 +27,18 @@ impl<'a, 's> Verify<'a, 's> {
                     .collect();
                 self.type_check_pass(expr.span, call, tanot, ptypes)
             }
+            hir::Expr::PassFnptr(key, tanot) => match self.type_of_func(expr.span, *key, tanot) {
+                InstCall::Instantiated(instinfo) => {
+                    let ptypes = instinfo.ptypes.iter().map(|t| t.value.clone()).collect();
+                    let ret = instinfo.ret.value.clone();
+                    self.current.push_inst(expr.span, Some(instinfo));
+                    IType::fn_pointer(ptypes, ret)
+                }
+                InstCall::DirectRecursion | InstCall::CircularRecursion(_) => {
+                    todo!("function pointer from function currently inferring recursively")
+                }
+                _ => unreachable!(),
+            },
             hir::Expr::PassExpr(inner) => self.type_check_pass_expr((**inner).as_ref()),
             hir::Expr::Cast(expr_, ty) => {
                 let ty_of_expr = self.type_check_expr((**expr_).as_ref());

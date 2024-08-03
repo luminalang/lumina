@@ -34,6 +34,7 @@ pub struct ExprLower<'t, 'a, 's> {
 pub enum Expr<'s> {
     Call(Callable<'s>, TypeAnnotation<'s>, Vec<Tr<Self>>),
     Pass(Callable<'s>, TypeAnnotation<'s>, Vec<Tr<Self>>),
+    PassFnptr(M<key::Func>, TypeAnnotation<'s>),
 
     PassExpr(Box<Tr<Self>>),
 
@@ -200,6 +201,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
                 Expr::let_bind(value, pat, then)
             }
             parser::Expr::Pass(inner) => self.pass((**inner).as_ref()),
+            parser::Expr::PassFptr(path) => self.pass_fnptr(expr.span, path),
             parser::Expr::CastAs(expr, ty) => {
                 let expr = self.expr((**expr).as_ref());
                 let ty = self.to_type_lower().ty_spanned(ty.as_ref());
@@ -248,6 +250,36 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             _ => {
                 let lkey = self.lambda(&[], None, inner);
                 Expr::Pass(lkey.into(), TypeAnnotation::new(), vec![])
+            }
+        }
+    }
+
+    fn pass_fnptr(&mut self, span: Span, apath: &parser::AnnotatedPath<'s>) -> Expr<'s> {
+        let segments = apath.path.as_slice();
+        match self.ast.lookups.resolve_func(self.module, segments) {
+            Ok(Mod { key: ast::Entity::Func(ast::NFunc::Key(key)), module, .. }) => {
+                let tanot = self.type_annotation(apath.tr(span), None);
+                Expr::PassFnptr(module.m(key), tanot)
+            }
+            Ok(_) => {
+                self.ast
+                    .sources
+                    .error("invalid function pointer")
+                    .m(self.module)
+                    .eline(
+                        span,
+                        "only non-method functions may be turned into function pointers",
+                    )
+                    .emit();
+
+                Expr::Poison
+            }
+            Err(err) => {
+                self.ast
+                    .sources
+                    .emit_lookup_err(span, self.module, "function", err);
+
+                Expr::Poison
             }
         }
     }
@@ -905,6 +937,7 @@ impl<'s> fmt::Display for Expr<'s> {
                 write!(f, "#{op}{inner}{cp}")
             }
             Expr::Pass(call, anot, params) if params.is_empty() => write!(f, "{call}{anot:?}"),
+            Expr::PassFnptr(key, anot) => write!(f, "{key}{anot:?}"),
             Expr::Pass(call, anot, params) => {
                 write!(f, "{op}{call}{anot:?} {}{cp}", params.iter().format(" "))
             }

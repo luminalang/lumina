@@ -82,8 +82,6 @@ pub struct PointTable {
     pub binds: Vec<(key::Bind, usize)>,
 }
 
-type Params = u32;
-
 pub trait BranchKey: std::fmt::Display {}
 
 impl BranchKey for key::SumVariant {}

@@ -6,7 +6,7 @@ use lumina_key::{Map, M};
 use lumina_util::{Highlighting, Span};
 use std::collections::HashMap;
 use std::fmt;
-use tracing::{error, trace};
+use tracing::trace;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Mod<K> {

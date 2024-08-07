@@ -16,36 +16,14 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    // Used to stop us from creating unecesarry blocks if the contents are very simple
-    pub fn expr_to_value_no_side_effects(&mut self, expr: &mir::Expr) -> Option<Value> {
-        let simple = match expr {
-            mir::Expr::Yield(local) => self.yield_to_value(*local),
-            mir::Expr::YieldFunc(fkey, mapper) => {
-                let tmap = self.morphise_inst(&mapper);
-                let (mfunc, _) = self.call_to_mfunc(FuncOrigin::Defined(*fkey), tmap);
-                Value::FuncPtr(mfunc)
-            }
-            mir::Expr::YieldLambda(_, _) => todo!(),
-            mir::Expr::Int(intsize, n) => Value::Int(*n, *intsize),
-            mir::Expr::Bool(b) => Value::Int(*b as u8 as i128, IntSize::new(false, 8)),
-            mir::Expr::Float(n) => Value::Float(*n),
-            mir::Expr::ReadOnly(_) => todo!(),
-            _ => return None,
-        };
-
-        Some(simple)
-    }
-
     fn yield_to_value(&mut self, local: mir::Local) -> Value {
         match local {
-            mir::Local::Param(pid) if self.current.has_captures => self
-                .ssa()
-                .get_block_param(ssa::Block::entry(), pid.0 + 1)
-                .value(),
-            mir::Local::Param(pid) => self
-                .ssa()
-                .get_block_param(ssa::Block::entry(), pid.0)
-                .value(),
+            mir::Local::Param(pid) => {
+                let offset = self.current.captures.unwrap_or(0);
+                self.ssa()
+                    .get_block_param(ssa::Block::entry(), pid.0 + offset as u32)
+                    .value()
+            }
             mir::Local::Binding(bind) => self.current.bindmap[&bind],
         }
     }
@@ -56,49 +34,45 @@ impl<'a> FuncLower<'a> {
         match expr {
             mir::Expr::CallFunc(func, inst, params) => self.call_nfunc(*func, inst, params),
             mir::Expr::CallLambda(lambda, inst, params) => {
-                let mut params = self.params_to_values(params);
-                let (mfunc, captures, _, returns) = self.morphise_lambda(*lambda, inst);
+                let params = self.params_to_values(params);
+                let (mfunc, mut captures) = self.morphise_lambda(*lambda, inst);
+                let returns = self.lir.functions[mfunc].returns.clone();
 
-                // Add the captures as the first parameter
-                params.insert(0, captures);
+                captures.extend(params);
 
-                self.ssa().call(mfunc, params, returns)
+                self.ssa().call(mfunc, captures, returns)
             }
             mir::Expr::PartialLambda(lambda, inst, partials) => {
-                let (mfunc, captures, _, _) = self.morphise_lambda(*lambda, inst);
+                let (mfunc, mut captures) = self.morphise_lambda(*lambda, inst);
 
-                let mut partials = self.params_to_values(partials);
-                partials.insert(0, captures);
-                self.partially_applicate_func(mfunc, partials)
+                let partials = self.params_to_values(partials);
+                captures.extend(partials);
+
+                self.partially_applicate_func(mfunc, captures)
             }
             mir::Expr::PartialLocal(local, partials) => {
-                let cap = self.yield_to_value(*local);
-                let mut partials = self.params_to_values(partials);
-                partials.insert(0, cap);
-                todo!("what should we do here?");
-                // self.partially_applicate_func(mfunc, partials)
+                let Value::V(cap) = self.yield_to_value(*local) else {
+                    panic!("partial call of non-closure");
+                };
+                let partials = self.params_to_values(partials);
+                self.partially_applicate_closure(cap, partials)
             }
             mir::Expr::PartialFunc(func, inst, partials) => match self.resolve_nfunc(*func, inst) {
                 ResolvedNFunc::Static(mfunc, _) => {
                     let partials = self.params_to_values(partials);
                     self.partially_applicate_func(mfunc, partials)
                 }
-                ResolvedNFunc::Extern(_, _) => todo!(),
-                ResolvedNFunc::Sum { tag, payload_size, ty } => todo!(),
-                ResolvedNFunc::Val(_, _) => todo!(),
+                ResolvedNFunc::Sum { tmap, var, ty, .. } => {
+                    let partials = self.params_to_values(partials);
+                    let mfunc = self.monofunc_wrapper_for_sumvar(ty, tmap, var);
+                    self.partially_applicate_func(mfunc, partials)
+                }
+                ResolvedNFunc::Extern(_, _) => todo!("partially applicating a FFI function"),
+                ResolvedNFunc::Val(_, _) => todo!("partially applicating a global value"),
             },
             mir::Expr::YieldLambda(lambda, inst) => {
-                let (mfunc, captures, cap_tuple_ty, _ret) = self.morphise_lambda(*lambda, inst);
-
-                let mut methods = Map::new();
-                methods.push(mfunc);
-
-                let vhash = VTableHash::Lambda(mfunc);
-
-                let vtable =
-                    self.trait_impl_vtable(self.info.closure, vhash, cap_tuple_ty.into(), methods);
-
-                self.construct_dyn_object(&vtable, captures)
+                let (mfunc, captures) = self.morphise_lambda(*lambda, inst);
+                self.dyn_lambda(mfunc, captures)
             }
             mir::Expr::CallLocal(local, params) => {
                 let params = self.params_to_values(params);
@@ -131,7 +105,7 @@ impl<'a> FuncLower<'a> {
 
                 let mk = morph.record(*record, types);
 
-                let ty = self.lir.types.types.type_of_field(mk, *field);
+                let ty = self.lir.mono.types.type_of_field(mk, *field);
                 self.ssa().field(value, mk, *field, ty)
             }
             mir::Expr::Record(record, types, fields) => {
@@ -169,6 +143,14 @@ impl<'a> FuncLower<'a> {
                     Ordering::Less => self.ssa().extend(inner, from.signed, ty),
                     Ordering::Greater => self.ssa().reduce(inner, ty),
                 }
+            }
+            mir::Expr::ToFloatCast(expr, fromint) => {
+                let inner = self.expr_to_value(&expr);
+                self.ssa().int_to_float(inner, *fromint)
+            }
+            mir::Expr::FromFloatCast(expr, toint) => {
+                let inner = self.expr_to_value(&expr);
+                self.ssa().float_to_int(inner, *toint)
             }
             mir::Expr::Deref(inner) => {
                 let inner = self.expr_to_value(&inner);
@@ -213,12 +195,7 @@ impl<'a> FuncLower<'a> {
                     })
                     .collect();
 
-                // TODO: Is it possible that a `Type::Defined` and `Type::List` both exist here
-                // and therefore we get an unintended hash miss?
-                let vhash = VTableHash::Object { trait_, weak_trait_params, weak_impltor };
-
-                let vtable = self.trait_impl_vtable(trait_, vhash, impltor, methods);
-                self.construct_dyn_object(&vtable, expr)
+                self.dyn_object(impl_, expr, methods)
             }
             mir::Expr::Match(on, tree, branches, pred) => {
                 let on = self.expr_to_value(on);
@@ -231,7 +208,7 @@ impl<'a> FuncLower<'a> {
             }
             mir::Expr::SizeOf(ty) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
-                let size = self.lir.types.types.size_of(&ty) / 8;
+                let size = self.lir.mono.types.size_of(&ty) / 8;
                 Value::Int(
                     size as i128,
                     IntSize::new(false, self.lir.target.int_size()),
@@ -283,7 +260,7 @@ impl<'a> FuncLower<'a> {
     }
 
     pub fn heap_alloc(&mut self, value: lir::Value, ty: MonoType) -> Value {
-        let size = self.lir.types.types.size_of(&ty);
+        let size = self.lir.mono.types.size_of(&ty);
         if size == 0 {
             Value::Int(0, IntSize::new(false, self.lir.target.int_size()))
         } else {
@@ -308,7 +285,7 @@ impl<'a> FuncLower<'a> {
                 let params = self.params_to_values(params);
                 self.ssa().call(mfunc, params, ret)
             }
-            ResolvedNFunc::Sum { tag, payload_size, ty } => {
+            ResolvedNFunc::Sum { tag, payload_size, ty, .. } => {
                 let params = self.params_to_values(params);
                 let parameters = self.elems_to_tuple(params, Some(payload_size));
 
@@ -324,36 +301,25 @@ impl<'a> FuncLower<'a> {
     }
 
     fn call_closure(&mut self, objty: MonoTypeKey, obj: Value, params: Vec<Value>) -> Value {
-        let objptr_type = self
+        let dataptr_type = self
             .lir
-            .types
+            .mono
             .types
             .type_of_field(objty, TRAIT_OBJECT_DATA_FIELD);
-        let vtable_ptr_type = self.lir.types.types.type_of_field(objty, VTABLE_FIELD);
+        assert_eq!(MonoType::u8_pointer(), dataptr_type);
 
-        debug_assert_eq!(MonoType::u8_pointer(), objptr_type);
+        let fnptr_type = self.lir.mono.types.type_of_field(objty, VTABLE_FIELD);
+        let ret = fnptr_type.as_fnptr().1.clone();
+
+        debug_assert_eq!(MonoType::u8_pointer(), dataptr_type);
 
         let objptr = self
             .ssa()
-            .field(obj, objty, TRAIT_OBJECT_DATA_FIELD, objptr_type);
-        let vtableptr = self
-            .ssa()
-            .field(obj, objty, VTABLE_FIELD, vtable_ptr_type.clone());
-        let vtable_type = vtable_ptr_type.clone().deref();
-        let vtable = self.ssa().deref(vtableptr, vtable_type);
+            .field(obj, objty, TRAIT_OBJECT_DATA_FIELD, dataptr_type);
 
-        let (fnptr, ret) = {
-            let call = key::RecordField(0);
-            let vtable_key = vtable_ptr_type.deref().as_key();
-            let ty = self.lir.types.types.type_of_field(vtable_key, call);
-            let MonoType::FnPointer(_, ret) = ty.clone() else {
-                panic!("first field of vtable was not an FnPointer")
-            };
-            let call_field = self
-                .ssa()
-                .field(vtable, vtable_key, key::RecordField(0), ty);
-            (call_field, *ret)
-        };
+        let fnptr = self
+            .ssa()
+            .field(obj, objty, VTABLE_FIELD, fnptr_type.clone());
 
         let param_tuple = self.elems_to_tuple(params, None);
 
@@ -434,7 +400,7 @@ impl<'a> FuncLower<'a> {
 
         info!(
             "calling function {} ({})",
-            self.lir.types.fmt(&typing),
+            self.lir.mono.fmt(&typing),
             typing.origin.name(&self.mir)
         );
 

@@ -99,6 +99,10 @@ impl Blocks {
         self.params(block).map(|v| &self.vtypes[v])
     }
 
+    pub fn func_params(&self) -> Vec<MonoType> {
+        self.param_types(Block::entry()).cloned().collect()
+    }
+
     pub fn predecessors(&self, block: Block) -> u16 {
         self.blocks[block].predecessors
     }
@@ -117,10 +121,6 @@ impl Blocks {
         assert!(params > pid);
         let (start, _) = self.blocks[block].offset.unwrap_or((V(0), V(0)));
         V(start.0 + pid)
-    }
-
-    pub fn as_fnpointer(&self, block: Block) -> MonoType {
-        todo!();
     }
 
     pub fn switch_to_block(&mut self, block: Block) {
@@ -260,6 +260,15 @@ impl Blocks {
         self.assign(entry, ty)
     }
 
+    pub fn int_to_float(&mut self, value: Value, intsize: IntSize) -> Value {
+        let entry = Entry::IntToFloat(value, intsize);
+        self.assign(entry, MonoType::Float)
+    }
+    pub fn float_to_int(&mut self, value: Value, intsize: IntSize) -> Value {
+        let entry = Entry::FloatToInt(value, intsize);
+        self.assign(entry, MonoType::Int(intsize))
+    }
+
     pub fn cmp(&mut self, v: [Value; 2], ord: std::cmp::Ordering, bitsize: IntSize) -> Value {
         let entry = Entry::IntCmpInclusive(v[0], ord, v[1], bitsize);
         let ty = MonoType::bool();
@@ -382,7 +391,7 @@ impl Blocks {
     }
 }
 
-trait Jumpable {
+pub trait Jumpable {
     fn construct(self, params: Vec<Value>) -> ControlFlow;
 }
 
@@ -430,6 +439,13 @@ impl Value {
 
     pub fn maybe_none() -> Value {
         Value::Int(MAYBE_NONE.0 as i128, TAG_SIZE)
+    }
+
+    pub fn as_fptr(&self) -> MonoFunc {
+        match self {
+            Value::FuncPtr(mfunc) => *mfunc,
+            _ => panic!("as_fptr called on non-fptr: {self}"),
+        }
     }
 }
 
@@ -494,6 +510,9 @@ pub enum Entry {
     Reduce(Value),
     ExtendSigned(Value),
     ExtendUnsigned(Value),
+
+    IntToFloat(Value, IntSize),
+    FloatToInt(Value, IntSize),
 
     BitAnd([Value; 2]),
 
@@ -636,6 +655,12 @@ impl fmt::Display for Entry {
             Entry::ExtendSigned(v) => write!(f, "{} {v}", "sextend".keyword()),
             Entry::WritePtr { ptr, value } => {
                 write!(f, "{} {ptr} {} {value}", "write".keyword(), "<-".symbol())
+            }
+            Entry::IntToFloat(v, _) => {
+                write!(f, "{} {v}", "int_to_float".keyword())
+            }
+            Entry::FloatToInt(v, intsize) => {
+                write!(f, "{} {intsize} {v}", "float_to_int".keyword())
             }
         }
     }

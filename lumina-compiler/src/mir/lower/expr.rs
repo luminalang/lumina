@@ -32,6 +32,9 @@ pub enum Expr {
     ReadOnly(M<key::ReadOnly>),
 
     IntCast(Box<Self>, IntSize, IntSize),
+    ToFloatCast(Box<Self>, IntSize),
+    FromFloatCast(Box<Self>, IntSize),
+
     ObjectCast(Box<Self>, Type, M<key::Trait>, Vec<Type>),
     Deref(Box<Self>),
     Write(Box<[Self; 2]>),
@@ -164,7 +167,10 @@ impl<'a, 's> Lower<'a, 's> {
                 hir::Callable::Binding(bind) if params.is_empty() => {
                     Expr::Yield(Local::Binding(*bind))
                 }
-                hir::Callable::Binding(_) => todo!(),
+                hir::Callable::Binding(bind) => {
+                    let params = self.lower_exprs(params);
+                    Expr::PartialLocal(Local::Binding(*bind), params)
+                }
                 hir::Callable::TypeDependentLookup(_) => todo!(),
                 hir::Callable::Builtin(_) => todo!(),
             },
@@ -296,12 +302,8 @@ impl<'a, 's> Lower<'a, 's> {
         let expr = Box::new(expr);
         match (&ty_of_expr.value, to) {
             (Ty::Int(fromsize), Ty::Int(tosize)) => Expr::IntCast(expr, *fromsize, tosize),
-            (Ty::Int(intsize), Ty::Simple("f64")) => {
-                todo!("int to float");
-            }
-            (Type::Simple("float"), Type::Int(intsize)) => {
-                todo!("float to int");
-            }
+            (Ty::Int(intsize), Ty::Simple("f64")) => Expr::ToFloatCast(expr, *intsize),
+            (Type::Simple("f64"), Type::Int(intsize)) => Expr::FromFloatCast(expr, intsize),
             (
                 _,
                 Type::Container(
@@ -531,7 +533,13 @@ impl fmt::Display for Expr {
                     )
                 }
             },
-            Expr::IntCast(expr, _, to) => write!(f, "{op}{expr} {} {to}{cp}", "as".keyword(),),
+            Expr::IntCast(expr, _, to) => write!(f, "{op}{expr} {} {to}{cp}", "as".keyword()),
+            Expr::ToFloatCast(expr, _) => {
+                write!(f, "{op}{expr} {} float{cp}", "as".keyword())
+            }
+            Expr::FromFloatCast(expr, intsize) => {
+                write!(f, "{op}{expr} {} {intsize}{cp}", "as".keyword())
+            }
             Expr::ObjectCast(expr, _, tr, params) => {
                 write!(
                     f,

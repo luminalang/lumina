@@ -1,6 +1,6 @@
 use super::{
     tenv, Container, GenericKind, GenericMapper, IType as Ty, Inference as Inf, IntConstraint,
-    IntSize, RecordAssignment, RecordError, RecordVar, Transformer, TypeSystem, Var,
+    RecordAssignment, RecordError, RecordVar, Transformer, TypeSystem, Var,
 };
 use derive_more::From;
 use lumina_key as key;
@@ -21,11 +21,6 @@ pub enum CheckResult<'s> {
         ctx: &'static str,
     },
     Ok,
-}
-
-pub enum NumError {
-    NegativeForUnsigned(Span, IntSize),
-    NumberTooLarge(Span, u128, IntSize),
 }
 
 use CheckResult::Ok as ok;
@@ -157,16 +152,14 @@ impl<'a, 's> TypeSystem<'a, 's> {
     ) -> CheckResult<'s> {
         let assgn = self.env.records[rvar].assignment.clone();
         match assgn {
-            tenv::RecordAssignment::Redirect(_) => todo!(),
-            tenv::RecordAssignment::Ok(key, params) => {
+            RecordAssignment::Redirect(rvar) => self.check_rvar(flip, span, rvar, other),
+            RecordAssignment::Ok(key, params) => {
                 let ty = Ty::defined(key, params).tr(span);
                 self.checkf(flip, ty.as_ref(), other)
             }
-            tenv::RecordAssignment::None => self.assign_to_unassigned_rvar(flip, span, rvar, other),
-            tenv::RecordAssignment::Unknown(..) => ok,
-
-            // TODO: should we treat this as poison instead?
-            tenv::RecordAssignment::NotRecord(ty) => self.checkf(flip, (&ty).tr(span), other),
+            RecordAssignment::None => self.assign_to_unassigned_rvar(flip, span, rvar, other),
+            RecordAssignment::Unknown(..) => ok,
+            RecordAssignment::NotRecord(_) => ok,
         }
     }
 
@@ -209,7 +202,14 @@ impl<'a, 's> TypeSystem<'a, 's> {
                     },
                 }
             }
-            Ty::Special(Inf::Field(rvar, varfield)) => todo!("follow & infer"),
+            Ty::Special(Inf::Field(orvar, ovarfield)) => {
+                let name = self.env.name_of_field(*orvar, *ovarfield);
+                let Some(ty) = self.force_record_field(other.span, (*orvar, name)) else {
+                    return ok;
+                };
+
+                self.assign_to_unassigned_rvar(flip, span, rvar, (&ty).tr(other.span))
+            }
             Ty::Special(Inf::Record(orvar)) if flip => {
                 self.merge_records((other.span, *orvar), (span, rvar))
             }
@@ -222,10 +222,6 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 ok
             }
         }
-    }
-
-    fn lambda_hint_from_lowest(lambdas: &[Option<key::Lambda>]) -> Option<key::Lambda> {
-        lambdas.iter().min().copied().unwrap_or(None)
     }
 
     fn merge_records(&mut self, got: (Span, RecordVar), exp: (Span, RecordVar)) -> CheckResult<'s> {
@@ -312,6 +308,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
                     .inst_field_by_type_params(*gkey, got.2, gparams)
                     .zip(self.inst_field_by_type_params(*ekey, exp.2, eparams))
                 else {
+                    // poison or return CheckError::Record?
                     todo!();
                 };
                 let (got, exp) = (g.tr(got.0), e.tr(exp.0));
@@ -369,12 +366,12 @@ impl<'a, 's> TypeSystem<'a, 's> {
         &mut self,
         ty: Tr<&Ty>,
         params: usize,
-    ) -> Option<Result<(Container, Vec<Ty>, Ty), CheckResult<'s>>> {
+    ) -> Option<(Container, Vec<Ty>, Ty)> {
         match ty.value {
             Ty::Container(kind @ (Container::Closure | Container::FnPointer), params) => {
                 let mut ptypes = params.clone();
                 let ret = ptypes.pop().unwrap();
-                Some(Ok((*kind, ptypes, ret)))
+                Some((*kind, ptypes, ret))
             }
             Ty::Special(Inf::Var(var)) => {
                 let idata = &mut self.env.vars[*var];
@@ -387,7 +384,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
                             *var,
                             Ty::closure(ptypes.clone(), returns.clone()).tr(ty.span),
                         );
-                        Some(Ok((Container::Closure, ptypes, returns)))
+                        Some((Container::Closure, ptypes, returns))
                     }
                 }
             }
@@ -405,7 +402,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
         var: RecordVar,
         fname: Tr<&'s str>,
         params: usize,
-    ) -> Option<Result<(Container, Vec<Ty>, Ty), CheckResult<'s>>> {
+    ) -> Option<(Container, Vec<Ty>, Ty)> {
         match self.env.records[var].assignment.clone() {
             RecordAssignment::Redirect(rvar) => {
                 self.call_field_as_function(span, rvar, fname, params)
@@ -418,13 +415,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 self.force_record_inference(span, var);
                 self.call_field_as_function(span, var, fname, params)
             }
-            RecordAssignment::Unknown(_) => {
-                None
-                // todo!("poison: {rerror:?}");
-                // but how will we actually poison?
-                //
-                // we probably need to make the call_*_as_function return type more special
-            }
+            RecordAssignment::Unknown(_) => None,
         }
     }
 
@@ -448,10 +439,6 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 let rvar = *rvar;
                 self.force_record_inference(_from, rvar)
             }
-            // The reason we don't actually return the resulting information is because the parent branch
-            // is already forced to handle the `NotRecord` condition. So; we end up with less
-            // verbosity by just not returning anything and recursing in the parent function
-            // instead.
             RecordAssignment::NotRecord(..) | RecordAssignment::Ok(..) => {}
             RecordAssignment::None => {
                 let span = rdata.span;
@@ -466,6 +453,24 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 }
             }
             RecordAssignment::Unknown(..) => {}
+        }
+    }
+
+    fn force_record_field(
+        &mut self,
+        span: Span,
+        (var, fname): (RecordVar, Tr<&'s str>),
+    ) -> Option<Ty> {
+        match &self.env.records[var].assignment {
+            RecordAssignment::Ok(key, params) => {
+                self.inst_field_by_type_params(*key, fname, params)
+            }
+            RecordAssignment::Redirect(var) => self.force_record_field(span, (*var, fname)),
+            RecordAssignment::Unknown(_) | RecordAssignment::NotRecord(_) => None,
+            RecordAssignment::None => {
+                self.force_record_inference(span, var);
+                self.force_record_field(span, (var, fname))
+            }
         }
     }
 

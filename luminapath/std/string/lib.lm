@@ -79,5 +79,5 @@ impl ToString for u64
 // pub fn lines str as string -> [string] =
 //   split_on "\n" str
 // 
-// pub fn split_on c str as string, string -> [string] =
-//   
+// pub fn split_on c str as string, string -> [string] = 
+//   str.inner . split_on c.inner

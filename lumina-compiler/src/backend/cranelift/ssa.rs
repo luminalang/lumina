@@ -48,34 +48,6 @@ impl<'a, 'f> Current<'a, 'f> {
     fn type_of_value(&self, value: Value) -> Type {
         self.builder.func.stencil.dfg.value_type(value)
     }
-
-    fn skip_to_offset<'p>(&self, mut offset: BitOffset, mut values: &'p [Value]) -> &'p [Value] {
-        while offset.0 != 0 {
-            offset.0 -= self.builder.func.dfg.value_type(values[0]).bits();
-            values = &values[1..];
-        }
-        values
-    }
-}
-
-#[derive(Clone, Debug)]
-enum ValuePlus {
-    Value(Value),
-    FlatStruct(MonoTypeKey, Vec<Value>),
-    FlatArray(Vec<Value>),
-    ArrayPtr(Value),
-    StructStackPtr(MonoTypeKey, Value),
-    InlineSum([Value; 2]),
-    SumStackPtr { tag: Value, payload: Value },
-}
-
-impl ValuePlus {
-    fn as_value(&self) -> Value {
-        match self {
-            Self::Value(value) => *value,
-            _ => panic!("not a value"),
-        }
-    }
 }
 
 impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
@@ -296,10 +268,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
     fn entry(&mut self, entry: &lir::Entry, ty: &MonoType) -> VEntry {
         match entry {
-            // lir::Entry::Unreachable => {
-            //     self.ins().trap(TrapCode::UnreachableCodeReached);
-            //     VEntry::ZST // TODO: Will the verifier still complain after trap?
-            // }
             lir::Entry::Copy(value) => self.value_to_entry(*value),
             lir::Entry::BlockParam(_) => VEntry::ZST,
             lir::Entry::CallStatic(mfunc, params) => {
@@ -429,6 +397,25 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 let v = self.value_to_entry(*v).as_direct();
                 let ty = Type::int(as_int(ty).bits() as u16).unwrap();
                 let v = self.ins().uextend(ty, v);
+                VEntry::Direct(v)
+            }
+            lir::Entry::FloatToInt(v, intsize) => {
+                let v = self.value_to_entry(*v).as_direct();
+                let int = Type::int(intsize.bits() as u16).unwrap();
+                let v = if intsize.signed {
+                    self.ins().fcvt_to_sint_sat(int, v)
+                } else {
+                    self.ins().fcvt_to_uint_sat(int, v)
+                };
+                VEntry::Direct(v)
+            }
+            lir::Entry::IntToFloat(v, intsize) => {
+                let v = self.value_to_entry(*v).as_direct();
+                let v = if intsize.signed {
+                    self.ins().fcvt_from_sint(types::F64, v)
+                } else {
+                    self.ins().fcvt_from_uint(types::F64, v)
+                };
                 VEntry::Direct(v)
             }
             lir::Entry::BitAnd(_) => todo!(),

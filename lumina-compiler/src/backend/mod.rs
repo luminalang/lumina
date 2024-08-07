@@ -1,8 +1,8 @@
 pub mod cranelift;
 
-use super::{target::Arch, target::LinuxPlatform, target::Platform, Target};
+use super::{target::LinuxPlatform, target::Platform, Target};
 use std::ffi::OsStr;
-use std::fs::{File, ReadDir};
+use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -68,16 +68,6 @@ pub enum Local {
     Binding(key::Bind),
 }
 
-fn resolve_listable<'s>(lookups: &ast::Lookups<'s>, module: key::Module) -> Option<M<key::Trait>> {
-    lookups
-        .resolve_type(module, &["std", "list", "Listable"])
-        .map(|entity| match entity.key {
-            ast::Entity::Type(key::TypeKind::Trait(key)) => entity.module.m(key),
-            _ => panic!("core lang-item failure: Listable must be a trait"),
-        })
-        .ok()
-}
-
 impl<'a, 's> Verify<'a, 's> {
     pub fn start_at(
         pinfo: ProjectInfo,
@@ -276,7 +266,6 @@ impl<'a, 's> Verify<'a, 's> {
 
         // Finalization pass transforming HIR to MIR
         let mut finalization = lower::Lower::new(
-            self.iquery,
             &mut self.tenvs[fkey],
             &mut self.read_only_table,
             &mut forall,
@@ -591,10 +580,7 @@ impl<'a, 's> Verify<'a, 's> {
 
     pub fn ty_as_callable(&mut self, span: Span, ty: Tr<IType>, params: usize) -> InstCall {
         match self.type_system().call_as_function(ty.as_ref(), params) {
-            Some(Ok((kind, ptypes, returns))) => InstCall::LocalCall(span, ptypes, returns, kind),
-            Some(Err(err)) => {
-                panic!("ET: ");
-            }
+            Some((kind, ptypes, returns)) => InstCall::LocalCall(span, ptypes, returns, kind),
             None if params == 0 => InstCall::Local(ty.value.tr(span)),
             None => panic!("ET: can not take parameters (or do we err on this later?)"),
         }

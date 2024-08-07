@@ -7,7 +7,6 @@ use cranelift::prelude::*;
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use owo_colors::OwoColorize;
-use std::io::Write;
 use tracing::info_span;
 
 mod abi;
@@ -81,7 +80,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
                 .declare_function(&func.symbol, Linkage::Import, &sig)
                 .unwrap();
 
-            (*key, FuncHeader { id, conv, params, ret })
+            (*key, FuncHeader { id, _params: params, ret })
         })
         .collect();
 
@@ -111,7 +110,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
                 .declare_function(&func.symbol, Linkage::Hidden, &sig)
                 .unwrap();
 
-            FuncHeader { id, conv, params, ret }
+            FuncHeader { id, _params: params, ret }
         })
         .collect();
 
@@ -312,7 +311,7 @@ impl<'a> Context<'a> {
 #[derive(Clone, Debug)]
 struct FuncHeader {
     id: FuncId,
-    conv: isa::CallConv,
-    params: Map<key::Param, abi::Param>,
+    // TODO: Actually use these `params` to lower given parameters in an ABI-specific way
+    _params: Map<key::Param, abi::Param>,
     ret: abi::Return,
 }

@@ -1,15 +1,12 @@
 use super::{
-    tenv, Constraint, Container, Downgrade, Forall, ForeignInst, Generic, GenericData, GenericKind,
-    GenericMapper, IType, Inference, IntConstraint, IntSize, RecordError, RecordVar,
-    RecordVarField, Static, Transformer, Ty, Type, TypeSystem, Var, M,
+    tenv, Constraint, Downgrade, Forall, Generic, GenericKind, GenericMapper, IType, Inference,
+    IntConstraint, IntSize, RecordError, RecordVar, RecordVarField, Static, Transformer, Ty, Type,
+    TypeSystem, Var, M,
 };
 use derive_new::new;
-use itertools::Itertools;
 use key::{LinearFind, Map};
 use lumina_key as key;
 use lumina_util::{Span, Spanned, Tr};
-use std::fmt;
-use tracing::error;
 use tracing::info;
 use tracing::trace;
 

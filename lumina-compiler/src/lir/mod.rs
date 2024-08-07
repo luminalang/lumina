@@ -5,7 +5,8 @@
 //! Flatten to SSA+CFG with Basic Blocks
 
 use crate::prelude::*;
-use crate::{ProjectInfo, Target, LIST_CONCAT, LIST_NIL, LIST_SINGLETON};
+use crate::{ProjectInfo, Target};
+use either::Either;
 use key::{entity_impl, keys};
 use lumina_typesystem::{Generic, GenericKind, GenericMapper, ImplIndex, IntSize, Static, Type};
 use lumina_util::Highlighting;
@@ -18,7 +19,7 @@ const UNIT: MonoTypeKey = MonoTypeKey(0);
 macro_rules! to_morphization {
     ($lir:expr, $mir:expr, $tmap:expr) => {
         crate::lir::mono::Monomorphization::new(
-            &mut $lir.types,
+            &mut $lir.mono,
             &$mir.field_types,
             &$mir.variant_types,
             &$mir.methods,
@@ -37,7 +38,7 @@ pub use mono::{
     TypeMap,
 };
 pub use ssa::{Block, Blocks, ControlFlow, Entry, Value, V};
-mod closure;
+mod dyn_dispatch;
 mod expr;
 mod pat;
 
@@ -69,9 +70,12 @@ struct LIR {
     mono_resolve: HashMap<MonoTypesKey, MonoFunc>,
     #[new(default)]
     functions: Map<MonoFunc, Function>,
-    types: mono::MonomorphisedTypes,
+    mono: mono::MonomorphisedTypes,
+
     #[new(default)]
-    vtables: HashMap<VTableHash, M<key::Val>>,
+    memo_trait_objects: HashMap<M<key::Impl>, Either<M<key::Val>, MonoFunc>>,
+    #[new(default)]
+    memo_closures: HashMap<(MonoFunc, Vec<MonoType>), MonoFunc>,
 
     read_only_table: ModMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
 
@@ -103,6 +107,11 @@ pub enum VTableHash {
         weak_trait_params: Vec<Type>,
     },
     PartialApplication(MonoFunc, Vec<MonoType>),
+    ClosurePartialApplication {
+        in_: MonoFunc,
+        target: V,
+        params: Vec<MonoType>,
+    },
 }
 
 struct FuncLower<'a> {
@@ -121,7 +130,7 @@ struct Current {
     mfkey: MonoFunc,
     tmap: TypeMap,
     bindmap: HashMap<key::Bind, ssa::Value>,
-    has_captures: bool,
+    captures: Option<usize>,
 }
 
 pub struct Function {
@@ -130,20 +139,18 @@ pub struct Function {
     pub returns: MonoType,
 }
 
+impl Function {
+    pub fn as_fnpointer(&self) -> MonoType {
+        let params = self.blocks.param_types(Block::entry()).cloned().collect();
+        let ret = self.returns.clone();
+        MonoType::FnPointer(params, Box::new(ret))
+    }
+}
+
 pub struct ExternFunction {
     pub symbol: String,
     pub params: Vec<MonoType>,
     pub returns: MonoType,
-}
-
-impl Function {
-    fn placeholder() -> Self {
-        Self {
-            symbol: String::new(),
-            blocks: ssa::Blocks::placeholder(),
-            returns: MonoType::Unreachable,
-        }
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, new)]
@@ -155,6 +162,7 @@ struct MonoTyping {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum FuncOrigin {
+    SumConstructorWrapper(M<key::Sum>, key::SumVariant),
     Defined(M<key::Func>),
     Method(M<key::Impl>, key::Method),
     Lambda(Box<FuncOrigin>, key::Lambda),
@@ -163,6 +171,7 @@ enum FuncOrigin {
 impl FuncOrigin {
     fn name(&self, mir: &mir::MIR) -> String {
         match self {
+            FuncOrigin::SumConstructorWrapper(sum, var) => mir.variant_names[*sum][*var].clone(),
             FuncOrigin::Defined(key) => mir.func_names[*key].clone(),
             FuncOrigin::Method(impl_, method) => {
                 mir.func_names[impl_.module.m(mir.imethods[*impl_][*method]).unwrap()].clone()
@@ -269,7 +278,7 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
         .filter_map(|func| match &mir.funcs[func] {
             mir::FunctionStatus::Extern { link_name, typing } => {
                 let mut tmap = TypeMap::new();
-                let mut monomorphization = to_morphization(&mir, &mut lir.types, &mut tmap);
+                let mut monomorphization = to_morphization(&mir, &mut lir.mono, &mut tmap);
                 let params = monomorphization.applys(&typing.params);
                 let returns = monomorphization.apply(&typing.returns);
                 Some((
@@ -289,7 +298,7 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
         read_only_table: lir.read_only_table,
         func_names: mir.func_names,
         module_names: mir.module_names,
-        types: lir.types.into_records(),
+        types: lir.mono.into_records(),
         alloc,
         dealloc,
         main,
@@ -337,57 +346,38 @@ impl LIR {
                 );
                 let _handle = _span.enter();
 
-                let has_captures = captures.is_some();
                 let entryblock = ssa::Block::entry();
+                let mut bindmap = HashMap::new();
 
                 // Add an implicit capture record as the first parameter if this is a lambda
                 let mut ssa = if let Some(captures) = captures.as_ref() {
                     info!(
-                        "setting up capture tuple [{}]",
+                        "setting up captures [{}]",
                         captures
                             .iter()
                             .map(|(src, (dst, _))| format!("{src}->{dst}"))
                             .format(" ")
                     );
 
-                    let mut ssa = ssa::Blocks::new(typing.params.len() as u32 + 1);
-                    let mut morph = mono::Monomorphization::new(
-                        &mut self.types,
-                        &mir.field_types,
-                        &mir.variant_types,
-                        &mir.methods,
-                        &mir.funcs,
-                        &mir.trait_objects,
-                        &mut tmap,
-                    );
+                    let mut ssa =
+                        ssa::Blocks::new(typing.params.len() as u32 + captures.len() as u32);
 
-                    let capture_record = morph.create_capture_record(&captures);
-
-                    info!("adding implicit capture record param");
-                    ssa.add_block_param(entryblock, MonoType::Monomorphised(capture_record));
+                    for (bind, ty) in captures.values() {
+                        let v = ssa.add_block_param(entryblock, ty.clone());
+                        bindmap.insert(*bind, v.value());
+                    }
 
                     ssa
                 } else {
                     ssa::Blocks::new(typing.params.len() as u32)
                 };
 
-                info!("adding block parameters for {}", self.types.fmt(&typing));
+                info!("adding block parameters for {}", self.mono.fmt(&typing));
                 for ty in typing.params.values() {
                     ssa.add_block_param(entryblock, ty.clone());
                 }
 
-                let mut bindmap = HashMap::new();
-
-                // Add captures to the bindmap if this is a lambda
-                if let Some(captures) = captures {
-                    for (i, (bind, ty)) in captures {
-                        let cap_param = ssa.get_block_param(entryblock, 0);
-                        let field = key::RecordField(i.0);
-                        let mk = ssa.type_of(cap_param).as_key();
-                        let v = ssa.field(cap_param.value(), mk, field, ty);
-                        bindmap.insert(bind, v);
-                    }
-                }
+                let capture_count = captures.as_ref().map(|elems| elems.len());
 
                 // Reserve the key in case of recursion
                 let origin = typing.origin.clone();
@@ -408,7 +398,7 @@ impl LIR {
                     mir,
                     iquery,
                     info,
-                    current: Current { origin, mfkey, tmap, bindmap, has_captures },
+                    current: Current { origin, mfkey, tmap, bindmap, captures: capture_count },
                 };
 
                 lower.run();
@@ -425,15 +415,20 @@ impl LIR {
         returns: MonoType,
     ) -> MonoFunc {
         let func = Function { symbol, blocks, returns };
-        let key = self.functions.push(func);
-        info!("reserving {key} as {}", &self.functions[key].symbol);
-        key
+        self.functions.push(func)
+    }
+
+    fn mfunc_to_fnpointer_type(&self, mfunc: MonoFunc) -> MonoType {
+        let ptypes = self.functions[mfunc].blocks.func_params();
+        let ret = self.functions[mfunc].returns.clone();
+        MonoType::FnPointer(ptypes, Box::new(ret))
     }
 }
 
 impl FuncOrigin {
     fn module(&self) -> key::Module {
         match self {
+            FuncOrigin::SumConstructorWrapper(sum, _) => sum.module,
             FuncOrigin::Defined(key) => key.module,
             FuncOrigin::Method(key, _) => key.module,
             FuncOrigin::Lambda(orig, _) => orig.module(),
@@ -448,6 +443,9 @@ impl FuncOrigin {
                 mir.funcs[f].as_done()
             }
             FuncOrigin::Lambda(origin, _) => origin.get_root_fdef(mir),
+            FuncOrigin::SumConstructorWrapper(_, _) => {
+                panic!("sum constructor have no mir function definition")
+            }
         }
     }
 }
@@ -455,6 +453,10 @@ impl FuncOrigin {
 impl<'a> FuncLower<'a> {
     fn ssa(&mut self) -> &mut ssa::Blocks {
         &mut self.lir.functions[self.current.mfkey].blocks
+    }
+
+    fn types(&self) -> &Records {
+        &self.lir.mono.types
     }
 
     fn expr_of_origin(&mut self, f: FuncOrigin) -> &'a mir::Expr {
@@ -472,6 +474,9 @@ impl<'a> FuncLower<'a> {
                 }
                 _ => unreachable!("{new}"),
             },
+            FuncOrigin::SumConstructorWrapper(_, _) => {
+                panic!("sum constructor have no mir function definition")
+            }
         }
     }
 
@@ -484,9 +489,9 @@ impl<'a> FuncLower<'a> {
 
         let func_slot = &mut self.lir.functions[self.current.mfkey];
         info!(
-            "resulting blocks for {}:\n{}",
+            "resulting lir function for {}:\n{}",
             &func_slot.symbol,
-            self.lir.types.fmt(&func_slot.blocks)
+            self.lir.mono.fmt(&*func_slot)
         );
     }
 
@@ -517,93 +522,147 @@ impl<'a> FuncLower<'a> {
             .map(|largest| MonoType::SumDataCast { largest })
             .unwrap_or_else(|| {
                 let types = elems.iter().map(|v| self.type_of_value(*v)).collect();
-                self.lir.types.get_or_make_tuple(types).into()
+                self.lir.mono.get_or_make_tuple(types).into()
             });
 
         self.ssa().construct(elems, ty)
     }
 
+    fn monofunc_wrapper_for_sumvar(
+        &mut self,
+        ty: MonoTypeKey,
+        mut tmap: TypeMap,
+        var: key::SumVariant,
+    ) -> MonoFunc {
+        let data = &self.lir.mono.types[ty];
+        let Some(M { value: key::TypeKind::Sum(key), module }) = data.original else {
+            panic!();
+        };
+        let sum = module.m(key);
+
+        let origin = FuncOrigin::SumConstructorWrapper(sum, var);
+
+        // Use the sum-type monomorphic key in the hashing for mono_resolve
+        let ty = MonoType::Monomorphised(ty);
+        let key = MonoTypesKey::new(origin.clone(), vec![], Some(ty.clone()));
+
+        match self.lir.mono_resolve.get(&key) {
+            Some(mfunc) => *mfunc,
+            None => {
+                let mfunc = self.lir.functions.next_key();
+
+                let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
+                let raw_params = &self.mir.variant_types[sum][var];
+
+                let types: Vec<_> = raw_params.iter().map(|ty| morph.apply(ty)).collect();
+
+                let mut ssa = Blocks::new(raw_params.len() as u32);
+                let block_params = types
+                    .iter()
+                    .cloned()
+                    .map(|ty| ssa.add_block_param(ssa::Block::entry(), ty))
+                    .map(V::value)
+                    .collect::<Vec<_>>();
+
+                let params_tuple = self.lir.mono.get_or_make_tuple(types).into();
+
+                ssa.construct(block_params, params_tuple);
+
+                let function = Function {
+                    symbol: func_symbol(self.mir, mfunc, &origin),
+                    blocks: ssa,
+                    returns: ty,
+                };
+
+                self.lir.functions.push_as(mfunc, function);
+                self.lir.mono_resolve.insert(key, mfunc);
+
+                mfunc
+            }
+        }
+    }
+
     // Relies on the layout of `std:prelude:List`
     //
     // type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
-    fn values_to_cons_list(&mut self, values: Vec<Value>, inner: Type) -> Value {
-        let list_type: MonoType = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
-            .defined(self.info.global_list_default, &[inner])
-            .into();
+    // fn values_to_cons_list(&mut self, values: Vec<Value>, inner: Type) -> Value {
+    //     let list_type: MonoType = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
+    //         .defined(self.info.global_list_default, &[inner])
+    //         .into();
 
-        let [nil_tag, singleton_tag, concat_tag] = [LIST_NIL, LIST_SINGLETON, LIST_CONCAT]
-            .map(|n| Value::Int(n.0 as i128, mono::TAG_SIZE));
+    //     let [nil_tag, singleton_tag, concat_tag] = [LIST_NIL, LIST_SINGLETON, LIST_CONCAT]
+    //         .map(|n| Value::Int(n.0 as i128, mono::TAG_SIZE));
 
-        let payload_size = self.lir.types.types.size_of(&list_type) - mono::TAG_SIZE.bits() as u32;
+    //     let payload_size = self.lir.types.types.size_of(&list_type) - mono::TAG_SIZE.bits() as u32;
 
-        let empty_tuple = self.elems_to_tuple(vec![], Some(payload_size));
+    //     let empty_tuple = self.elems_to_tuple(vec![], Some(payload_size));
 
-        // TODO: we technically don't need a `Nil` at the end since we're using
-        // singleton. But; perhaps it's still a good idea?
-        let init = self
-            .ssa()
-            .construct(vec![nil_tag, empty_tuple], list_type.clone());
+    //     // TODO: we technically don't need a `Nil` at the end since we're using
+    //     // singleton. But; perhaps it's still a good idea?
+    //     let init = self
+    //         .ssa()
+    //         .construct(vec![nil_tag, empty_tuple], list_type.clone());
 
-        values.into_iter().rev().fold(init, |next, v| {
-            let singleton_payload = self.elems_to_tuple(vec![v], Some(payload_size));
+    //     values.into_iter().rev().fold(init, |next, v| {
+    //         let singleton_payload = self.elems_to_tuple(vec![v], Some(payload_size));
 
-            let this = self
-                .ssa()
-                .construct(vec![singleton_tag, singleton_payload], list_type.clone());
+    //         let this = self
+    //             .ssa()
+    //             .construct(vec![singleton_tag, singleton_payload], list_type.clone());
 
-            let concat_payload = self.elems_to_tuple(vec![this, next], Some(payload_size));
-            self.ssa()
-                .construct(vec![concat_tag, concat_payload], list_type.clone())
-        })
-    }
+    //         let concat_payload = self.elems_to_tuple(vec![this, next], Some(payload_size));
+    //         self.ssa()
+    //             .construct(vec![concat_tag, concat_payload], list_type.clone())
+    //     })
+    // }
 
-    fn string_type(&mut self) -> MonoType {
-        let string_type = Type::defined(self.info.string, vec![]);
-        to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(&string_type)
-    }
+    // fn string_type(&mut self) -> MonoType {
+    //     let string_type = Type::defined(self.info.string, vec![]);
+    //     to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(&string_type)
+    // }
 
-    fn string_from_raw_parts_mfunc(&mut self) -> (MonoFunc, MonoType) {
-        let string_type = self.string_type();
+    // fn string_from_raw_parts_mfunc(&mut self) -> (MonoFunc, MonoType) {
+    //     let string_type = self.string_type();
 
-        let tmap = TypeMap::new();
-        let typing = MonoTyping::new(
-            FuncOrigin::Defined(self.info.string_from_raw_parts),
-            [
-                MonoType::u8_pointer(),
-                MonoType::Int(IntSize::new(false, self.lir.target.int_size())),
-            ]
-            .into_iter()
-            .collect(),
-            string_type.clone(),
-        );
+    //     let tmap = TypeMap::new();
+    //     let typing = MonoTyping::new(
+    //         FuncOrigin::Defined(self.info.string_from_raw_parts),
+    //         [
+    //             MonoType::u8_pointer(),
+    //             MonoType::Int(IntSize::new(false, self.lir.target.int_size())),
+    //         ]
+    //         .into_iter()
+    //         .collect(),
+    //         string_type.clone(),
+    //     );
 
-        let func = self
-            .lir
-            .func(self.mir, self.iquery, self.info, tmap, typing, None);
-        (func, string_type)
-    }
+    //     let func = self
+    //         .lir
+    //         .func(self.mir, self.iquery, self.info, tmap, typing, None);
+    //     (func, string_type)
+    // }
 
-    fn string_to_value(&mut self, str: &[u8]) -> Value {
-        let (mfunc, string) = self.string_from_raw_parts_mfunc();
+    // fn string_to_value(&mut self, str: &[u8]) -> Value {
+    //     let (mfunc, string) = self.string_from_raw_parts_mfunc();
 
-        let ro = self.string_to_readonly(str.to_vec());
-        let len = Value::Int(
-            str.len() as i128,
-            IntSize::new(false, self.lir.target.int_size()),
-        );
+    //     let ro = self.string_to_readonly(str.to_vec());
+    //     let len = Value::Int(
+    //         str.len() as i128,
+    //         IntSize::new(false, self.lir.target.int_size()),
+    //     );
 
-        self.ssa()
-            .call(mfunc, vec![Value::ReadOnly(ro), len], string)
-    }
+    //     self.ssa()
+    //         .call(mfunc, vec![Value::ReadOnly(ro), len], string)
+    // }
 
-    fn string_to_readonly(&mut self, str: Vec<u8>) -> M<key::ReadOnly> {
-        let module = self.current.origin.module();
-        let ro = self.lir.read_only_table[module].push((
-            mir::ReadOnlyBytes(str.into_boxed_slice()),
-            MonoType::u8_pointer(),
-        ));
-        module.m(ro)
-    }
+    // fn string_to_readonly(&mut self, str: Vec<u8>) -> M<key::ReadOnly> {
+    //     let module = self.current.origin.module();
+    //     let ro = self.lir.read_only_table[module].push((
+    //         mir::ReadOnlyBytes(str.into_boxed_slice()),
+    //         MonoType::u8_pointer(),
+    //     ));
+    //     module.m(ro)
+    // }
 
     // Instantiates and lowers the lambda as a function.
     // Monomorphises the captures as a tuple.
@@ -612,7 +671,7 @@ impl<'a> FuncLower<'a> {
         &mut self,
         lambda: key::Lambda,
         inst: &GenericMapper<Static>,
-    ) -> (MonoFunc, ssa::Value, MonoTypeKey, MonoType) {
+    ) -> (MonoFunc, Vec<ssa::Value>) {
         let (func, captures) = self.get_lambda_origin(self.current.origin.clone(), lambda);
 
         let mut tmap = self.morphise_inst(inst);
@@ -641,37 +700,27 @@ impl<'a> FuncLower<'a> {
         let typing = morph.apply_typing(func, &fdef.lambdas[lambda].typing);
 
         // Gather the captures
-        let mut catypes = vec![];
         let ca = captures
             .iter()
             .map(|bind| {
                 let value = self.current.bindmap[bind];
                 let ty = self.type_of_value(value);
-                catypes.push(ty.clone());
                 (*bind, ty)
             })
             .collect();
 
-        let capture_tuple_ty = self.lir.types.get_or_make_tuple(catypes);
-
         let ca = Some(ca);
-
-        let return_ty = typing.returns.clone();
 
         let mfunc = self
             .lir
             .func(self.mir, self.iquery, self.info, tmap, typing, ca);
 
-        let captures = {
-            let values = captures
-                .iter()
-                .map(|bind| self.current.bindmap[bind].into())
-                .collect();
-            self.ssa()
-                .construct(values, MonoType::Monomorphised(capture_tuple_ty))
-        };
+        let captures = captures
+            .iter()
+            .map(|bind| self.current.bindmap[bind].into())
+            .collect();
 
-        (mfunc, captures, capture_tuple_ty, return_ty)
+        (mfunc, captures)
     }
 
     fn get_lambda_origin(
@@ -694,18 +743,22 @@ impl<'a> FuncLower<'a> {
                 (origin, captures)
             }
             FuncOrigin::Lambda(origin, _) => self.get_lambda_origin((**origin).clone(), lambda),
+            FuncOrigin::SumConstructorWrapper(_, _) => unreachable!(),
         }
     }
 
-    fn type_of_value(&mut self, value: ssa::Value) -> MonoType {
+    fn type_of_value(&self, value: ssa::Value) -> MonoType {
         match value {
             ssa::Value::ReadOnly(ro) => self.lir.read_only_table[ro].1.clone(),
-            ssa::Value::V(v) => self.ssa().type_of(v).clone(),
+            ssa::Value::V(v) => self.lir.functions[self.current.mfkey]
+                .blocks
+                .type_of(v)
+                .clone(),
             ssa::Value::Int(_, intsize) => MonoType::Int(intsize),
             ssa::Value::Float(_) => MonoType::Float,
             ssa::Value::FuncPtr(ptr) => {
                 let func = &self.lir.functions[ptr];
-                func.blocks.as_fnpointer(ssa::Block::entry())
+                func.as_fnpointer()
             }
         }
     }
@@ -773,17 +826,16 @@ impl<'a> FuncLower<'a> {
 
                 let tag = Value::Int(var.0 as i128, mono::TAG_SIZE);
 
-                let (tag_size, payload_size) = self.lir.types.types.as_sum_type(ty).unwrap();
+                let (tag_size, payload_size) = self.lir.mono.types.as_sum_type(ty).unwrap();
                 assert_eq!(tag_size, mono::TAG_SIZE.bits() as u32);
 
-                ResolvedNFunc::Sum { tag, ty, payload_size }
+                ResolvedNFunc::Sum { tag, var, ty, tmap, payload_size }
             }
         }
     }
 
     pub fn ty_symbol(&self, ty: &MonoType) -> String {
         match ty {
-            MonoType::Array(inner, times) => format!("[{}; {times}]", self.ty_symbol(&inner)),
             MonoType::Pointer(inner) => format!("*{}", self.ty_symbol(inner)),
             MonoType::FnPointer(params, ret) => format!(
                 "fnptr({} -> {})",
@@ -791,11 +843,11 @@ impl<'a> FuncLower<'a> {
                 self.ty_symbol(&ret)
             ),
             MonoType::Unreachable => format!("!"),
-            MonoType::Monomorphised(mk) => match self.lir.types.types[*mk].original {
+            MonoType::Monomorphised(mk) => match self.lir.mono.types[*mk].original {
                 Some(key) => format!("{}>{mk}", self.mir.name_of_type(key)),
                 None => mk.to_string(),
             },
-            _ => MonoFormatter { types: &self.lir.types.types, v: ty }.to_string(),
+            _ => MonoFormatter { types: &self.lir.mono.types, v: ty }.to_string(),
         }
     }
 }
@@ -818,6 +870,8 @@ enum ResolvedNFunc {
     Extern(M<key::Func>, MonoType),
     Static(MonoFunc, MonoType),
     Sum {
+        tmap: TypeMap,
+        var: key::SumVariant,
         tag: Value,
         payload_size: u32,
         ty: MonoTypeKey,
@@ -825,17 +879,10 @@ enum ResolvedNFunc {
     Val(M<key::Val>, MonoType),
 }
 
-struct Closure {
-    vtableptr: V,
-    object: MonoTypeKey,
-    vtable: MonoTypeKey,
-    vtable_init: MonoFunc,
-    vtable_val: M<key::Val>,
-}
-
 impl fmt::Display for FuncOrigin {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            FuncOrigin::SumConstructorWrapper(sum, var) => write!(f, "{sum}:{var}"),
             FuncOrigin::Defined(func) => func.fmt(f),
             FuncOrigin::Method(ikey, method) => write!(f, "{ikey}:{method}"),
             FuncOrigin::Lambda(parent, lambda) => write!(f, "{parent}:{lambda}"),

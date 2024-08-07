@@ -221,10 +221,10 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let constructor = self
             .f
             .lir
-            .types
+            .mono
             .fields(mk)
             .map(|field| {
-                let ty = self.f.lir.types.types.type_of_field(mk, field);
+                let ty = self.f.lir.mono.types.type_of_field(mk, field);
                 self.ssa().field(on, mk, field, ty)
             })
             .collect();
@@ -299,8 +299,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             .field(maybe, maybe_mk, key::RecordField(0), tag_ty);
 
         let data_ty = MonoType::SumDataCast {
-            largest: self.f.lir.types.types.size_of_defined(maybe_mk)
-                - mono::TAG_SIZE.bits() as u32,
+            largest: self.f.lir.mono.types.size_of_defined(maybe_mk) - mono::TAG_SIZE.bits() as u32,
         };
         let data = self
             .ssa()
@@ -321,7 +320,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                 let mut offset = BitOffset(0);
 
                 let x = self.ssa().sum_field(data, offset, innermt.clone());
-                offset.0 += self.f.lir.types.types.size_of(&innermt) as u32;
+                offset.0 += self.f.lir.mono.types.size_of(&innermt) as u32;
 
                 let xs = self.ssa().sum_field(data, offset, listmt.clone());
 
@@ -353,10 +352,10 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let constructor = self
             .f
             .lir
-            .types
+            .mono
             .fields(mk)
             .map(|field| {
-                let ty = self.f.lir.types.types.type_of_field(mk, field);
+                let ty = self.f.lir.mono.types.type_of_field(mk, field);
                 self.ssa().field(on, mk, field, ty)
             })
             .collect();
@@ -378,7 +377,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let data = self
             .f
             .lir
-            .types
+            .mono
             .types
             .type_of_field(on_mk, key::RecordField(1));
 
@@ -411,7 +410,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                         let ty = to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap)
                             .apply(&ty);
 
-                        let size = self.f.lir.types.types.size_of(&ty) as u32;
+                        let size = self.f.lir.mono.types.size_of(&ty) as u32;
                         let offset = base_offset;
                         base_offset.0 += size;
 

@@ -91,19 +91,13 @@ pub fn run<'a, 's>(
     let mut itraits = ast.entities.impls.secondary_inner_capacity();
     let mut langitems = Map::with_capacity(ast.entities.langitems.len());
 
-    let info = Info {
-        ast: &ast,
-        module: key::Module(0),
-        langitems: &HashMap::new(),
-        pinfo: &info,
-        target,
-    };
+    let info = Info { ast: &ast, langitems: &HashMap::new(), pinfo: &info, target };
 
     // Lower type declarations in all modules
     for module in ast.sources.modules() {
         let langs = lower_langitems(&ast, module, ast.entities.get_langitems(module));
 
-        let info = Info { module, langitems: &langs, ..info };
+        let info = Info { langitems: &langs, ..info };
 
         ast.entities.sums.iter_module(module).for_each(|sum| {
             let (variants, forall) = lower_sum(info, sum);
@@ -131,7 +125,7 @@ pub fn run<'a, 's>(
 
     // Lowering an impl requires that the trait it implements is already lowered.
     for module in ast.sources.modules() {
-        let info = Info { module, langitems: &langitems[module], ..info };
+        let info = Info { langitems: &langitems[module], ..info };
 
         for impl_ in ast.entities.impls.iter_module(module) {
             let parts = lower_impl(info, impl_);
@@ -147,7 +141,7 @@ pub fn run<'a, 's>(
 
     // Lowering functions includes methods, which requires that the impl header is already lowered.
     for module in ast.sources.modules() {
-        let info = Info { module, langitems: &langitems[module], ..info };
+        let info = Info { langitems: &langitems[module], ..info };
 
         ast.entities.fheaders.iter_module(module).for_each(|func| {
             let (fdef, tenv) = lower_func(info, &traits, &impls, &impltors, func);
@@ -340,7 +334,6 @@ fn tydef_type_env<'s, K: Into<key::TypeKind>>(
 #[derive(Clone, Copy)]
 struct Info<'a, 's> {
     ast: &'a AST<'s>,
-    module: key::Module,
     langitems: &'a LangItems<'s>,
     pinfo: &'a ProjectInfo,
     target: Target,
@@ -445,33 +438,6 @@ fn lower_trait<'a, 's>(
         .collect();
 
     (associations, tinfo.leave_type_or_impl_or_method())
-}
-
-// NOTE: we decided not to support higher-kinded-types for now but some
-// remnents of it still exist like this.
-fn check_generic_param_validity<'s, T>(
-    ast: &AST<'s>,
-    span: Span,
-    module: key::Module,
-    forall: &mut Forall<'s, T>,
-) {
-    for gdata in forall.generics.values_mut() {
-        if gdata.params == usize::MAX {
-            ast.sources
-                .warning("unused type parameter")
-                .m(module)
-                .eline(span, format!("`{}` is not used", gdata.name))
-                .emit();
-        } else if gdata.params != 0 {
-            ast.sources
-                .error("syntax error")
-                .m(module)
-                .eline(span, "higher kinded types are not yet supported")
-                .emit();
-        }
-
-        gdata.params = 0;
-    }
 }
 
 // TODO: we ended up needing more of the ones containing `FuncDef` than we thought. It's probably a

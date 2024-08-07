@@ -12,8 +12,7 @@ pub mod pat;
 
 use derive_new::new;
 use lumina_typesystem::{
-    Finalizer, Forall, GenericMapper, IType, ImplIndex, Inference, IntSize, Static, TEnv,
-    Transformer, Type,
+    Finalizer, Forall, GenericMapper, IType, Inference, IntSize, Static, TEnv, Transformer, Type,
 };
 use lumina_util::Highlighting;
 use std::fmt;
@@ -63,8 +62,6 @@ pub struct Lambda {
 
 #[derive(new)]
 pub struct Lower<'a, 's> {
-    iquery: &'a ImplIndex,
-
     env: &'a mut TEnv<'s>,
 
     read_only_table: &'a mut ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
@@ -76,7 +73,7 @@ pub struct Lower<'a, 's> {
 
     items: LangItems,
     rsolver: RSolver<'a, 's>,
-    vnames: &'a ModMap<key::Sum, Map<key::SumVariant, Tr<&'s str>>>,
+    _vnames: &'a ModMap<key::Sum, Map<key::SumVariant, Tr<&'s str>>>,
     vtypes: &'a ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
 
     target: Target,

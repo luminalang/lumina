@@ -33,7 +33,7 @@ pub enum SelfHandler {
     Disallowed,
 }
 
-pub(super) trait FromVar: Sized + Clone {
+pub trait FromVar: Sized + Clone {
     fn var(var: Var) -> Ty<Self>;
 }
 

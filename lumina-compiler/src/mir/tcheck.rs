@@ -2,8 +2,8 @@
 
 use super::tyfmt::TyFmtState;
 use super::Verify;
+use crate::ast;
 use crate::prelude::ModMap;
-use crate::{ast, hir};
 use itertools::Itertools;
 use lumina_key as key;
 use lumina_typesystem::{CheckResult, IType, TypeSystem};
@@ -103,7 +103,6 @@ impl<'a, 's> Verify<'a, 's> {
                 self.emit_type_mismatch(g.span, ctx, tfmt.clone().fmt(&*g), tfmt.fmt(&*e));
             }
             Error::Ok => {}
-            _ => todo!(),
         }
     }
 

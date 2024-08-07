@@ -12,19 +12,13 @@ impl<'a, 's> Verify<'a, 's> {
 
         match expr.value {
             hir::Expr::Call(call, tanot, params) => {
-                let ptypes = params
-                    .iter()
-                    .map(|p| self.type_check_expr(p.as_ref()))
-                    .collect::<Vec<_>>();
+                let ptypes = self.type_check_params(params);
                 let lhs = ptypes.last();
                 let instcall = self.type_of_callable(expr.span, lhs, call, params.len(), tanot);
                 self.type_check_call(expr.span, instcall, ptypes)
             }
             hir::Expr::Pass(call, tanot, params) => {
-                let ptypes = params
-                    .iter()
-                    .map(|p| self.type_check_expr(p.as_ref()))
-                    .collect();
+                let ptypes = self.type_check_params(params);
                 self.type_check_pass(expr.span, call, tanot, ptypes)
             }
             hir::Expr::PassFnptr(key, tanot) => match self.type_of_func(expr.span, *key, tanot) {

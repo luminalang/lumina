@@ -3,7 +3,6 @@ use crate::prelude::*;
 use cranelift::prelude::*;
 use cranelift_module::DataId;
 use cranelift_object::ObjectModule;
-use lir::MonoFunc;
 use lir::{BitOffset, MonoType, MonoTypeKey};
 use std::sync::Arc;
 

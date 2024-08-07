@@ -1,7 +1,7 @@
-use super::{Constraint, Forall, ForeignInst, IType, Inference, Static, Type};
+use super::{Constraint, Forall, IType, Inference, Static, Type};
 use derive_new::new;
 use lumina_key as key;
-use lumina_key::{entity_impl, keys, LinearFind, Map, ModMap, M};
+use lumina_key::{entity_impl, keys, LinearFind, Map, M};
 use lumina_util::{Span, Spanned, Tr};
 use tracing::trace;
 

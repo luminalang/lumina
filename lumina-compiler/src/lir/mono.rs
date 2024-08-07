@@ -34,7 +34,6 @@ impl From<u32> for BitOffset {
 pub enum MonoType {
     Int(IntSize),
     SumDataCast { largest: u32 },
-    Array(Box<Self>, usize),
     Pointer(Box<Self>),
     FnPointer(Vec<Self>, Box<Self>),
     Float,
@@ -60,7 +59,7 @@ pub struct MonomorphisedTypes {
     closure: M<key::Trait>,
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct MonomorphisedRecord {
     pub size: u32,
     pub repr: Repr,
@@ -111,8 +110,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &lir::Function> {
 impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoType> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.v {
-            MonoType::Int(intsize) => intsize.fmt(f),
-            MonoType::Array(inner, len) => write!(f, "[{}; {len}]", fmt(self.types, &**inner)),
+            MonoType::Int(intsize) => write!(f, "{}", intsize),
             MonoType::Pointer(inner) => write!(f, "*{}", fmt(self.types, &**inner)),
             MonoType::FnPointer(params, ret) if params.is_empty() => {
                 write!(f, "fnptr({})", fmt(self.types, &**ret))
@@ -206,6 +204,15 @@ impl Records {
         }
     }
 
+    /// Returns the VTable associated to an object
+    pub fn as_closure_get_fnptr(&self, mk: MonoTypeKey) -> MonoType {
+        assert_eq!(
+            MonoType::u8_pointer(),
+            self.type_of_field(mk, key::RecordField(0))
+        );
+        self.type_of_field(mk, key::RecordField(1))
+    }
+
     fn field_is_recursive(&self, key: M<key::TypeKind>, ty: &MonoType) -> bool {
         match ty {
             MonoType::Monomorphised(mk) if self[*mk].original == Some(key) => true,
@@ -231,7 +238,6 @@ impl Records {
             MonoType::SumDataCast { largest } => *largest,
             MonoType::Pointer(_) => 64,
             MonoType::Int(intsize) => intsize.bits() as u32,
-            MonoType::Array(inner, times) => self.size_of_ty(&inner, sum_are_ptrs) * *times as u32,
             MonoType::Float => 64,
             MonoType::FnPointer(_, _) => 64,
             MonoType::Unreachable => 0,
@@ -248,7 +254,6 @@ impl Records {
             match self[key].original {
                 Some(M { value: key::TypeKind::Sum(_), .. }) => {
                     let field = &self[key].fields[key::RecordField(1)];
-                    dbg!(&field, self.size_of_without_ptr_sum(field));
                     TAG_SIZE.bits() as u32 + self.size_of_without_ptr_sum(field)
                 }
                 _ => self.size_of(&MonoType::u8_pointer()),
@@ -396,10 +401,6 @@ impl MonoType {
         MonoType::FnPointer(params.into(), Box::new(ret))
     }
 
-    pub fn byte_array(len: usize) -> Self {
-        Self::Array(Box::new(Self::byte()), len)
-    }
-
     #[track_caller]
     pub fn deref(self) -> MonoType {
         match self {
@@ -504,15 +505,6 @@ impl<'a> Monomorphization<'a> {
         }
     }
 
-    pub fn create_capture_record<T>(
-        &mut self,
-        captures: &Map<key::Capture, (T, MonoType)>,
-    ) -> MonoTypeKey {
-        let fields = captures.values().map(|(_, t)| t.clone()).collect();
-        let record = self.construct::<key::Record>(None, fields, Repr::Lumina);
-        self.mono.types.push(record)
-    }
-
     fn construct<K: Into<key::TypeKind>>(
         &mut self,
         original: Option<M<K>>,
@@ -608,7 +600,7 @@ impl<'a> Monomorphization<'a> {
 
         // For closures we convert `call {a} {b, c}` into `call {a} b c` because it makes partial
         // application a lot easier.
-        let fields = if trait_ == self.mono.closure {
+        let vtable = if trait_ == self.mono.closure {
             assert_eq!(key.1.len(), 2);
 
             let mut ptypes = vec![MonoType::u8_pointer()];
@@ -620,8 +612,7 @@ impl<'a> Monomorphization<'a> {
             }
 
             let ret = key.1[1].clone();
-            let call = MonoType::fn_pointer(ptypes, ret);
-            vec![call]
+            MonoType::fn_pointer(ptypes, ret)
         } else {
             let methods = &self.methods[trait_];
 
@@ -630,28 +621,36 @@ impl<'a> Monomorphization<'a> {
             tmap.set_self(Type::u8_pointer(), MonoType::u8_pointer());
             tmap.extend(GenericKind::Parent, params.into_iter().zip(key.1));
 
-            methods
-                .values()
-                .map(|func| {
-                    let typing = self.funcs[trait_.module.m(*func)].as_done();
+            let mut method_to_fnptr = |func| {
+                let typing = self.funcs[trait_.module.m(func)].as_done();
 
-                    let mut tmap = tmap.clone();
-                    let mut morph = fork!(self, &mut tmap);
+                let mut tmap = tmap.clone();
+                let mut morph = fork!(self, &mut tmap);
 
-                    let ptypes = morph.applys::<Vec<_>>(&typing.typing.params);
-                    let ret = morph.apply(&typing.typing.returns);
+                let ptypes = morph.applys::<Vec<_>>(&typing.typing.params);
+                let ret = morph.apply(&typing.typing.returns);
 
-                    MonoType::fn_pointer(ptypes, ret)
-                })
-                .collect::<Vec<_>>()
+                MonoType::fn_pointer(ptypes, ret)
+            };
+
+            if methods.len() == 1 {
+                method_to_fnptr(methods[key::Method(0)])
+            } else {
+                let fields = methods
+                    .values()
+                    .map(|func| method_to_fnptr(*func))
+                    .collect::<Vec<_>>();
+
+                let vtable = self.mono.get_or_make_tuple(fields);
+
+                MonoType::pointer(vtable.into())
+            }
         };
-
-        let vtable = self.mono.get_or_make_tuple(fields);
 
         // Declare the trait object to be a record of `*u8 + *vtable`
         let mut object_fields = Map::new();
         object_fields.push(MonoType::u8_pointer());
-        object_fields.push(MonoType::pointer(vtable.into()));
+        object_fields.push(vtable);
         let rdata = &mut self.mono.types[reserved];
         *rdata = MonomorphisedRecord {
             size: 64 * 2, // TODO: platform-specific pointer size
@@ -797,9 +796,8 @@ impl TypeMap {
 impl fmt::Debug for MonoType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            MonoType::Int(intsize) => intsize.fmt(f),
+            MonoType::Int(intsize) => write!(f, "{intsize}"),
             MonoType::SumDataCast { largest } => write!(f, "<sum {largest}>"),
-            MonoType::Array(ty, times) => write!(f, "[{ty:?}; {times}]"),
             MonoType::Pointer(ty) => write!(f, "*{ty:?}"),
             MonoType::FnPointer(params, ret) => {
                 write!(

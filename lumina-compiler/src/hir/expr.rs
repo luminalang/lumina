@@ -1,6 +1,5 @@
 use super::pat::{PatLower, Pattern};
 use super::ty::{TypeAnnotation, TypeEnvInfo, TypeLower};
-use super::Info;
 use super::{scope::Bindings, Lambdas};
 use crate::prelude::*;
 use crate::Target;
@@ -630,17 +629,6 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             span,
             format!("the {kind} {tname} does not have a member named {name}"),
         )
-    }
-
-    fn emit_invalid_record<T>(&mut self, span: Span, msg: impl Into<String>) -> Option<T> {
-        self.ast
-            .sources
-            .error("invalid record")
-            .m(self.module)
-            .eline(span, msg)
-            .emit();
-
-        None
     }
 
     fn emit_syntax_error<T>(&mut self, span: Span, msg: impl Into<String>) -> Option<T> {

@@ -38,22 +38,6 @@ impl lir::Records {
             }
             MonoType::Float => Param::Direct(types::F64),
             MonoType::Unreachable => Param::ZST,
-            MonoType::Array(inner, times) => {
-                let size = self.size_of(inner);
-                let times = *times as u32;
-
-                // This calculation is somewhat arbritary. I'm unsure what the actual requirements
-                // are and this might fail on some platforms. Further research is required.
-                let fits_in_registers =
-                    times <= 3 && (size * times) < Type::triple_pointer_type(triple).bits();
-
-                todo!("ABI arrays");
-                // if fits_in_registers {
-                //     Param::FlatArray { size, times }
-                // } else {
-                //     Param::ArrayPtr { size, times }
-                // }
-            }
             MonoType::Monomorphised(mk) => {
                 let fields = self.abi_record_fields(triple, *mk);
                 if fields.is_empty() {
@@ -108,11 +92,6 @@ impl lir::Records {
                         }
                         MonoType::Pointer(_) => {
                             StructField::Direct(Type::triple_pointer_type(triple))
-                        }
-                        MonoType::Array(inner, times) => {
-                            // let size = self.size_of(inner);
-                            // StructField::Array { size, times: *times as u32 }
-                            todo!();
                         }
                         MonoType::Float => StructField::Direct(types::F64),
                         MonoType::Unreachable => StructField::ZST,

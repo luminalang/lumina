@@ -41,7 +41,7 @@ pub struct ProjectInfo {
     main: M<key::Func>,
     sys_init: M<key::Func>,
     closure: M<key::Trait>,
-    size: M<key::Trait>,
+    _size: M<key::Trait>,
     allocator: (M<key::Func>, M<key::Func>),
     reflect_type: M<key::Sum>,
     listable: M<key::Trait>,

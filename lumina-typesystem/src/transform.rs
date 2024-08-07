@@ -1,6 +1,6 @@
 use super::{
-    Constraint, Forall, Generic, GenericData, GenericKind, IType, Inference, RecordAssignment,
-    Span, Static, TEnv, Ty, Var,
+    Constraint, Forall, Generic, GenericKind, IType, Inference, RecordAssignment, Span, Static,
+    TEnv, Ty, Var,
 };
 use derive_new::new;
 use itertools::Itertools;
@@ -8,7 +8,6 @@ use key::{Map, M};
 use lumina_key as key;
 use lumina_util::{Spanned, Tr};
 use std::fmt;
-use tracing::warn;
 
 /// Transforms types by mapping generics to new types
 #[derive(Clone, PartialEq, Eq, Hash, new)]
@@ -29,7 +28,6 @@ pub struct CircularInst<'a, 's, T> {
     from: &'a mut TEnv<'s>,
     to: &'a mut TEnv<'s>,
     to_forall: &'a mut Forall<'s, Inference>,
-    span: Span,
     failures: Vec<Span>,
 }
 
@@ -141,7 +139,6 @@ impl GenericMapper<Inference> {
             from,
             to,
             to_forall,
-            span,
             failures: vec![],
         };
 

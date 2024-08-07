@@ -1,10 +1,7 @@
 use super::{FuncAttr, TypeAttr};
-use crate::impl_map_arrow_fmt;
 use crate::prelude::*;
-use derive_more::Constructor;
 use lumina_parser::r#impl::Association;
-use lumina_parser::{func, r#impl, ty, Type};
-use std::fmt;
+use lumina_parser::{func, ty, Type};
 
 #[derive(Default)]
 pub struct Entities<'s> {
@@ -47,8 +44,6 @@ impl<'s> Entities<'s> {
         self.langitems[module].as_slice()
     }
 }
-
-type ObjectSafe = bool;
 
 type SumHeader<'s> = TyHeader<'s>;
 type RecordHeader<'s> = TyHeader<'s>;

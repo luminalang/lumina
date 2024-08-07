@@ -93,3 +93,27 @@ pub fn itimes f n as fn(uint -> ()), uint -> () =
  where
   fn next i as uint -> () =
     if n == i then () else do f i then next (i + 1)
+
+pub fn break f list as fn(a -> bool), [a] -> ([a], [a]) =
+  match list
+  | [] -> ([], [])
+  | [x : xs] -> 
+    if f x then
+      (Nil, x : xs)
+    else 
+      let (left, right) = break #f xs in
+        (x : left, right)
+      // TODO: if we do pointer-equality on `:` could we optimise appending two `Slice`s
+      // into shifting start of a singlular Slice?
+
+when a can ToString
+impl ToString for [a]
+  fn show list as [a] -> string =
+    "[" <++> show_ list
+  where
+    fn show_ list as [a] -> string = 
+      match list
+      | [] -> "[]"
+      | [last] -> show last <++> "]"
+      | [x : xs] -> show x <++> ", " <++> show_ xs
+

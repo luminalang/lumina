@@ -64,6 +64,11 @@ impl MIR {
             key::TypeKind::Trait(k) => &self.trait_names[key.module.m(k)],
         }
     }
+
+    pub fn name_of_method(&self, key: M<key::Trait>, method: key::Method) -> &str {
+        let fkey = self.methods[key][method];
+        &self.func_names[key.module.m(fkey)]
+    }
 }
 
 pub struct ReadOnlyBytes(pub Box<[u8]>);

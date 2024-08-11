@@ -1,6 +1,6 @@
 use super::pat::{PatLower, Pattern};
 use super::ty::{TypeAnnotation, TypeEnvInfo, TypeLower};
-use super::{scope::Bindings, Lambdas};
+use super::{resolve_callable, scope::Bindings, Lambdas, ToAnnotate};
 use crate::prelude::*;
 use crate::Target;
 use ast::{Entity, Mod, NFunc};
@@ -9,6 +9,7 @@ use derive_more::From;
 use lumina_parser as parser;
 use lumina_typesystem::{Forall, IType, RecordVar, TEnv, Var};
 use lumina_util::Highlighting;
+use parser::AnnotatedPath;
 use std::fmt;
 use tracing::trace;
 
@@ -257,7 +258,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         let segments = apath.path.as_slice();
         match self.ast.lookups.resolve_func(self.module, segments) {
             Ok(Mod { key: ast::Entity::Func(ast::NFunc::Key(key)), module, .. }) => {
-                let tanot = self.type_annotation(apath.tr(span), None);
+                let tanot = self.type_annotation(apath, None);
                 Expr::PassFnptr(module.m(key), tanot)
             }
             Ok(_) => {
@@ -310,7 +311,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
                             let mut params = self.exprs(params);
                             params.push(left);
 
-                            let type_annotation = self.type_annotation(apath.as_ref(), None);
+                            let type_annotation = self.type_annotation(apath, None);
 
                             if let Some(lkey) =
                                 self.where_binds.find(|decl| *decl.header.name == name)
@@ -509,126 +510,30 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             }
             ["builtin", name] => {
                 let params = self.exprs(params);
-                let type_annotation = self.type_annotation(apath, None);
+                let type_annotation = self.type_annotation(&apath, None);
                 return to_out(Callable::Builtin(name), type_annotation, params);
-            }
-            [name] => {
-                if let Some(bind) = self.bindings.resolve(name) {
-                    let params = self.exprs(params);
-                    self.forbid_type_annotation(&apath.for_segments);
-                    return to_out(bind.into(), TypeAnnotation::new(), params);
-                }
-
-                if let Some(lkey) = self.where_binds.find(|decl| *decl.header.name == *name) {
-                    self.bindings.reference_lambda(lkey);
-                    let params = self.exprs(params);
-                    let type_annotation = self.type_annotation(apath, None);
-                    return to_out(Callable::Lambda(lkey), type_annotation, params);
-                }
             }
             _ => {}
         }
 
-        match self.ast.lookups.resolve_func(self.module, path) {
-            Ok(entity) => match entity.key {
-                Entity::Func(nfunc) => {
-                    let params = self.exprs(params);
-                    let type_ = match nfunc {
-                        NFunc::SumVar(key, _) => Some(entity.module.m(key::TypeKind::Sum(key))),
-                        _ => None,
-                    };
-                    let type_annotation = self.type_annotation(apath, type_);
-                    to_out(entity.map(|_| nfunc).into(), type_annotation, params)
-                }
-                Entity::Member(type_, name) => {
-                    let module = entity.module;
-                    let ty = self.ast.entities.header_of_ty(module.m(type_));
-                    let tname = ty.header.name;
+        let params = self.exprs(params);
 
-                    let nfunc = match type_ {
-                        key::TypeKind::Trait(trait_) => {
-                            let methods = &self.ast.entities.methods[module.m(trait_)];
-                            match methods.find(|fkey| {
-                                *self.ast.entities.fheaders[module.m(*fkey)].name == name
-                            }) {
-                                None => {
-                                    return self
-                                        .emit_member_not_found(apath.span, "trait", tname, name)
-                                }
-                                Some(method) => NFunc::Method(trait_, method),
-                            }
-                        }
-                        key::TypeKind::Sum(sum) => {
-                            let variants = &self.ast.entities.variant_names[module.m(sum)];
-                            match variants.find(|n| **n == name) {
-                                None => {
-                                    return self
-                                        .emit_member_not_found(apath.span, "type", tname, name)
-                                }
-                                Some(var) => NFunc::SumVar(sum, var),
-                            }
-                        }
-                        key::TypeKind::Record(key) => {
-                            let is_valid_field = self.ast.entities.field_names[module.m(key)]
-                                .values()
-                                .any(|n| **n == name);
-
-                            return self.emit_identifier_not_found(apath.span, if is_valid_field {format!(
-                                "if you're trying to use the field named `{name}` from `{tname}`, then use `.{name}`",
-                            )} else {
-                                format!("tried to use the type `{tname}` as a module")
-                            });
-                        }
-                    };
-
-                    let params = self.exprs(params);
-                    let call = entity.map(|_| nfunc);
-                    let type_annotation = self.type_annotation(apath, Some(call.module.m(type_)));
-
-                    to_out(call.into(), type_annotation, params)
-                }
-                _ => {
-                    let name = path[path.len() - 1];
-                    self.ast.sources.emit_wrong_entity(
-                        self.module,
-                        apath.span,
-                        name,
-                        "function",
-                        entity.key,
-                    );
-
-                    Expr::Poison
-                }
-            },
-            Err(err) => {
-                self.ast.sources.emit_lookup_err(
-                    apath.span,
-                    self.module,
-                    "function or binding",
-                    err,
-                );
-
-                Expr::Poison
-            }
-        }
-    }
-
-    fn emit_identifier_not_found(&self, span: Span, str: impl Into<String>) -> Expr<'s> {
-        self.ast
-            .sources
-            .error("identifier not found")
-            .m(self.module)
-            .eline(span, str)
-            .emit();
-
-        Expr::Poison
-    }
-
-    fn emit_member_not_found(&self, span: Span, kind: &str, tname: &str, name: &str) -> Expr<'s> {
-        self.emit_identifier_not_found(
-            span,
-            format!("the {kind} {tname} does not have a member named {name}"),
+        resolve_callable(
+            self.ast,
+            &mut self.bindings,
+            self.module,
+            self.where_binds,
+            apath.span,
+            &apath.path,
         )
+        .map(|(callable, to_anot)| {
+            let tanot = match to_anot {
+                ToAnnotate::Some(in_) => self.type_annotation(&apath, in_),
+                ToAnnotate::None => TypeAnnotation::new(),
+            };
+            to_out(callable, tanot, params)
+        })
+        .unwrap_or(Expr::Poison)
     }
 
     fn emit_syntax_error<T>(&mut self, span: Span, msg: impl Into<String>) -> Option<T> {
@@ -670,7 +575,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
     fn type_annotation(
         &mut self,
-        apath: Tr<&parser::AnnotatedPath<'s>>,
+        apath: &AnnotatedPath<'s>,
         type_: Option<M<key::TypeKind>>,
     ) -> TypeAnnotation<'s> {
         let len = apath.path.as_slice().len();
@@ -711,6 +616,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         PatLower::new(
             self.module,
             self.ast,
+            self.where_binds,
             self.target.int_size(),
             self.type_info,
             &mut self.bindings,
@@ -817,7 +723,9 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             parser::Field::Punned(names) => match self.bindings.resolve(*names[0]) {
                 Some(bind) => Some((names[0], Expr::callable(bind).tr(names[0].span))),
                 None => {
-                    self.emit_identifier_not_found(names[0].span, "");
+                    self.ast
+                        .sources
+                        .emit_identifier_not_found(self.module, names[0].span, "");
                     Some((names[0], Expr::Poison.tr(names[0].span)))
                 }
             },

@@ -6,7 +6,7 @@ use std::fmt;
 #[derive(Clone, Debug)]
 pub enum Pattern<'a> {
     Name(Identifier<'a>, Vec<Tr<Self>>),
-    String(&'a str),
+    String(Vec<StringPattern<'a>>),
     Fields(Box<CurlyInit<'a>>, Fields<'a, Self>),
     List(Vec<Tr<Self>>),
     Tuple(Vec<Tr<Self>>),
@@ -17,6 +17,14 @@ pub enum Pattern<'a> {
         ops: Vec<(&'a str, Tr<Self>)>,
     },
     Poison,
+}
+
+#[derive(Clone, Debug)]
+pub enum StringPattern<'a> {
+    Literal(&'a str),
+    BindBytes(&'a str, usize),
+    BindWhile(&'a str, Tr<Identifier<'a>>),
+    Wildcard(&'a str),
 }
 
 #[derive(Clone, PartialEq, Eq, Copy)]
@@ -94,7 +102,6 @@ impl<'a> Parser<'a> {
     }
 
     fn pat_int(&mut self, span: Span) -> Option<Tr<Pattern<'a>>> {
-        // let left = self.take(span).parse::<u128>().unwrap();
         let left = self.int_to_bound(span);
         if let Some(dspan) = self.next_is(|t| t == T::DotDot) {
             self.pat_partial_int(left, span.extend(dspan))
@@ -133,6 +140,17 @@ impl<'a> Parser<'a> {
     fn pat_path(&mut self, span: Span, params: bool) -> Option<Tr<Pattern<'a>>> {
         let str = self.take(span);
         let path = Identifier::parse(str).unwrap();
+
+        if let Some(name) = path.as_name() {
+            let (_, sp) = self.lexer.peek();
+            if self.take(sp) == "^" {
+                self.progress();
+                let mut spats = vec![self.pat_string_char_bind(name)?];
+                let end = self.pat_string_patterns(&mut spats)?;
+                return Some(Pattern::String(spats).tr(span.extend(end)));
+            }
+        }
+
         let params = if params { self.pat_params()? } else { vec![] };
         let span = span.extend_by_params(&params);
         let pat = Pattern::Name(path, params);
@@ -141,8 +159,65 @@ impl<'a> Parser<'a> {
 
     fn pat_string(&mut self, span: Span) -> Option<Tr<Pattern<'a>>> {
         let str = self.take(span.move_indice(1).extend_length(-1));
-        let pat = Pattern::String(str);
-        Some(pat.tr(span))
+        let mut segments = vec![StringPattern::Literal(str)];
+        let end = self.pat_string_patterns(&mut segments)?;
+        let pat = Pattern::String(segments);
+        Some(pat.tr(span.extend(end)))
+    }
+
+    fn pat_string_patterns(&mut self, buf: &mut Vec<StringPattern<'a>>) -> Option<Span> {
+        loop {
+            select! { self, "string pattern", span peeked: true;
+                T::StringLiteral => {
+                    self.progress();
+                    let str = self.take(span.move_indice(1).extend_length(-1));
+                    buf.push(StringPattern::Literal(str));
+                },
+                T::Path => {
+                    self.progress();
+                    let str = Identifier::parse(self.take(span)).unwrap();
+                    let Some(name) = str.as_name() else {
+                        self.err_unexpected_token((T::Path, span), "string pattern");
+                        return None;
+                    };
+
+                    let (_, span) = self.lexer.peek();
+                    if self.take(span) == "^" {
+                        self.progress();
+                        let spat = self.pat_string_char_bind(name)?;
+                        buf.push(spat);
+                    } else {
+                        let spat = StringPattern::Wildcard(name);
+                        buf.push(spat);
+                    }
+                },
+                T::CloseList
+                | T::CloseCurly
+                | T::CloseParen
+                | T::Arrow | T::EOF => return Some(span),
+                t if t.is_valid_start_of_pattern_param() => return Some(span),
+            }
+        }
+    }
+
+    fn pat_string_char_bind(&mut self, name: &'a str) -> Option<StringPattern<'a>> {
+        let (t, span) = self.lexer.peek();
+        match t {
+            T::Path => {
+                self.progress();
+                let ident = Identifier::parse(self.take(span)).unwrap();
+                Some(StringPattern::BindWhile(name, ident.tr(span)))
+            }
+            T::Int => {
+                self.progress();
+                let n = self.take(span).parse::<usize>().unwrap();
+                Some(StringPattern::BindBytes(name, n))
+            }
+            _ => {
+                self.err_unexpected_token((t, span), "number of characters or function name");
+                return None;
+            }
+        }
     }
 
     fn pat_paren(&mut self, span: Span) -> Option<Tr<Pattern<'a>>> {
@@ -219,7 +294,7 @@ impl<'a> fmt::Display for Pattern<'a> {
             Pattern::Name(name, params) => {
                 write!(f, "{op}{} {}{cp}", name, params.iter().format(" "))
             }
-            Pattern::String(s) => write!(f, "\"{s}\""),
+            Pattern::String(spats) => write!(f, "{}", spats.iter().format(" ")),
             Pattern::List(elems) => write!(f, "{ol}{}{cl}", elems.iter().format(", ")),
             Pattern::Fields(init, fields) => {
                 write!(f, "{oc} {init}{} {cc}", fields.iter().format(", "))
@@ -241,6 +316,17 @@ impl<'a> fmt::Display for Pattern<'a> {
                     .format_with(" ", |(op, right), f| f(&format_args!("{} {}", op, right)))
             ),
             Pattern::Poison => "???".fmt(f),
+        }
+    }
+}
+
+impl<'a> fmt::Display for StringPattern<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            StringPattern::Literal(s) => write!(f, "\"{s}\""),
+            StringPattern::BindBytes(name, n) => write!(f, "{name}^{n}"),
+            StringPattern::BindWhile(name, cond) => write!(f, "{name}^{cond}"),
+            StringPattern::Wildcard(name) => name.fmt(f),
         }
     }
 }

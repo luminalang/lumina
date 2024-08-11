@@ -44,6 +44,8 @@ macro_rules! select {
 
             let (t, _select_span) = if settings.sensitive { $parser.lexer.peek_line_sensitive() } else { $parser.lexer.peek() };
 
+            tracing::trace!("selecting upon {t:?}");
+
             $( let $span = _select_span; )?
 
             match t {

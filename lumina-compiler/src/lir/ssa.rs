@@ -112,9 +112,9 @@ impl Blocks {
         self.blocks.push(BasicBlock::new(params))
     }
 
-    pub fn set_predecessors(&mut self, block: Block, pred: u16) {
-        self.blocks[block].predecessors = pred;
-    }
+    // pub fn set_predecessors(&mut self, block: Block, pred: u16) {
+    //     self.blocks[block].predecessors = pred;
+    // }
 
     pub fn get_block_param(&self, block: Block, pid: u32) -> V {
         let params = self.blocks[block].parameters;

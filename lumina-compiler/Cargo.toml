@@ -15,7 +15,7 @@ lumina-key = { path = "../lumina-key" }
 derive-new = "0.6"
 either = "1.9.0"
 ibig = { version = "0.3.6", features = [], default-features = false }
-owo-colors = "3.5.*"
+owo-colors = { version = "4.0.*", features = ["supports-colors"] }
 itertools = "0.10.*"
 smallvec = "1.10.*"
 take_mut = "*"

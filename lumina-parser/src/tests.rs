@@ -98,6 +98,7 @@ pattern!(pat_simple_annotated_record, "{ point int | x = 1, y = 2 }");
 pattern!(pat_simple_infered_record, "{ x = 1, y = 2 }");
 pattern!(pat_nested_tuple, "(((x, y), (x, y), ()))");
 pattern!(pat_string_literal, "\"hello\\\" world\"");
+pattern!(pat_advanced_strings, "\"hello\" x^1 y^m:f xs");
 pattern!(pat_simple_constr, "(Just 20)");
 pattern!(pat_nested_constr, "(Just (Just (Pair 10 20)))");
 pattern!(pat_int_ranges, "(0..10, 0..20, ..30, 30..)");

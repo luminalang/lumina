@@ -95,6 +95,14 @@ impl<'a, 's> Merge<'s, Tail> for Lower {
     fn to_init(&self) -> Init<'_> {
         Init::new(&self.ftypes, &self.vtypes)
     }
+
+    fn str_to_ro(&mut self, _: &'s str) -> M<key::ReadOnly> {
+        todo!()
+    }
+
+    fn pop_inst(&mut self, _: Span) -> Option<mir::func::InstInfo> {
+        todo!()
+    }
 }
 
 impl Lower {

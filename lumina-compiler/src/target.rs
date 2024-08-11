@@ -80,6 +80,16 @@ impl Target {
         }
     }
 
+    pub fn int(&self) -> lumina_typesystem::IntSize {
+        let size = self.int_size();
+        lumina_typesystem::IntSize::new(true, size)
+    }
+
+    pub fn uint(&self) -> lumina_typesystem::IntSize {
+        let size = self.int_size();
+        lumina_typesystem::IntSize::new(false, size)
+    }
+
     pub fn include_for(&self, name: &str) -> bool {
         let mut iter = name.split('-');
 

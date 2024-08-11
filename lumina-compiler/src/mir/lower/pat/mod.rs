@@ -1,4 +1,6 @@
+use crate::mir::Local;
 use crate::prelude::*;
+use ast::NFunc;
 use lumina_typesystem::{IntSize, Type};
 use std::collections::VecDeque;
 
@@ -43,6 +45,10 @@ pub enum DecTree<Tail> {
         next: Branching<key::SumVariant, Tail>,
         ty: Type,
     },
+    String {
+        next: Branching<StrChecks, Tail>,
+        wildcard_next: Box<Self>,
+    },
     Ints {
         intsize: IntSize,
         next: Branching<Range, Tail>,
@@ -67,6 +73,22 @@ pub enum DecTree<Tail> {
 }
 
 #[derive(Clone, Debug)]
+pub struct StrChecks {
+    pub checks: Vec<StrCheck>,
+}
+
+#[derive(Clone, Debug)]
+pub enum StrCheck {
+    Literal(M<key::ReadOnly>),
+    Take(usize),
+    TakeExcess,
+    TakeByte,
+    TakeWhileLocal(Local),
+    TakeWhileFunc(M<NFunc>),
+    TakeWhileLambda(key::Lambda),
+}
+
+#[derive(Clone, Debug)]
 pub enum TreeTail<Tail> {
     Poison,
     Unreached(VecDeque<Type>),
@@ -86,6 +108,7 @@ pub trait BranchKey: std::fmt::Display {}
 
 impl BranchKey for key::SumVariant {}
 impl BranchKey for bool {}
+impl BranchKey for StrChecks {}
 impl BranchKey for Range {}
 
 #[derive(Debug, Clone)]
@@ -104,6 +127,10 @@ impl<Tail> DecTree<Tail> {
             DecTree::Opaque { next, .. } => next.for_each_tail_mut(f),
             DecTree::List { next, .. } => next.for_each_tail_mut(f),
             DecTree::Ints { next, .. } => next.for_each_tail_mut(f),
+            DecTree::String { next, wildcard_next } => {
+                next.for_each_tail_mut(f);
+                wildcard_next.for_each_tail_mut(f);
+            }
             DecTree::End(_) => take_mut::take(self, |tree| match tree {
                 DecTree::End(tail) => f(tail),
                 _ => unreachable!(),
@@ -121,6 +148,10 @@ impl<Tail> DecTree<Tail> {
             DecTree::Opaque { next, .. } => next.for_each_tail(f),
             DecTree::List { next, .. } => next.for_each_tail(f),
             DecTree::Ints { next, .. } => next.for_each_tail(f),
+            DecTree::String { next, wildcard_next } => {
+                next.for_each_tail(f);
+                wildcard_next.for_each_tail(f);
+            }
             DecTree::End(tail) => f(tail),
         }
     }
@@ -202,6 +233,14 @@ impl<Tail: std::fmt::Display> std::fmt::Display for DecTree<Tail> {
             DecTree::List { next, .. } => next.fmt("list", f),
             DecTree::Ints { intsize, next } => next.fmt(intsize, f),
             DecTree::Bools(next) => next.fmt("bool", f),
+            DecTree::String { next, wildcard_next } => {
+                next.fmt("string", f)?;
+                write!(
+                    f,
+                    "string _\n  {}",
+                    wildcard_next.to_string().lines().format("\n  ")
+                )
+            }
             DecTree::Opaque { ty, next } => {
                 write!(f, "{ty}\n  {}", next.to_string().lines().format("\n  "))
             }
@@ -228,5 +267,22 @@ impl<Tail: std::fmt::Display> std::fmt::Display for TreeTail<Tail> {
                 )
             }
         }
+    }
+}
+
+impl std::fmt::Display for StrChecks {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.checks
+            .iter()
+            .map(|check| match check {
+                StrCheck::Literal(name) => name.to_string(),
+                StrCheck::Take(n) => format!(":{n}"),
+                StrCheck::TakeExcess | StrCheck::TakeByte => format!("_"),
+                StrCheck::TakeWhileLocal(local) => format!(":{local}"),
+                StrCheck::TakeWhileFunc(mfunc) => format!(":{mfunc}"),
+                StrCheck::TakeWhileLambda(lkey) => format!(":{lkey}"),
+            })
+            .format(" ")
+            .fmt(f)
     }
 }

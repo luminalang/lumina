@@ -391,6 +391,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
 
     fn expr_int(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
         let raw = self.parser.take(span);
+        dbg!(&raw, &self.parser.errors);
         let parse = |span| self.parser.take(span).parse::<u128>().unwrap();
         let (sign, n) = if raw.as_bytes()[0] == b'-' {
             (true, parse(span.move_indice(1)))

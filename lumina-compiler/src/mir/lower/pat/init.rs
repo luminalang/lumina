@@ -57,6 +57,12 @@ impl<'a> Init<'a> {
                     DecTree::Tuple { elems: elems.len(), next: Box::new(next) }
                 }
                 Container::FnPointer | Container::Closure | Container::Pointer => opaque(),
+                Container::String(_) => DecTree::String {
+                    next: Branching { branches: vec![] },
+                    wildcard_next: Box::new(DecTree::End(TreeTail::Unreached(
+                        elems.to_vec().into(),
+                    ))),
+                },
                 Container::List(_) => {
                     let inner = elems.last().expect("list type without type parameters");
                     let branches = vec![

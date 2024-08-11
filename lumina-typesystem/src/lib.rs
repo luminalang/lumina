@@ -64,6 +64,7 @@ pub enum Container {
     Pointer,
     Defined(M<key::TypeKind>),
     List(M<key::TypeKind>),
+    String(M<key::TypeKind>),
 }
 
 impl<T> Ty<T> {
@@ -71,7 +72,8 @@ impl<T> Ty<T> {
         match self {
             Ty::Container(
                 Container::Defined(M { module, value: key::TypeKind::Trait(key) })
-                | Container::List(M { module, value: key::TypeKind::Trait(key) }),
+                | Container::List(M { module, value: key::TypeKind::Trait(key) })
+                | Container::String(M { module, value: key::TypeKind::Trait(key) }),
                 params,
             ) => Ok((module.m(key), params)),
             other => Err(other),
@@ -89,6 +91,10 @@ impl<T> Ty<T> {
     pub fn list<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
         let key = key.map(K::into);
         Self::Container(Container::List(key), params)
+    }
+    pub fn string<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
+        let key = key.map(K::into);
+        Self::Container(Container::String(key), params)
     }
 
     pub fn fn_pointer(mut params: Vec<Self>, ret: Self) -> Self {
@@ -182,9 +188,9 @@ impl Container {
             Container::Closure => Self::fmt_func("fn", elems, format, f),
             Container::Tuple => Self::fmt_tuple(elems, format, f),
             Container::Pointer => write!(f, "*{}", format(&elems[0])),
-            Container::List(key) | Container::Defined(key) => {
-                Self::fmt_defined(key, elems, format, f, true)
-            }
+            Container::String(_) => write!(f, "string"),
+            Container::List(_) => write!(f, "[{}]", elems.iter().map(format).format(", ")),
+            Container::Defined(key) => Self::fmt_defined(key, elems, format, f, true),
         }
     }
 

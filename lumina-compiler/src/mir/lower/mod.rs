@@ -12,7 +12,7 @@ pub mod pat;
 
 use derive_new::new;
 use lumina_typesystem::{
-    Finalizer, Forall, GenericMapper, IType, Inference, IntSize, Static, TEnv, Transformer, Type,
+    Finalizer, Forall, GenericMapper, IType, Inference, Static, TEnv, Transformer, Type,
 };
 use lumina_util::Highlighting;
 use std::fmt;
@@ -103,7 +103,7 @@ impl<'a, 's> Lower<'a, 's> {
             system,
             self.forall,
             self.lforalls,
-            IntSize::new(true, self.target.int_size()),
+            self.target.int(),
             self.implicits,
         );
         let value = and_then(&mut fin);
@@ -230,10 +230,6 @@ impl<'a, 's> Lower<'a, 's> {
     ) -> Expr {
         assert_eq!(params.len(), patterns.len());
 
-        // if params.is_empty() {
-        //     return self.lower_expr(expr);
-        // }
-
         let mut plower = ParamsLower {
             lower: self,
             params,
@@ -299,6 +295,14 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
         }
     }
 
+    fn str_to_ro(&mut self, str: &'s str) -> M<lumina_key::ReadOnly> {
+        self.lower.str_to_ro(str)
+    }
+
+    fn pop_inst(&mut self, span: Span) -> Option<InstInfo> {
+        self.lower.current.pop_inst(span)
+    }
+
     fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
         *self.lower.rsolver.fnames[record][field]
     }
@@ -328,6 +332,14 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for MatchBranchLower<'l, 
 
     fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
         *self.lower.rsolver.fnames[record][field]
+    }
+
+    fn str_to_ro(&mut self, str: &'s str) -> M<lumina_key::ReadOnly> {
+        self.lower.str_to_ro(str)
+    }
+
+    fn pop_inst(&mut self, span: Span) -> Option<InstInfo> {
+        self.lower.current.pop_inst(span)
     }
 
     fn to_init(&self) -> pat::Init {

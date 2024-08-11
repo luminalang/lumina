@@ -23,6 +23,7 @@ pub struct TypeEnvInfo<'s> {
 
     pub declare_generics: bool,
     pub list: M<key::TypeKind>,
+    pub string: M<key::TypeKind>,
     pub self_handler: SelfHandler,
     inference: Option<TEnv<'s>>,
 }
@@ -50,9 +51,10 @@ impl FromVar for Static {
 }
 
 impl<'s> TypeEnvInfo<'s> {
-    pub fn new(declare_generics: bool, list: M<key::TypeKind>) -> Self {
+    pub fn new(declare_generics: bool, string: M<key::TypeKind>, list: M<key::TypeKind>) -> Self {
         Self {
             list,
+            string,
             declare_generics,
             self_handler: SelfHandler::Disallowed,
             iforalls: SmallVec::new(),
@@ -303,6 +305,10 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                     return Ty::poison();
                 }
             },
+            ["string"] => {
+                let string = self.type_info.string;
+                return self.forbid_params(span, Ty::string(string, vec![]), params);
+            }
             [name] if name.starts_with('u') => {
                 if let Ok(n) = name[1..].parse::<u8>() {
                     let int = Ty::Int(IntSize::new(false, n));

@@ -1,5 +1,5 @@
 use super::scope::Bindings;
-use super::{ty, IType, TypeEnvInfo};
+use super::{resolve_callable, ty, Callable, IType, TypeEnvInfo};
 use crate::prelude::*;
 use ast::{Entity, Mod, NFunc};
 use derive_more::Constructor;
@@ -14,6 +14,7 @@ pub struct PatLower<'a, 's> {
     module: key::Module,
 
     ast: &'a ast::AST<'s>,
+    where_binds: &'a [parser::func::Declaration<'s>],
 
     default_int_size: u8,
 
@@ -37,8 +38,16 @@ pub enum Pattern<'s> {
     Cons(Box<[Tr<Self>; 2]>, Var),
     Nil(Var),
     Bool(bool),
-    String(&'s str),
+    String(Vec<StringPattern<'s>>),
     Poison,
+}
+
+#[derive(Clone, Debug)]
+pub enum StringPattern<'s> {
+    Literal(&'s str),
+    BindBytes(key::Bind, usize),
+    BindWhile(key::Bind, Callable<'s>),
+    Wildcard(key::Bind),
 }
 
 impl<'a, 's> PatLower<'a, 's> {
@@ -47,7 +56,7 @@ impl<'a, 's> PatLower<'a, 's> {
 
         match pat.value {
             parser::Pattern::Name(identifier, params) => self.name(pat.span, identifier, params),
-            parser::Pattern::String(name) => Pattern::String(*name),
+            parser::Pattern::String(spats) => self.strings(spats),
             parser::Pattern::Fields(init, fields) => self.record(pat.span, init, fields),
             parser::Pattern::List(elems) => self.list(pat.span, elems),
             parser::Pattern::Tuple(elems) => {
@@ -67,6 +76,38 @@ impl<'a, 's> PatLower<'a, 's> {
 
     fn pats(&mut self, pats: &[Tr<parser::Pattern<'s>>]) -> Vec<Tr<Pattern<'s>>> {
         pats.iter().map(|p| self.pat(p.as_ref())).collect()
+    }
+
+    fn strings(&mut self, spats: &[parser::pat::StringPattern<'s>]) -> Pattern<'s> {
+        spats
+            .iter()
+            .map(|spat| match spat {
+                parser::pat::StringPattern::Literal(name) => Some(StringPattern::Literal(*name)),
+                parser::pat::StringPattern::BindBytes(name, n) => {
+                    let bind = self.bindings.declare(*name);
+                    Some(StringPattern::BindBytes(bind, *n))
+                }
+                parser::pat::StringPattern::Wildcard(name) => {
+                    let bind = self.bindings.declare(*name);
+                    Some(StringPattern::Wildcard(bind))
+                }
+                parser::pat::StringPattern::BindWhile(name, ident) => {
+                    let (callable, _) = resolve_callable(
+                        self.ast,
+                        self.bindings,
+                        self.module,
+                        self.where_binds,
+                        ident.span,
+                        ident,
+                    )?;
+
+                    let bind = self.bindings.declare(*name);
+                    Some(StringPattern::BindWhile(bind, callable))
+                }
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Pattern::String)
+            .unwrap_or(Pattern::Poison)
     }
 
     fn record(

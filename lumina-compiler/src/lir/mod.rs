@@ -89,6 +89,9 @@ struct LIR {
     alloc: Option<MonoFunc>,
     #[new(default)]
     dealloc: Option<MonoFunc>,
+
+    #[new(default)]
+    stringable: Option<Stringable>,
 }
 
 #[derive(new, PartialEq, Eq, Hash)]
@@ -582,6 +585,40 @@ impl<'a> FuncLower<'a> {
         }
     }
 
+    fn stringable(&mut self) -> Stringable {
+        match self.lir.stringable {
+            Some(str) => str,
+            None => {
+                let weakstring = Type::string(self.info.string, vec![]);
+                let type_ = self.string_type();
+
+                let (ikey, tmap) =
+                    self.find_implementation(self.info.stringable, &[], weakstring, type_.into());
+
+                let [split_at, split_while, split_while_static, split_first, equals, len, from_raw_parts] =
+                    [0, 1, 2, 3, 4, 5, 6]
+                        .map(key::Method)
+                        .map(|method| FuncOrigin::Method(ikey, method))
+                        .map(|origin| self.call_to_mfunc(origin, tmap.clone()).0);
+
+                let str = Stringable {
+                    split_at,
+                    split_while,
+                    split_while_static,
+                    split_first,
+                    equals,
+                    len,
+                    from_raw_parts,
+                    type_,
+                };
+
+                self.lir.stringable = Some(str);
+
+                str
+            }
+        }
+    }
+
     // Relies on the layout of `std:prelude:List`
     //
     // type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
@@ -616,53 +653,106 @@ impl<'a> FuncLower<'a> {
     //     })
     // }
 
-    // fn string_type(&mut self) -> MonoType {
-    //     let string_type = Type::defined(self.info.string, vec![]);
-    //     to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(&string_type)
-    // }
+    fn string_from_ro(&mut self, ro: M<key::ReadOnly>) -> (Value, Value) {
+        let slen = self.lir.read_only_table[ro].0 .0.len();
+        let (slen_arg, _) = self.uint(slen as i128);
+        let ptr = Value::ReadOnly(ro);
+        (self.string_from_raw_parts(ptr, slen_arg), slen_arg)
+    }
 
-    // fn string_from_raw_parts_mfunc(&mut self) -> (MonoFunc, MonoType) {
-    //     let string_type = self.string_type();
+    fn string_from_raw_parts(&mut self, ptr: Value, len: Value) -> Value {
+        let stringable = self.stringable();
+        let f = stringable.from_raw_parts;
+        self.ssa().call(f, vec![ptr, len], stringable.type_.into())
+    }
 
-    //     let tmap = TypeMap::new();
-    //     let typing = MonoTyping::new(
-    //         FuncOrigin::Defined(self.info.string_from_raw_parts),
-    //         [
-    //             MonoType::u8_pointer(),
-    //             MonoType::Int(IntSize::new(false, self.lir.target.int_size())),
-    //         ]
-    //         .into_iter()
-    //         .collect(),
-    //         string_type.clone(),
-    //     );
+    fn string_split_at(&mut self, str: Value, at: Value) -> [Value; 2] {
+        let stringable = self.stringable();
 
-    //     let func = self
-    //         .lir
-    //         .func(self.mir, self.iquery, self.info, tmap, typing, None);
-    //     (func, string_type)
-    // }
+        let string = stringable.type_;
+        let str_tuple = self.lir.mono.get_or_make_tuple(vec![string.into(); 2]);
 
-    // fn string_to_value(&mut self, str: &[u8]) -> Value {
-    //     let (mfunc, string) = self.string_from_raw_parts_mfunc();
+        let split_at = stringable.split_at;
 
-    //     let ro = self.string_to_readonly(str.to_vec());
-    //     let len = Value::Int(
-    //         str.len() as i128,
-    //         IntSize::new(false, self.lir.target.int_size()),
-    //     );
+        let splitted = self.ssa().call(split_at, vec![str, at], str_tuple.into());
 
-    //     self.ssa()
-    //         .call(mfunc, vec![Value::ReadOnly(ro), len], string)
-    // }
+        [key::RecordField(0), key::RecordField(1)]
+            .map(|f| self.ssa().field(splitted, str_tuple, f, string.into()))
+    }
 
-    // fn string_to_readonly(&mut self, str: Vec<u8>) -> M<key::ReadOnly> {
-    //     let module = self.current.origin.module();
-    //     let ro = self.lir.read_only_table[module].push((
-    //         mir::ReadOnlyBytes(str.into_boxed_slice()),
-    //         MonoType::u8_pointer(),
-    //     ));
-    //     module.m(ro)
-    // }
+    fn string_split_while(&mut self, str: Value, f: Value) -> [Value; 2] {
+        let stringable = self.stringable();
+
+        let string = stringable.type_;
+        let str_tuple = self.lir.mono.get_or_make_tuple(vec![string.into(); 2]);
+
+        let splitted = self
+            .ssa()
+            .call(stringable.split_while, vec![str, f], str_tuple.into());
+
+        [key::RecordField(0), key::RecordField(1)]
+            .map(|f| self.ssa().field(splitted, str_tuple, f, string.into()))
+    }
+
+    fn string_split_while_static(&mut self, str: Value, f: MonoFunc) -> [Value; 2] {
+        let stringable = self.stringable();
+
+        let string = stringable.type_;
+        let str_tuple = self.lir.mono.get_or_make_tuple(vec![string.into(); 2]);
+
+        let mfunc = stringable.split_while_static;
+        let splitted = self
+            .ssa()
+            .call(mfunc, vec![str, Value::FuncPtr(f)], str_tuple.into());
+
+        [key::RecordField(0), key::RecordField(1)]
+            .map(|f| self.ssa().field(splitted, str_tuple, f, string.into()))
+    }
+
+    fn string_split_first(&mut self, str: Value) -> [Value; 2] {
+        let stringable = self.stringable();
+
+        let tuple = self
+            .lir
+            .mono
+            .get_or_make_tuple(vec![MonoType::byte(), stringable.type_.into()]);
+
+        let splitted = self
+            .ssa()
+            .call(stringable.split_first, vec![str], tuple.into());
+
+        let [x, xs] = [key::RecordField(0), key::RecordField(1)];
+
+        [
+            self.ssa().field(splitted, tuple, x, MonoType::byte()),
+            self.ssa()
+                .field(splitted, tuple, xs, stringable.type_.into()),
+        ]
+    }
+
+    fn string_equals(&mut self, strs: [Value; 2]) -> Value {
+        let stringable = self.stringable();
+
+        self.ssa()
+            .call(stringable.equals, strs.into(), MonoType::bool())
+    }
+
+    fn string_len(&mut self, str: Value) -> Value {
+        let stringable = self.stringable();
+
+        let size = self.lir.target.uint();
+        self.ssa()
+            .call(stringable.len, vec![str], MonoType::Int(size))
+    }
+
+    fn string_type(&mut self) -> MonoTypeKey {
+        self.lir.mono.get_or_make_record(self.info.string, vec![])
+    }
+
+    fn uint(&self, n: i128) -> (Value, IntSize) {
+        let size = IntSize::new(false, self.lir.target.int_size());
+        (Value::Int(n, size), size)
+    }
 
     // Instantiates and lowers the lambda as a function.
     // Monomorphises the captures as a tuple.
@@ -877,6 +967,20 @@ enum ResolvedNFunc {
         ty: MonoTypeKey,
     },
     Val(M<key::Val>, MonoType),
+}
+
+// Convenience access to the mono functions for the `string` langitem's implementation of `Stringable`
+#[derive(Clone, Copy)]
+struct Stringable {
+    split_at: MonoFunc,           // self, int -> (self, self)
+    split_while: MonoFunc,        // self, fn(u8 -> bool) -> (self, self)
+    split_while_static: MonoFunc, // self, fnptr(u8 -> bool) -> (self, self)
+    split_first: MonoFunc,        // self -> (u8, self)
+    equals: MonoFunc,             // self, self -> bool
+    len: MonoFunc,                // self -> uint
+    from_raw_parts: MonoFunc,     // *u8, uint -> self
+
+    type_: MonoTypeKey,
 }
 
 impl fmt::Display for FuncOrigin {

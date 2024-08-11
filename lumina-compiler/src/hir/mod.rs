@@ -22,8 +22,9 @@ use lumina_typesystem::{
     Constraint, Downgrade, Forall, Generic, GenericKind, IType, ImplIndex, Inference, Static, TEnv,
     Transformer, Ty, Type,
 };
-use lumina_util::Highlighting;
+use lumina_util::{Highlighting, Identifier};
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use tracing::info_span;
@@ -32,8 +33,9 @@ mod expr;
 use expr::ExprLower;
 pub use expr::{Callable, Expr, Literal};
 mod pat;
-pub use pat::Pattern;
+pub use pat::{Pattern, StringPattern};
 mod scope;
+use scope::Bindings;
 mod ty;
 pub use ty::TypeAnnotation;
 use ty::{SelfHandler, TypeEnvInfo};
@@ -264,7 +266,9 @@ fn lower_func<'a, 's>(
     let flangitems = lower_langitems(ast, module, &attributes.shared.lang_items);
 
     let list = list_from_langs(&flangitems, &langitems, &pinfo);
-    let mut tinfo = TypeEnvInfo::new(true, list);
+    let string = pinfo.string.map(key::TypeKind::Record);
+
+    let mut tinfo = TypeEnvInfo::new(true, string, list);
 
     match &ast.entities.fbodies[func] {
         ast::FuncBody::Extern { link_name } => {
@@ -320,8 +324,9 @@ fn tydef_type_env<'s, K: Into<key::TypeKind>>(
     kind: M<K>,
     generics: &Map<key::Generic, &'s str>,
     list: M<key::TypeKind>,
+    string: M<key::TypeKind>,
 ) -> TypeEnvInfo<'s> {
-    let mut tinfo = TypeEnvInfo::new(false, list);
+    let mut tinfo = TypeEnvInfo::new(false, string, list);
     tinfo.self_handler = SelfHandler::Substituted(kind.map(Into::into));
     let forall = Forall::from_names(generics.values().copied());
 
@@ -358,7 +363,9 @@ fn lower_sum<'a, 's>(
     let tlangs = lower_langitems(ast, sum.module, &ty.attributes.shared.lang_items);
 
     let list = list_from_langs(&tlangs, lang, pinfo);
-    let mut tinfo = tydef_type_env(sum, &ty.header.type_params, list);
+    let string = pinfo.string.map(key::TypeKind::Record);
+
+    let mut tinfo = tydef_type_env(sum, &ty.header.type_params, string, list);
 
     let mut tlower = ty::TypeLower::new(sum.module, ast, target.int_size(), &mut tinfo);
 
@@ -385,7 +392,9 @@ fn lower_record<'a, 's>(
     let tlangs = lower_langitems(ast, rec.module, &ty.attributes.shared.lang_items);
 
     let list = list_from_langs(&tlangs, lang, pinfo);
-    let mut tinfo = tydef_type_env(rec, &ty.header.type_params, list);
+    let string = pinfo.string.map(key::TypeKind::Record);
+
+    let mut tinfo = tydef_type_env(rec, &ty.header.type_params, string, list);
 
     let mut tlower = ty::TypeLower::new(rec.module, ast, target.int_size(), &mut tinfo);
 
@@ -419,7 +428,8 @@ fn lower_trait<'a, 's>(
     let tlangs = lower_langitems(ast, module, &ty.attributes.shared.lang_items);
 
     let list = list_from_langs(&tlangs, langitems, pinfo);
-    let mut tinfo = TypeEnvInfo::new(false, list);
+    let string = pinfo.string.map(key::TypeKind::Record);
+    let mut tinfo = TypeEnvInfo::new(false, string, list);
     let forall = Forall::from_names(ty.header.type_params.values().copied());
     tinfo.enter_type_or_impl_or_method(forall, GenericKind::Parent);
     tinfo.self_handler = SelfHandler::Direct;
@@ -595,12 +605,50 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             |tinfo, key, cons| tinfo.iforalls.last_mut().unwrap().0[key].trait_constraints = cons,
         );
 
-        let typing = self.to_type_lower().typing_or_inferred(header);
+        let mut typing = self.to_type_lower().typing_or_inferred(header);
         info!("typing lowered to: {typing}");
 
         self.type_info.declare_generics = false;
 
-        let (params, expr) = self.lower_func_body(header, body);
+        let (mut params, expr) = self.lower_func_body(header, body);
+
+        let error_text = || {
+            format!(
+                "{} patterns, function expects {} parameters",
+                params.len().numeric(),
+                typing.params.len().numeric(),
+            )
+        };
+
+        match params.len().cmp(&typing.params.len()) {
+            Ordering::Equal => {}
+            Ordering::Less => {
+                let span = header.name.span.extend_by_params(&params);
+                self.ast
+                    .sources
+                    .error("missing parameter pattern(s)")
+                    .m(self.module)
+                    .eline(span, error_text())
+                    .emit();
+
+                while params.len() < typing.params.len() {
+                    params.push(Pattern::Poison.tr(span));
+                }
+            }
+            Ordering::Greater => {
+                let span = Span::from_params(typing.params.values(), |v| v.span);
+                self.ast
+                    .sources
+                    .error("missing parameter type(s)")
+                    .m(self.module)
+                    .eline(span, error_text())
+                    .emit();
+
+                while params.len() > typing.params.len() {
+                    typing.params.push(Ty::poison().tr(span));
+                }
+            }
+        }
 
         let forall = self.type_info.leave_function();
         info!("forall lowered to: {}", forall);
@@ -718,7 +766,9 @@ fn lower_impl<'a, 's>(
     );
 
     let list = list_from_langs(langitems, &HashMap::new(), pinfo);
-    let mut tinfo = TypeEnvInfo::new(true, list);
+    let string = pinfo.string.map(key::TypeKind::Record);
+
+    let mut tinfo = TypeEnvInfo::new(true, string, list);
 
     let impl_forall = generics_from_con(&imp.header.when);
     tinfo.enter_type_or_impl_or_method(impl_forall, GenericKind::Parent);
@@ -757,7 +807,137 @@ fn lower_impl<'a, 's>(
     (trait_, forall, impltor, associations)
 }
 
+enum ToAnnotate {
+    Some(Option<M<key::TypeKind>>),
+    None,
+}
+
+fn resolve_callable<'s>(
+    ast: &ast::AST<'s>,
+    bindings: &mut Bindings<'s>,
+    module: key::Module,
+    where_binds: &[parser::func::Declaration<'s>],
+    span: Span,
+    ident: &Identifier<'s>,
+) -> Option<(Callable<'s>, ToAnnotate)> {
+    if let Some(name) = ident.as_name() {
+        if let Some(bind) = bindings.resolve(name) {
+            return Some((Callable::Binding(bind), ToAnnotate::None));
+        }
+
+        if let Some(lkey) = where_binds.find(|decl| *decl.header.name == name) {
+            bindings.reference_lambda(lkey);
+            return Some((Callable::Lambda(lkey), ToAnnotate::Some(None)));
+        }
+    }
+
+    let path = ident.as_slice();
+
+    match ast.lookups.resolve_func(module, path) {
+        Ok(entity) => match entity.key {
+            ast::Entity::Func(nfunc) => {
+                let type_ = match nfunc {
+                    ast::NFunc::SumVar(key, _) => Some(entity.module.m(key::TypeKind::Sum(key))),
+                    _ => None,
+                };
+                let callable = Callable::Func(entity.map(|_| nfunc));
+                Some((callable, ToAnnotate::Some(type_)))
+            }
+            ast::Entity::Member(type_, name) => {
+                let module = entity.module;
+                let ty = ast.entities.header_of_ty(module.m(type_));
+                let tname = ty.header.name;
+
+                let nfunc = match type_ {
+                    key::TypeKind::Trait(trait_) => {
+                        let methods = &ast.entities.methods[module.m(trait_)];
+                        let fheaders = &ast.entities.fheaders;
+
+                        let Some(method) =
+                            methods.find(|fkey| *fheaders[module.m(*fkey)].name == name)
+                        else {
+                            ast.sources
+                                .emit_member_not_found(module, span, "trait", tname, name);
+                            return None;
+                        };
+
+                        ast::NFunc::Method(trait_, method)
+                    }
+                    key::TypeKind::Sum(sum) => {
+                        let variants = &ast.entities.variant_names[module.m(sum)];
+                        match variants.find(|n| **n == name) {
+                            None => {
+                                ast.sources
+                                    .emit_member_not_found(module, span, "type", tname, name);
+                                return None;
+                            }
+                            Some(var) => ast::NFunc::SumVar(sum, var),
+                        }
+                    }
+                    key::TypeKind::Record(key) => {
+                        let is_valid_field = ast.entities.field_names[module.m(key)]
+                            .values()
+                            .any(|n| **n == name);
+
+                        let message = if is_valid_field {
+                            format!("if you're trying to use the field named `{name}` from `{tname}`, then use `.{name}`")
+                        } else {
+                            format!("tried to use the type `{tname}` as a module")
+                        };
+                        ast.sources.emit_identifier_not_found(module, span, message);
+
+                        return None;
+                    }
+                };
+
+                let to_anot = ToAnnotate::Some(Some(entity.module.m(type_)));
+                Some((Callable::Func(entity.map(|_| nfunc)), to_anot))
+            }
+            _ => {
+                let name = path[path.len() - 1];
+                ast.sources
+                    .emit_wrong_entity(module, span, name, "function", entity.key);
+
+                None
+            }
+        },
+        Err(err) => {
+            ast.sources
+                .emit_lookup_err(span, module, "function or binding", err);
+
+            None
+        }
+    }
+}
+
 impl ast::Sources {
+    fn emit_identifier_not_found<'s>(
+        &self,
+        module: key::Module,
+        span: Span,
+        str: impl Into<String>,
+    ) {
+        self.error("identifier not found")
+            .m(module)
+            .eline(span, str)
+            .emit();
+    }
+
+    fn emit_member_not_found<'s>(
+        &self,
+        module: key::Module,
+        span: Span,
+        kind: &str,
+        tname: &str,
+        name: &str,
+    ) {
+        self.emit_identifier_not_found(
+            module,
+            span,
+            format!("the {kind} {tname} does not have a member named {name}"),
+        )
+    }
+
     pub fn emit_wrong_entity(
         &self,
         module: key::Module,

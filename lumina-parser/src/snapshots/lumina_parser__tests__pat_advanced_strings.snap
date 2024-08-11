@@ -1,0 +1,5 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"\\\"hello\\\" x^1 y^m:f xs\"; format! (\"\\n{}\", ast) }"
+---
+"hello" x^1 y^m:f xs

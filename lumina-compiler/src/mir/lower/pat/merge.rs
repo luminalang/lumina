@@ -1,5 +1,6 @@
 use super::{
-    range, BranchKey, Branching, DecTree, Init, PointTable, TreeTail, LIST_CONS, LIST_NIL,
+    super::InstInfo, range, BranchKey, Branching, DecTree, Init, PointTable, StrCheck, StrChecks,
+    TreeTail, LIST_CONS, LIST_NIL,
 };
 use crate::prelude::*;
 use hir::Pattern;
@@ -11,7 +12,7 @@ use std::{file, line};
 
 macro_rules! reachable_as_poison {
     ($expr:expr) => {{
-        warn!(
+        tracing::warn!(
             "{}:{} | reporting reachability as true due to poison: {}",
             file!(),
             line!(),
@@ -92,6 +93,12 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                 )
             }
             DecTree::Opaque { .. } => reachable_as_poison!(pat),
+            DecTree::String { next, wildcard_next } => {
+                expected!(
+                    Pattern::String(spats) =>
+                    self.merge_strings(pat.span, spats, next, wildcard_next)
+                )
+            }
             DecTree::Wildcard { ty, next } => {
                 let next = std::mem::replace(&mut **next, DecTree::End(TreeTail::Poison));
 
@@ -126,6 +133,74 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                 self.merge(tree, pat)
             }
             DecTree::End(_) => self.merge_into_tail(tree, pat),
+        }
+    }
+
+    // TODO: theoretically we could find instances of the StrChecks being identical and merge those
+    // branches as well.
+    fn merge_strings(
+        mut self,
+        span: Span,
+        spats: &[hir::StringPattern<'s>],
+        next: &mut Branching<StrChecks, Tail>,
+        wildcard_next: &mut DecTree<Tail>,
+    ) -> IsReachable {
+        let checks = spats
+            .iter()
+            .enumerate()
+            .map(|(i, spat)| {
+                let check = match spat {
+                    hir::StringPattern::Literal(name) => {
+                        let ro = self.merge.str_to_ro(name);
+                        StrCheck::Literal(ro)
+                    }
+                    // The last wildcard will bind to excess string instead of char
+                    hir::StringPattern::Wildcard(bind) if spats.len() - 1 == i => {
+                        self.table.binds.push((*bind, self.depth));
+                        StrCheck::TakeExcess
+                    }
+                    hir::StringPattern::Wildcard(bind) => {
+                        self.table.binds.push((*bind, self.depth));
+                        StrCheck::TakeByte
+                    }
+                    hir::StringPattern::BindBytes(bind, n) => {
+                        self.table.binds.push((*bind, self.depth));
+                        StrCheck::Take(*n)
+                    }
+                    hir::StringPattern::BindWhile(bind, callable) => {
+                        self.table.binds.push((*bind, self.depth));
+                        let inst = self.merge.pop_inst(span);
+                        if inst.is_none() {
+                            StrCheck::Take(0)
+                        } else {
+                            match callable {
+                                hir::Callable::Func(nfunc) => {
+                                    StrCheck::TakeWhileFunc(nfunc.module.m(nfunc.key))
+                                }
+                                hir::Callable::Lambda(lkey) => StrCheck::TakeWhileLambda(*lkey),
+                                hir::Callable::Binding(bind) => {
+                                    StrCheck::TakeWhileLocal(mir::Local::Binding(*bind))
+                                }
+                                hir::Callable::Builtin(_) => {
+                                    panic!("cannot use builtin in string pattern")
+                                }
+                                hir::Callable::TypeDependentLookup(_) => unreachable!(),
+                            }
+                        }
+                    }
+                };
+                self.depth += 1;
+                check
+            })
+            .collect::<Vec<_>>();
+
+        if matches!(checks.as_slice(), [StrCheck::TakeExcess]) {
+            self.next(wildcard_next)
+        } else {
+            let mut branch_next = wildcard_next.clone();
+            self.next(&mut branch_next);
+            next.branches.push((StrChecks { checks }, branch_next));
+            true
         }
     }
 
@@ -197,6 +272,7 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                 let full = range::Constraints::from(*intsize);
                 self.merge_int(next, full.min, full.max)
             }
+            DecTree::String { wildcard_next, .. } => self.next(wildcard_next),
             DecTree::Bools(next) => self.merge_any_into_branches(span, next, |_, _| 0),
             DecTree::Opaque { next, .. } => self.next(next),
             DecTree::End(_) => self.merge_any_into_tail(span, tree),
@@ -297,6 +373,7 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                         TreeTail::Reached(_, _, _) => false,
                         TreeTail::Unreached(remaining) if remaining.is_empty() => {
                             let expr = self.merge.generate_tail();
+                            trace!("generated tail: {expr}");
                             *tail = TreeTail::Reached(self.table, VecDeque::new(), expr);
                             true
                         }
@@ -344,6 +421,10 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
 
     fn name_of_field(&self, record: Mod<key::Record>, field: key::RecordField) -> &'s str;
 
+    fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly>;
+
+    fn pop_inst(&mut self, span: Span) -> Option<InstInfo>;
+
     fn first(&mut self, ty: &Type, mut pat: Tr<&Pattern<'s>>) -> DecTree<Tail> {
         let mut table = PointTable::new(vec![]);
 
@@ -364,6 +445,7 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
         }
 
         let mut tree = self.to_init().unreached_from_type(ty);
+        trace!("initialised tree from {ty}:\n{tree}");
 
         let reachable = Merger {
             remaining: Vec::new(),

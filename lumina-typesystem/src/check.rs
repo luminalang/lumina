@@ -77,6 +77,12 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 Ty::Container(Container::List(gkey) | Container::Defined(gkey), gparams),
                 Ty::Container(Container::List(ekey) | Container::Defined(ekey), eparams),
             ) if gkey == ekey => self.checks(got.span, exp.span, gparams, eparams),
+            // Edge-case for using a string with sugar against concrete type and vice-versa
+            (
+                Ty::Container(Container::String(gkey) | Container::Defined(gkey), gparams),
+                Ty::Container(Container::String(ekey) | Container::Defined(ekey), eparams),
+            ) if gkey == ekey => self.checks(got.span, exp.span, gparams, eparams),
+
             (Ty::Int(gsize), Ty::Int(esize)) if gsize == esize => ok,
 
             // Self Substitution
@@ -173,20 +179,21 @@ impl<'a, 's> TypeSystem<'a, 's> {
         let assignment = &mut self.env.records[rvar].assignment;
         assert!(matches!(assignment, RecordAssignment::None));
         match other.value {
-            Ty::Container(Container::List(key) | Container::Defined(key), params) => {
-                match key.value {
-                    key::TypeKind::Record(rkey) => {
-                        let key = key.module.m(rkey);
-                        *assignment = RecordAssignment::Ok(key, params.clone());
-                        ok
-                    }
-                    _ => {
-                        warn!("Assuming we will error on the incorrect record assignment during type finalization");
-                        *assignment = RecordAssignment::NotRecord(other.value.clone());
-                        ok
-                    }
+            Ty::Container(
+                Container::List(key) | Container::Defined(key) | Container::String(key),
+                params,
+            ) => match key.value {
+                key::TypeKind::Record(rkey) => {
+                    let key = key.module.m(rkey);
+                    *assignment = RecordAssignment::Ok(key, params.clone());
+                    ok
                 }
-            }
+                _ => {
+                    warn!("Assuming we will error on the incorrect record assignment during type finalization");
+                    *assignment = RecordAssignment::NotRecord(other.value.clone());
+                    ok
+                }
+            },
             Ty::Special(Inf::Var(var)) => {
                 let vdata = &self.env.vars[*var];
                 match vdata.assignment.clone() {

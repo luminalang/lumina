@@ -29,12 +29,6 @@ struct Current<'a, 'f> {
     block: lir::Block,
 }
 
-fn get_block(map: &mut Map<lir::Block, (Block, Predecessors)>, block: lir::Block) -> Block {
-    let (clblock, predecessors) = &mut map[block];
-    *predecessors += 1;
-    *clblock
-}
-
 impl<'a, 'f> Current<'a, 'f> {
     fn switch_to_block(&mut self, block: lir::Block) {
         let (clblock, _) = self.blockmap[block];
@@ -256,11 +250,16 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         }
     }
 
+    #[track_caller]
     fn lower_block_if_last_predecessor(&mut self, block: lir::Block) {
-        let (clblock, predecessors) = self.f.blockmap[block];
+        let (clblock, predecessors) = &mut self.f.blockmap[block];
+        *predecessors += 1;
 
-        if predecessors == self.f.func.blocks.predecessors(block) {
-            self.f.builder.seal_block(clblock);
+        if *predecessors == self.f.func.blocks.predecessors(block) {
+            if self.f.block == lir::Block::from_u32(13) && block == lir::Block::from_u32(7) {
+                panic!("trap");
+            };
+            self.f.builder.seal_block(*clblock);
             self.f.switch_to_block(block);
             self.block();
         }
@@ -577,7 +576,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 self.return_(entry);
             }
             lir::ControlFlow::JmpBlock(block, params) => {
-                let clblock = get_block(&mut self.f.blockmap, *block);
+                let clblock = self.f.blockmap[*block].0;
 
                 let params = self.params(params);
                 self.ins().jump(clblock, &params);
@@ -594,11 +593,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             lir::ControlFlow::Select { value, on_true, on_false } => {
                 let int = self.value_to_entry(*value).as_direct();
 
-                let block_then = get_block(&mut self.f.blockmap, on_true.0);
                 let then_params = self.params(&on_true.1);
-
-                let block_else = get_block(&mut self.f.blockmap, on_false.0);
                 let else_params = self.params(&on_false.1);
+
+                let [block_then, block_else] =
+                    [on_true.0, on_false.0].map(|block| self.f.blockmap[block].0);
 
                 self.ins()
                     .brif(int, block_then, &then_params, block_else, &else_params);
@@ -616,9 +615,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
                 let table: Vec<ir::BlockCall> = blocks
                     .iter()
-                    .map(|block| {
-                        ir::BlockCall::new(get_block(&mut self.f.blockmap, *block), &[], pool)
-                    })
+                    .map(|block| ir::BlockCall::new(self.f.blockmap[*block].0, &[], pool))
                     .collect();
 
                 let defcall = ir::BlockCall::new(def, &[], pool);

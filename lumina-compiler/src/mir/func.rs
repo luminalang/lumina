@@ -120,32 +120,6 @@ impl<'a, 's> Verify<'a, 's> {
                     }
                 };
 
-                let emit_bad_param_count = |span, msg| {
-                    hir.sources
-                        .error(msg)
-                        .m(func.module)
-                        .eline(
-                            span,
-                            format!(
-                                "function expects {} parameters from it's type annotation",
-                                fdef.typing.params.len()
-                            ),
-                        )
-                        .emit()
-                };
-
-                match fdef.typing.params.len().cmp(&fdef.params.len()) {
-                    std::cmp::Ordering::Equal => {}
-                    std::cmp::Ordering::Less => {
-                        let span = fdef.params.last().unwrap().span;
-                        emit_bad_param_count(span, "excess parameter pattern")
-                    }
-                    std::cmp::Ordering::Greater => {
-                        let span = fdef.typing.params.last().unwrap().1.span;
-                        emit_bad_param_count(span, "missing parameter pattern")
-                    }
-                }
-
                 funcs[func] = FunctionStatus::Lowering;
 
                 let current = Current::new(func, fdef.lambdas.keys());
@@ -295,7 +269,7 @@ impl<'a, 's> Verify<'a, 's> {
         let (lambdas, errors) = finalization
             .lower_lambda_expressions(&self.fdef.lambdas.bodies, &self.fdef.lambdas.params);
 
-        let dint_size = IntSize::new(true, self.target.int_size());
+        let dint_size = self.target.int();
         let ts = self.type_system();
         let mut fin = Finalizer::new(ts, &mut forall, &mut lforalls, dint_size, false);
         let num_cons = fin.num_constraints();
@@ -494,7 +468,10 @@ impl<'a, 's> Verify<'a, 's> {
     pub fn module_of_type(&mut self, ty: Tr<&IType>) -> Option<key::Module> {
         match &ty.value {
             IType::Simple(_) => None,
-            IType::Container(Container::List(key) | Container::Defined(key), _) => Some(key.module),
+            IType::Container(
+                Container::List(key) | Container::Defined(key) | Container::String(key),
+                _,
+            ) => Some(key.module),
             IType::Special(Inference::Var(var)) => {
                 let vinfo = self.vars().get(*var);
                 match vinfo.value {
@@ -719,7 +696,7 @@ impl<'a, 's> Verify<'a, 's> {
                 "offset" => {
                     let any = Ty::infer(self.vars().var(span));
                     let ptr = Ty::pointer(any.clone());
-                    let ptypes = vec![ptr.clone(), Ty::int(true, self.target.int_size())];
+                    let ptypes = vec![ptr.clone(), Ty::Int(self.target.int())];
                     InstCall::LocalCall(span, ptypes, ptr, Container::FnPointer)
                 }
                 "reflect_type" => {
@@ -727,7 +704,7 @@ impl<'a, 's> Verify<'a, 's> {
                 }
                 "size_of" => {
                     // TODO: 32-bit
-                    InstCall::Local(Ty::int(false, self.target.int_size()).tr(span))
+                    InstCall::Local(Ty::Int(self.target.uint()).tr(span))
                 }
                 "unreachable" => InstCall::Local(Ty::infer(self.vars().var(span)).tr(span)),
                 "transmute" => {

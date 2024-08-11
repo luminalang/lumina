@@ -171,6 +171,7 @@ pub fn emit_record_error<'s, T>(
                     err.emit()
                 }
             }
+
             sources
                 .error("type mismatch")
                 .m(module)

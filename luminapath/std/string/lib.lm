@@ -76,6 +76,14 @@ impl ToString for u64
         let c = ((n % 10) as u8) + 48 in
            showNext (n / 10) <+> c
 
+// TODO: we are gonna want `match` desugaring sugar for strings as well. 
+//
+// But I'm not sure how that'd look like. We could just use the List stuff but maybe we can be fancier? 
+pub fn split_first str as string -> Maybe (u8, string) =
+  str.inner . split
+  . map #(\(c, xs) -> (c, { string | inner = xs }))
+
+
 // pub fn lines str as string -> [string] =
 //   split_on "\n" str
 // 

@@ -7,6 +7,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-owo-colors = { version = "3.5.*", features = ["supports-colors"] }
+owo-colors = { version = "4.0.*", features = ["supports-colors"] }
 itertools = "0.10.*" 
 tinyvec = { version = "1.6.0", features = ["alloc"] }

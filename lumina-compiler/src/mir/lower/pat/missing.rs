@@ -174,6 +174,13 @@ impl<'a> MissingGeneration<'a> {
                     _ => missing,
                 }
             }
+            DecTree::String { wildcard_next, .. } => {
+                let mut missing = self.tree(wildcard_next);
+                missing
+                    .iter_mut()
+                    .for_each(|params| params.push_front(MissingPattern::Wildcard));
+                missing
+            }
             DecTree::Bools(next) => next
                 .branches
                 .iter()

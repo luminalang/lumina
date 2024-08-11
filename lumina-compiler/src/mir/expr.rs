@@ -138,7 +138,7 @@ impl<'a, 's> Verify<'a, 's> {
                 hir::Literal::Float(_) => IType::f64(),
                 hir::Literal::String(_) => {
                     let record = self.items.pinfo.string;
-                    IType::defined(record, vec![])
+                    IType::string(record, vec![])
                 }
             },
             hir::Expr::Poison => IType::poison(),
@@ -165,7 +165,12 @@ impl<'a, 's> Verify<'a, 's> {
         }
     }
 
-    fn type_check_call(&mut self, span: Span, instcall: InstCall, params: Vec<Tr<IType>>) -> IType {
+    pub fn type_check_call(
+        &mut self,
+        span: Span,
+        instcall: InstCall,
+        params: Vec<Tr<IType>>,
+    ) -> IType {
         match instcall {
             InstCall::LocalCall(espan, ptypes, ret, _) => {
                 if params.len() != ptypes.len() {

@@ -225,12 +225,11 @@ fn project_info<'s>(
             })
     }
 
-    let [main, sys_init, alloc, dealloc, string_from_raw_parts] = [
+    let [main, sys_init, alloc, dealloc] = [
         ["main"].as_slice(),
         &["std", "prelude", "_lumina_sys_init"],
         &["std", "prelude", "alloc"],
         &["std", "prelude", "dealloc"],
-        &["std", "prelude", "string_from_raw_parts"],
     ]
     .try_map(|path| {
         resolve_or_error(lookups, path, |k| match k {
@@ -239,10 +238,11 @@ fn project_info<'s>(
         })
     })?;
 
-    let [closure, size, listable] = [
+    let [closure, size, listable, stringable] = [
         ["std", "prelude", "Closure"].as_slice(),
         &["std", "prelude", "Size"],
         &["std", "prelude", "Listable"],
+        &["std", "prelude", "Stringable"],
     ]
     .try_map(|path| {
         resolve_or_error(lookups, path, |k| match k {
@@ -275,8 +275,8 @@ fn project_info<'s>(
         reflect_type,
         listable,
         list_default,
+        stringable,
         string,
-        string_from_raw_parts,
     ))
 }
 

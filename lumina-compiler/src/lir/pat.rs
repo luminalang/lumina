@@ -1,7 +1,7 @@
 use super::*;
 use crate::LISTABLE_SPLIT;
 use lumina_typesystem::{Container, GenericMapper, IntSize, Transformer};
-use mir::pat::{DecTree, Range, TreeTail};
+use mir::pat::{DecTree, Range, StrCheck, StrChecks, TreeTail};
 use ssa::{Block, Value};
 use std::collections::VecDeque;
 
@@ -96,6 +96,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             DecTree::Ints { intsize, next } => self.ints(on, *intsize, next),
             DecTree::Bools(next) => self.bools(on, next),
             DecTree::Sum { sum, params, next } => self.sum(on, *sum, params, next),
+            DecTree::String { next, wildcard_next } => self.string(on, next, wildcard_next),
             DecTree::Wildcard { next, .. } | DecTree::Opaque { next, .. } => self.next(next),
             DecTree::End(tail) => self.tail(tail),
         }
@@ -362,6 +363,143 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
         self.constructors.push(constructor);
 
+        self.next(next);
+    }
+
+    fn string(
+        &mut self,
+        on: ssa::Value,
+        next: &mir::Branching<StrChecks>,
+        wc_next: &DecTree<key::DecisionTreeTail>,
+    ) {
+        // The folding of the strcheck's will map the values instead. So let's undo the generalised
+        // one from `tree`.
+        self.map.pop();
+
+        self.can_skip_continuation = false;
+
+        let reset = self.make_reset();
+
+        let mut falsely;
+
+        for (str, next) in &next.branches {
+            falsely = self.ssa().new_block(0);
+            self.string_branch((on, falsely), (&str.checks, next));
+            self.reset(falsely, reset.clone());
+        }
+
+        self.next(wc_next);
+    }
+
+    fn string_branch(
+        &mut self,
+        (on, falsely): (ssa::Value, Block),
+        (checks, next): (&[StrCheck], &DecTree<key::DecisionTreeTail>),
+    ) {
+        dbg!(&falsely);
+
+        checks.iter().enumerate().fold(on, |mut on, (i, check)| {
+            let is_last = i == checks.len() - 1;
+
+            match check {
+                StrCheck::Literal(key) => {
+                    let (str, slen_arg) = self.f.string_from_ro(*key);
+                    self.map.push(str);
+
+                    let eq = if is_last {
+                        self.f.string_equals([on, str])
+                    } else {
+                        let [lhs, rhs] = self.f.string_split_at(on, slen_arg);
+                        on = rhs;
+                        self.f.string_equals([lhs, str])
+                    };
+
+                    let next_check_block = self.ssa().new_block(0);
+                    dbg!(&next_check_block);
+
+                    self.ssa()
+                        .select(eq, [(next_check_block, vec![]), (falsely, vec![])]);
+
+                    self.ssa().switch_to_block(next_check_block);
+
+                    on
+                }
+                StrCheck::Take(bytes) => {
+                    let (at, uint) = self.f.uint(*bytes as i128);
+                    let [lhs, rhs] = self.f.string_split_at(on, at);
+                    self.map.push(lhs);
+
+                    let lhs_len = self.f.string_len(lhs);
+                    let len_ok = self.ssa().eq([at, lhs_len], uint);
+
+                    let next_check_block = self.ssa().new_block(0);
+                    dbg!(&next_check_block);
+
+                    self.ssa()
+                        .select(len_ok, [(next_check_block, vec![]), (falsely, vec![])]);
+
+                    self.ssa().switch_to_block(next_check_block);
+
+                    rhs
+                }
+                StrCheck::TakeExcess => {
+                    assert!(is_last);
+                    self.map.push(on);
+                    on
+                }
+                StrCheck::TakeByte => {
+                    let [x, xs] = self.f.string_split_first(on);
+                    self.map.push(x);
+
+                    let u8 = IntSize::new(false, 8);
+                    let null = Value::Int(0, u8);
+                    let ok = self.ssa().eq([x, null], u8);
+
+                    let next_check_block = self.ssa().new_block(0);
+                    dbg!(&next_check_block);
+
+                    self.ssa()
+                        .select(ok, [(next_check_block, vec![]), (falsely, vec![])]);
+
+                    self.ssa().switch_to_block(next_check_block);
+
+                    xs
+                }
+                StrCheck::TakeWhileLocal(local) => {
+                    let f = self.f.yield_to_value(*local);
+
+                    let [lhs, rhs] = self.f.string_split_while(on, f);
+                    self.map.push(lhs);
+
+                    rhs
+                }
+                StrCheck::TakeWhileFunc(nfunc) => {
+                    let string = Type::string(self.f.info.string, vec![]);
+                    let generics = GenericMapper::new(vec![], Some(string));
+                    let ResolvedNFunc::Static(mfunc, _) = self.f.resolve_nfunc(*nfunc, &generics)
+                    else {
+                        panic!("not a static function in string pattern")
+                    };
+
+                    let [lhs, rhs] = self.f.string_split_while_static(on, mfunc);
+                    self.map.push(lhs);
+
+                    rhs
+                }
+                StrCheck::TakeWhileLambda(lambda) => {
+                    let generics = GenericMapper::new(vec![], None);
+                    let (mfunc, captures) = self.f.morphise_lambda(*lambda, &generics);
+                    let f = self.f.dyn_lambda(mfunc, captures);
+
+                    let [lhs, rhs] = self.f.string_split_while(on, f);
+                    self.map.push(lhs);
+
+                    rhs
+                }
+            }
+        });
+
+        // And now the continuation for the case of all string checks being successfull
         self.next(next);
     }
 

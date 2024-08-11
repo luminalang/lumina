@@ -24,7 +24,6 @@ impl<'a, 's> Verify<'a, 's> {
                 let (finst, ptypes, returns) = self.type_of_variant(pat.span, *type_, *var);
                 let instinfo = InstInfo::new(type_.module, finst, ptypes, returns.clone());
                 self.type_check_and_emit_application(pat.span, &params, &instinfo.ptypes);
-                // self.current.push_inst(pat.span, Some(instinfo));
                 returns.value
             }
             hir::Pattern::Record(var, ty, fields) => {
@@ -80,7 +79,21 @@ impl<'a, 's> Verify<'a, 's> {
                 IType::list(list, vec![IType::infer(*inner)])
             }
             hir::Pattern::Bool(_) => IType::bool(),
-            hir::Pattern::String(_) => {
+            hir::Pattern::String(spats) => {
+                for spat in spats {
+                    if let hir::StringPattern::BindWhile(_, call) = spat {
+                        let tanot = hir::TypeAnnotation::new();
+                        let instcall = self.type_of_callable(pat.span, None, call, 1, &tanot);
+                        // TODO: use `char` langitem instead of byte
+                        let ptypes = vec![IType::u8().tr(pat.span)];
+                        let ret = self.type_check_call(pat.span, instcall, ptypes);
+                        self.type_check_and_emit(
+                            (&IType::bool()).tr(pat.span),
+                            (&ret).tr(pat.span),
+                        );
+                    }
+                }
+
                 let record = self.items.pinfo.string;
                 IType::defined(record, vec![])
             }

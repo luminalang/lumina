@@ -1,7 +1,7 @@
 use super::super::mir::func::Local;
 use super::{pat, pat::Merge, FinError, Lower, MatchBranchLower};
 use crate::prelude::*;
-use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY};
+use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY, STRINGABLE_FROM_RAW_PARTS};
 use ast::NFunc;
 use lumina_typesystem::{
     Constraint, Container, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty, Type, Var,
@@ -288,12 +288,14 @@ impl<'a, 's> Lower<'a, 's> {
 
                 let len = self.read_only_table[ro_key].0 .0.len();
 
-                let func = self.items.pinfo.string_from_raw_parts;
+                let stringable = self.items.pinfo.stringable;
+                let func = NFunc::Method(*stringable, STRINGABLE_FROM_RAW_PARTS);
                 let ptr = Expr::ReadOnly(ro_key);
-                let len = Expr::Int(IntSize::new(false, self.target.int_size()), len as i128);
-                let finst = GenericMapper::new(vec![], None);
+                let len = Expr::Int(self.target.uint(), len as i128);
+                let finst =
+                    GenericMapper::new(vec![], Some(Ty::string(self.items.pinfo.string, vec![])));
 
-                Expr::CallFunc(func.map(NFunc::Key), finst, vec![ptr, len])
+                Expr::CallFunc(stringable.module.m(func), finst, vec![ptr, len])
             }
         }
     }
@@ -317,15 +319,15 @@ impl<'a, 's> Lower<'a, 's> {
                 Expr::ObjectCast(expr, ty_of_expr.value, trait_, params)
             }
             (Type::Int(intsize), Type::Container(Container::Pointer, _)) => {
-                Expr::IntCast(expr, *intsize, IntSize::new(false, self.target.int_size()))
+                Expr::IntCast(expr, *intsize, self.target.uint())
             }
             (Type::Container(Container::Pointer, _), Type::Int(intsize)) => {
-                Expr::IntCast(expr, IntSize::new(false, self.target.int_size()), intsize)
+                Expr::IntCast(expr, self.target.uint(), intsize)
             }
 
             (Type::Container(Container::Pointer, _), Type::Container(Container::Pointer, _)) => {
                 // TODO: this cast does nothing. But; we still put it here because we need an expression
-                let ptr = IntSize::new(false, self.target.int_size());
+                let ptr = self.target.uint();
                 Expr::IntCast(expr, ptr, ptr)
             }
             (_, to) => {
@@ -354,10 +356,7 @@ impl<'a, 's> Lower<'a, 's> {
                 let new = Expr::CallFunc(
                     method(LISTABLE_WITH_CAPACITY),
                     inst.clone(),
-                    vec![Expr::Int(
-                        IntSize::new(true, self.target.int_size()),
-                        elems.len() as i128,
-                    )],
+                    vec![Expr::Int(self.target.int(), elems.len() as i128)],
                 );
 
                 let elems = self.lower_exprs(elems);
@@ -391,6 +390,7 @@ impl<'a, 's> Lower<'a, 's> {
         let mut tree = blower.first(&ty, initp.as_ref());
 
         let Some(expr) = blower.lowered_tail else {
+            warn!("poisoning due to missing tail, assuming error has already occured");
             return Expr::Poison;
         };
 

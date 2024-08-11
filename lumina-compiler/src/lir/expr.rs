@@ -16,7 +16,7 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    fn yield_to_value(&mut self, local: mir::Local) -> Value {
+    pub fn yield_to_value(&mut self, local: mir::Local) -> Value {
         match local {
             mir::Local::Param(pid) => {
                 let offset = self.current.captures.unwrap_or(0);
@@ -209,10 +209,7 @@ impl<'a> FuncLower<'a> {
             mir::Expr::SizeOf(ty) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
                 let size = self.lir.mono.types.size_of(&ty) / 8;
-                Value::Int(
-                    size as i128,
-                    IntSize::new(false, self.lir.target.int_size()),
-                )
+                Value::Int(size as i128, self.lir.target.uint())
             }
             mir::Expr::Cmp(cmp, params) => {
                 let params = [
@@ -251,7 +248,7 @@ impl<'a> FuncLower<'a> {
                 self.ssa().unreachable();
                 // TODO: Do we need to create a tuple of bytes with the same size as `ty` then
                 // transmute? or is this fine?
-                Value::Int(0, IntSize::new(false, self.lir.target.int_size()))
+                Value::Int(0, self.lir.target.uint())
                 // let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
                 // self.ssa().unreachable(ty).value()
             }
@@ -262,7 +259,7 @@ impl<'a> FuncLower<'a> {
     pub fn heap_alloc(&mut self, value: lir::Value, ty: MonoType) -> Value {
         let size = self.lir.mono.types.size_of(&ty);
         if size == 0 {
-            Value::Int(0, IntSize::new(false, self.lir.target.int_size()))
+            Value::Int(0, self.lir.target.uint())
         } else {
             let ptr = self.ssa().alloc(size, ty);
             self.ssa().write(ptr, value);

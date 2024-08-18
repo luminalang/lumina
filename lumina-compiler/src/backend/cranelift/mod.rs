@@ -80,7 +80,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
                 .declare_function(&func.symbol, Linkage::Import, &sig)
                 .unwrap();
 
-            (*key, FuncHeader { id, _params: params, ret })
+            (*key, FuncHeader { id, params, ret })
         })
         .collect();
 
@@ -110,7 +110,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
                 .declare_function(&func.symbol, Linkage::Hidden, &sig)
                 .unwrap();
 
-            FuncHeader { id, _params: params, ret }
+            FuncHeader { id, params, ret }
         })
         .collect();
 
@@ -311,7 +311,6 @@ impl<'a> Context<'a> {
 #[derive(Clone, Debug)]
 struct FuncHeader {
     id: FuncId,
-    // TODO: Actually use these `params` to lower given parameters in an ABI-specific way
-    _params: Map<key::Param, abi::Param>,
+    params: Map<key::Param, abi::Param>,
     ret: abi::Return,
 }

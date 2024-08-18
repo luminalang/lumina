@@ -83,7 +83,7 @@ pub enum Literal<'a> {
     String(&'a str),
 }
 
-struct ExprParser<'p, 'a> {
+pub(super) struct ExprParser<'p, 'a> {
     parser: &'p mut Parser<'a>,
     indent_tracker: IndentTracker,
 }
@@ -234,15 +234,15 @@ enum IndentOwnership {
 
 impl<'a> Parser<'a> {
     pub fn expr(&mut self) -> Option<Tr<Expr<'a>>> {
-        ExprParser {
-            parser: self,
-            indent_tracker: IndentTracker { matches: vec![] },
-        }
-        .expr()
+        ExprParser::new(self).expr()
     }
 }
 
 impl<'p, 'a> ExprParser<'p, 'a> {
+    pub fn new(parser: &'p mut Parser<'a>) -> Self {
+        Self { parser, indent_tracker: IndentTracker { matches: vec![] } }
+    }
+
     pub fn expr(&mut self) -> Option<Tr<Expr<'a>>> {
         self.expr_without_followup()
             .and_then(|expr| self.expr_followup(expr))
@@ -273,7 +273,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         }
     }
 
-    fn expr_param(&mut self) -> Option<Tr<Expr<'a>>> {
+    pub fn expr_param(&mut self) -> Option<Tr<Expr<'a>>> {
         select! { self.parser, "an expression", span;
             T::Int => self.expr_int(span),
             T::Float => self.expr_float(span),
@@ -391,7 +391,6 @@ impl<'p, 'a> ExprParser<'p, 'a> {
 
     fn expr_int(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
         let raw = self.parser.take(span);
-        dbg!(&raw, &self.parser.errors);
         let parse = |span| self.parser.take(span).parse::<u128>().unwrap();
         let (sign, n) = if raw.as_bytes()[0] == b'-' {
             (true, parse(span.move_indice(1)))
@@ -567,7 +566,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
     }
 
     fn expr_lambda(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
-        let patterns = self.parser.pat_params()?;
+        let patterns = self.parser.pat_params(false)?;
 
         self.parser.expect(T::Arrow)?;
 
@@ -603,7 +602,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         }
     }
 
-    fn expr_pass_expr(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
+    pub fn expr_pass_expr(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
         // Hacky edge-case for partially applicating operators.
         //
         // An operator without a LHS isn't a valid expression normally but is valid here

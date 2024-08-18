@@ -1,5 +1,6 @@
 use std:ptr 
 use std:list [Listable]
+use std:list:slice [Slice]
 use std:math [Compare [>=]]
 
 // An immutable heap-allocated array
@@ -18,7 +19,7 @@ pub fn singleton v as a -> Vec a =
   { ptr = ptr:box v, len = 1 }
 
 pub fn slice vec as Vec a -> Slice a =
-  { vec, start = 0 }
+  { Slice a | vec, start = 0 }
 
 pub fn get i vec as uint, Vec a -> Maybe a =
   if i >= vec.len
@@ -31,28 +32,6 @@ fn unsafe_get i {ptr, len} as uint, Vec a -> a =
 fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
    let at = ptr:offsetu ptr (Size(a):of * i) in
     ptr:write at v
-
-pub type Slice a {
-  vec   Vec a
-  start uint
-}
-
-pub fn split {vec, start} as Slice a -> Maybe (a, Slice a) =
-  get start vec
-  . map #(\v -> (v, {Slice a | vec, start = start + 1}))
-
-pub fn is_empty {vec, start} as Slice a -> bool =
-  start >= vec.len
-
-pub fn forEach f slice as fn(a -> ()), Slice a -> () =
-  list:itimes #perform (slice.vec.len - slice.start)
- where
-  fn perform i as uint -> () = unsafe_get i slice.vec . f
-
-pub fn map f slice as fn(a -> b), Slice a -> Vec b =
-  from_range
-    (slice.start, slice.vec.len)
-    #(\i -> unsafe_get i slice.vec . f)
 
 pub fn from_range (start, end) f as (uint, uint), fn(uint -> a) -> Vec a =
   // TODO: bound checks
@@ -68,3 +47,7 @@ fn bytes_from_null_terminated ptr as *u8 -> Vec u8 =
     if ptr:deref (ptr:offsetu ptr i) == 0
       then { ptr, len = i }
       else findZero (i + 1)
+
+// TODO: we need checked add operations to make this safe
+pub fn unsafe_take n {ptr, len} as uint, Vec a -> Vec a =
+  { ptr, len = len - n }

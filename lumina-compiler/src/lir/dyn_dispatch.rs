@@ -136,24 +136,20 @@ impl<'a> FuncLower<'a> {
         self.construct_closure(mfunc, params, capture_tuple)
     }
 
-    fn construct_closure(
+    pub fn construct_closure(
         &mut self,
         mfunc: MonoFunc,
-        params: Vec<Value>,
+        captures: Vec<Value>,
         cap: MonoTypeKey,
     ) -> Value {
         let object_type =
             self.get_object_type(self.info.closure, self.lir.mfunc_to_fnpointer_type(mfunc));
 
-        let data = self.ssa().construct(params, cap.into());
+        let data = self.ssa().construct(captures, cap.into());
         let dataptr = self.heap_alloc(data, cap.into());
 
         self.ssa()
             .construct(vec![dataptr, Value::FuncPtr(mfunc)], object_type.into())
-    }
-
-    pub fn dyn_lambda(&mut self, target: MonoFunc, captures: Vec<Value>) -> Value {
-        self.partially_applicate_func(target, captures)
     }
 
     // Multi-Field:

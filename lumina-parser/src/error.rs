@@ -5,6 +5,7 @@ use lumina_util::Span;
 pub enum Error {
     ExpectedButGot(Span, String, String),
     ExpectedTokenButGot(Span, String, Token),
+    MissingSquareForExtractor(Span),
     // Unexpected(Span, String),
     InvalidAttributes(Span, Span),
     BadIndentation(Span),

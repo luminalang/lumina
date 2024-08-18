@@ -804,7 +804,7 @@ impl fmt::Debug for MonoType {
             MonoType::FnPointer(params, ret) => {
                 write!(
                     f,
-                    "fn({} -> {ret:?})",
+                    "fnptr({} -> {ret:?})",
                     params.iter().map(|t| format!("{t:?}")).format(", ")
                 )
             }

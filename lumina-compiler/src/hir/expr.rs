@@ -1,8 +1,7 @@
-use super::pat::{PatLower, Pattern};
-use super::ty::{TypeAnnotation, TypeEnvInfo, TypeLower};
-use super::{resolve_callable, scope::Bindings, Lambdas, ToAnnotate};
+use super::pat::Pattern;
+use super::ty::{TypeAnnotation, TypeLower};
+use super::{FuncLower, ToAnnotate};
 use crate::prelude::*;
-use crate::Target;
 use ast::{Entity, Mod, NFunc};
 use derive_more::Display;
 use derive_more::From;
@@ -12,23 +11,6 @@ use lumina_util::Highlighting;
 use parser::AnnotatedPath;
 use std::fmt;
 use tracing::trace;
-
-#[derive(new)]
-#[rustfmt::skip]
-pub struct ExprLower<'t, 'a, 's> {
-    pub module: key::Module,
-    pub ast: &'a ast::AST<'s>,
-
-    pub type_info: &'t mut TypeEnvInfo<'s>,
-    where_binds: &'a [parser::func::Declaration<'s>],
-
-    pub target: Target,
-
-    #[new(default)]
-    pub bindings: Bindings<'s>,
-    #[new(default)]
-    pub lambdas: Lambdas<'s>,
-}
 
 #[derive(Clone, Debug)]
 pub enum Expr<'s> {
@@ -88,11 +70,11 @@ pub enum Literal<'s> {
     String(&'s str),
 }
 
-impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
+impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
     pub fn patterns(&mut self, patterns: &[Tr<parser::Pattern<'s>>]) -> Vec<Tr<Pattern<'s>>> {
         patterns
             .iter()
-            .map(|p| self.to_patlower().pat(p.as_ref()))
+            .map(|p| self.pat(p.as_ref()))
             .collect::<Vec<_>>()
     }
 
@@ -149,7 +131,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
                     .iter()
                     .map(|(pat, then)| {
                         self.bindings.enter();
-                        let pat = self.to_patlower().pat(pat.as_ref());
+                        let pat = self.pat(pat.as_ref());
                         let then = self.expr(then.as_ref());
                         self.bindings.leave();
                         (pat, then)
@@ -184,8 +166,6 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             parser::Expr::Do(elems) => {
                 let [discarded, used] = self.expr_boxed(&elems);
 
-                // let bind = self.bindings.declare_nameless();
-                // let void = Pattern::Bind(bind, Box::new(Pattern::Any)).tr(expr.span);
                 let void = Pattern::Any.tr(expr.span);
 
                 Expr::let_bind(discarded, void, used)
@@ -193,7 +173,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             parser::Expr::Let(pat, elems) => {
                 let value = self.expr(elems[0].as_ref());
 
-                let pat = self.to_patlower().pat(pat.as_ref());
+                let pat = self.pat(pat.as_ref());
                 self.bindings.enter();
                 let then = self.expr(elems[1].as_ref());
                 self.bindings.leave();
@@ -518,22 +498,15 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
 
         let params = self.exprs(params);
 
-        resolve_callable(
-            self.ast,
-            &mut self.bindings,
-            self.module,
-            self.where_binds,
-            apath.span,
-            &apath.path,
-        )
-        .map(|(callable, to_anot)| {
-            let tanot = match to_anot {
-                ToAnnotate::Some(in_) => self.type_annotation(&apath, in_),
-                ToAnnotate::None => TypeAnnotation::new(),
-            };
-            to_out(callable, tanot, params)
-        })
-        .unwrap_or(Expr::Poison)
+        self.resolve_callable(apath.span, &apath.path)
+            .map(|(callable, to_anot)| {
+                let tanot = match to_anot {
+                    ToAnnotate::Some(in_) => self.type_annotation(&apath, in_),
+                    ToAnnotate::None => TypeAnnotation::new(),
+                };
+                to_out(callable, tanot, params)
+            })
+            .unwrap_or(Expr::Poison)
     }
 
     fn emit_syntax_error<T>(&mut self, span: Span, msg: impl Into<String>) -> Option<T> {
@@ -573,7 +546,7 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
             .emit();
     }
 
-    fn type_annotation(
+    pub fn type_annotation(
         &mut self,
         apath: &AnnotatedPath<'s>,
         type_: Option<M<key::TypeKind>>,
@@ -610,17 +583,6 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         }
 
         type_anot
-    }
-
-    pub fn to_patlower(&mut self) -> PatLower<'_, 's> {
-        PatLower::new(
-            self.module,
-            self.ast,
-            self.where_binds,
-            self.target.int_size(),
-            self.type_info,
-            &mut self.bindings,
-        )
     }
 
     fn desugar_record(

@@ -17,8 +17,8 @@ use tracing::info_span;
 
 mod expr;
 mod func;
+pub use func::FunctionStatus;
 use func::InstInfo;
-pub use func::{FunctionStatus, Local};
 use lumina_typesystem::{ImplIndex, Type};
 mod patc;
 mod tcheck;
@@ -26,7 +26,7 @@ mod tcheck;
 mod tyfmt;
 
 mod lower;
-pub use lower::{pat, CallTypes, ConcreteTyping, Expr, Function};
+pub use lower::{pat, CallTypes, Callable, ConcreteTyping, Expr, Function};
 pub type DecTree = pat::DecTree<key::DecisionTreeTail>;
 pub type Branching<K> = pat::Branching<K, key::DecisionTreeTail>;
 
@@ -310,6 +310,18 @@ fn verify_impl_headers<'s>(
 
     let mut missing_methods: Vec<(key::Method, &Forall<'s, Static>, hir::Typing<Type>)> = vec![];
     let mut failed_methods: Vec<(M<key::Func>, M<key::Func>, CmpResult)> = vec![];
+    let mut unknown_methods: Vec<M<key::Func>> = vec![];
+
+    for method in imethodmap.values() {
+        let fkey = imod.m(*method);
+        let name = *hir.func_names[fkey];
+        if trmethodmap
+            .values()
+            .all(|trmethod| name != *hir.func_names[tmod.m(*trmethod)])
+        {
+            unknown_methods.push(fkey);
+        }
+    }
 
     let mut tinst = GenericMapper::from_types(GenericKind::Parent, trparams.iter().cloned());
     tinst.self_ = Some(impltor.value);
@@ -389,46 +401,74 @@ fn verify_impl_headers<'s>(
 
     let error = hir.sources.error("bad implementation");
 
-    if missing_methods.len() + missing_associations.len() + failed_methods.len() != 0 {
+    if missing_methods.len()
+        + missing_associations.len()
+        + failed_methods.len()
+        + unknown_methods.len()
+        != 0
+    {
         let mut error = error.m(imod).eline(hir.impltors[impl_].span, "");
 
         let iforall: Map<_, _> = hir.impls[impl_].names().collect();
 
-        for (method, forall, typing) in missing_methods {
+        for (i, &fkey) in unknown_methods.iter().enumerate() {
             let env = TEnv::new();
-            let fname = hir.func_names[tmod.m(trmethodmap[method])];
+            let fdef = &hir.funcs[fkey].as_defined();
+            let fname = *hir.func_names[fkey];
+            let forall = fdef.forall.borrow().names().collect();
+            let fstring = tyfmt::TyFmtState::new(hir, &env, forall, iforall.clone())
+                .function(fname, &fdef.typing);
+            error = error.text(format!("{}  {}", "unknown".symbol(), fstring));
+
+            if i == unknown_methods.len() - 1 {
+                error = error.text("");
+            }
+        }
+
+        for (i, (method, forall, typing)) in missing_methods.iter().enumerate() {
+            let env = TEnv::new();
+            let fname = hir.func_names[tmod.m(trmethodmap[*method])];
             let forall = forall.names().collect();
             let fstring =
                 tyfmt::TyFmtState::new(hir, &env, forall, iforall.clone()).function(fname, &typing);
             error = error.text(format!("{}  {}", "missing".symbol(), fstring));
-            error = error.text("");
+
+            if i == missing_methods.len() - 1 {
+                error = error.text("");
+            }
         }
 
-        for assoc in missing_associations {
-            let name = hir.assoc_names[*trkey][assoc];
+        for (i, assoc) in missing_associations.iter().enumerate() {
+            let name = hir.assoc_names[*trkey][*assoc];
             error = error.text(format!(
                 "{}  {} {name}",
                 "missing".symbol(),
                 "type".keyword()
             ));
-            error = error.text("");
+
+            if i == missing_associations.len() - 1 {
+                error = error.text("");
+            }
         }
 
-        for (tfunc, ifunc, result) in failed_methods {
-            let env = &tenvs[ifunc];
-            let fdef = hir.funcs[ifunc].as_defined();
+        for (i, (tfunc, ifunc, result)) in failed_methods.iter().enumerate() {
+            let env = &tenvs[*ifunc];
+            let fdef = hir.funcs[*ifunc].as_defined();
             let imforall: Map<_, _> = fdef.forall.borrow().names().collect();
-            let fname = hir.func_names[ifunc];
+            let fname = hir.func_names[*ifunc];
 
             let got = tyfmt::TyFmtState::new(hir, &env, imforall.clone(), iforall.clone())
                 .function(fname, &fdef.typing);
 
             let exp = tyfmt::TyFmtState::new(hir, &TEnv::new(), imforall, iforall.clone())
-                .function(hir.func_names[tfunc], &result.instantiated);
+                .function(hir.func_names[*tfunc], &result.instantiated);
 
             error = error.text(format!("{}      {}", "got".symbol(), got));
             error = error.text(format!("{} {}", "expected".symbol(), exp));
-            error = error.text("");
+
+            if i == failed_methods.len() - 1 {
+                error = error.text("");
+            }
         }
 
         error.emit();

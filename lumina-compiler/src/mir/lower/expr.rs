@@ -1,5 +1,4 @@
-use super::super::mir::func::Local;
-use super::{pat, pat::Merge, FinError, Lower, MatchBranchLower};
+use super::{pat, pat::Merge, Callable, FinError, Lower, MatchBranchLower};
 use crate::prelude::*;
 use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY, STRINGABLE_FROM_RAW_PARTS};
 use ast::NFunc;
@@ -11,17 +10,9 @@ use std::fmt;
 
 #[derive(Clone, Debug)]
 pub enum Expr {
-    CallFunc(M<NFunc>, GenericMapper<Static>, Vec<Self>),
-    CallLambda(key::Lambda, GenericMapper<Static>, Vec<Self>),
-    CallLocal(Local, Vec<Self>),
-
-    PartialFunc(M<NFunc>, GenericMapper<Static>, Vec<Self>),
-    PartialLambda(key::Lambda, GenericMapper<Static>, Vec<Self>),
-    PartialLocal(Local, Vec<Self>),
-
-    Yield(Local),
-    YieldFunc(M<key::Func>, GenericMapper<Static>),
-    YieldLambda(key::Lambda, GenericMapper<Static>),
+    Call(Callable, Vec<Self>),
+    PartiallyApplicate(Callable, Vec<Self>),
+    Yield(Callable),
 
     Access(Box<Self>, M<key::Record>, Vec<Type>, key::RecordField),
     Record(M<key::Record>, Vec<Type>, Vec<(key::RecordField, Self)>),
@@ -58,7 +49,7 @@ pub enum Expr {
 
 impl Expr {
     pub fn bind(bind: key::Bind) -> Expr {
-        Expr::Yield(Local::Binding(bind))
+        Expr::Yield(Callable::Binding(bind))
     }
 }
 
@@ -82,34 +73,37 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Expr::Call(call, tanot, params) => match call {
                 hir::Callable::Func(nfunc) => {
                     let params = self.lower_exprs(params);
-                    self.fin_inst_or_poison(expr.span, |_, inst| {
-                        Expr::CallFunc(nfunc.module.m(nfunc.key), inst, params)
+                    self.fin_inst_or_poison(expr.span, |_, mapper| {
+                        let call = Callable::Func(nfunc.module.m(nfunc.key), mapper);
+                        Expr::Call(call, params)
                     })
                 }
                 hir::Callable::Lambda(lambda) => {
                     let params = self.lower_exprs(params);
-                    self.fin_inst_or_poison(expr.span, |_, inst| {
-                        Expr::CallLambda(*lambda, inst, params)
+                    self.fin_inst_or_poison(expr.span, |_, mapper| {
+                        let call = Callable::Lambda(*lambda, mapper);
+                        Expr::Call(call, params)
                     })
                 }
                 hir::Callable::Binding(bind) => {
                     let ty = self.current.binds[bind].clone();
                     let ty = self.finalizer(|fin| fin.transform(&ty));
-                    let local = Local::Binding(*bind);
                     match ty {
                         Type::Container(Container::FnPointer | Container::Closure, _) => {
                             let params = self.lower_exprs(params);
-                            Expr::CallLocal(local, params)
+                            let call = Callable::Binding(*bind);
+                            Expr::Call(call, params)
                         }
-                        _ if params.is_empty() => Expr::Yield(local),
+                        _ if params.is_empty() => Expr::Yield(Callable::Binding(*bind)),
                         _ => Expr::Poison,
                     }
                 }
                 hir::Callable::TypeDependentLookup(_) => {
                     let params = self.lower_exprs(params);
-                    self.fin_inst_or_poison(expr.span, |this, inst| {
-                        let nfunc = this.current.type_dependent_lookup.pop_front().unwrap();
-                        Expr::CallFunc(nfunc, inst, params)
+                    self.fin_inst_or_poison(expr.span, |this, mapper| {
+                        let fkey = this.current.type_dependent_lookup.pop_front().unwrap();
+                        let call = Callable::Func(fkey, mapper);
+                        Expr::Call(call, params)
                     })
                 }
                 hir::Callable::Builtin(name) => match *name {
@@ -151,32 +145,40 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Expr::Pass(call, _, params) => match call {
                 hir::Callable::Func(nfunc) => {
                     let params = self.lower_exprs(params);
-                    self.fin_inst_or_poison(expr.span, |_, inst| {
-                        Expr::PartialFunc(nfunc.module.m(nfunc.key), inst, params)
+                    self.fin_inst_or_poison(expr.span, |_, mapper| {
+                        let call = Callable::Func(nfunc.module.m(nfunc.key), mapper);
+                        Expr::PartiallyApplicate(call, params)
                     })
                 }
                 hir::Callable::Lambda(lambda) if params.is_empty() => {
-                    self.fin_inst_or_poison(expr.span, |_, inst| Expr::YieldLambda(*lambda, inst))
+                    self.fin_inst_or_poison(expr.span, |_, mapper| {
+                        let call = Callable::Lambda(*lambda, mapper);
+                        Expr::Yield(call)
+                    })
                 }
                 hir::Callable::Lambda(lambda) => {
                     let params = self.lower_exprs(params);
-                    self.fin_inst_or_poison(expr.span, |_, inst| {
-                        Expr::PartialLambda(*lambda, inst, params)
+                    self.fin_inst_or_poison(expr.span, |_, mapper| {
+                        let call = Callable::Lambda(*lambda, mapper);
+                        Expr::PartiallyApplicate(call, params)
                     })
                 }
                 hir::Callable::Binding(bind) if params.is_empty() => {
-                    Expr::Yield(Local::Binding(*bind))
+                    Expr::Yield(Callable::Binding(*bind))
                 }
                 hir::Callable::Binding(bind) => {
                     let params = self.lower_exprs(params);
-                    Expr::PartialLocal(Local::Binding(*bind), params)
+                    let call = Callable::Binding(*bind);
+                    Expr::PartiallyApplicate(call, params)
                 }
                 hir::Callable::TypeDependentLookup(_) => todo!(),
                 hir::Callable::Builtin(_) => todo!(),
             },
-            hir::Expr::PassFnptr(fkey, _) => {
-                self.fin_inst_or_poison(expr.span, |_, inst| Expr::YieldFunc(*fkey, inst))
-            }
+            hir::Expr::PassFnptr(fkey, _) => self.fin_inst_or_poison(expr.span, |_, mapper| {
+                let nfunc = fkey.map(ast::NFunc::Key);
+                let call = Callable::Func(nfunc, mapper);
+                Expr::Yield(call)
+            }),
             hir::Expr::PassExpr(inner) => {
                 let to_call = self.lower_expr((**inner).as_ref());
                 // inner == "#(deref v0).funcfield"
@@ -292,10 +294,11 @@ impl<'a, 's> Lower<'a, 's> {
                 let func = NFunc::Method(*stringable, STRINGABLE_FROM_RAW_PARTS);
                 let ptr = Expr::ReadOnly(ro_key);
                 let len = Expr::Int(self.target.uint(), len as i128);
-                let finst =
+                let mapper =
                     GenericMapper::new(vec![], Some(Ty::string(self.items.pinfo.string, vec![])));
 
-                Expr::CallFunc(stringable.module.m(func), finst, vec![ptr, len])
+                let call = Callable::Func(stringable.module.m(func), mapper);
+                Expr::Call(call, vec![ptr, len])
             }
         }
     }
@@ -346,16 +349,15 @@ impl<'a, 's> Lower<'a, 's> {
         let listable = self.items.pinfo.listable;
         let method = |m| listable.module.m(NFunc::Method(listable.value, m));
 
-        let mut inst =
+        let mut mapper =
             GenericMapper::from_types(GenericKind::Entity, std::iter::once(inner.clone()));
-        inst.self_ = Some(list_type.clone());
+        mapper.self_ = Some(list_type.clone());
 
         match elems {
-            [] => Expr::CallFunc(method(LISTABLE_NEW), inst.clone(), vec![]),
+            [] => Expr::Call(Callable::Func(method(LISTABLE_NEW), mapper.clone()), vec![]),
             elems => {
-                let new = Expr::CallFunc(
-                    method(LISTABLE_WITH_CAPACITY),
-                    inst.clone(),
+                let new = Expr::Call(
+                    Callable::Func(method(LISTABLE_WITH_CAPACITY), mapper.clone()),
                     vec![Expr::Int(self.target.int(), elems.len() as i128)],
                 );
 
@@ -365,7 +367,8 @@ impl<'a, 's> Lower<'a, 's> {
                 // lowers to
                 // Listable:Cons 1 (Listable:Cons 2 (Listable:Cons 3 new))
                 elems.into_iter().rev().fold(new, |xs, x| {
-                    Expr::CallFunc(method(LISTABLE_CONS), inst.clone(), vec![x, xs])
+                    let call = Callable::Func(method(LISTABLE_CONS), mapper.clone());
+                    Expr::Call(call, vec![x, xs])
                 })
             }
         }
@@ -386,8 +389,10 @@ impl<'a, 's> Lower<'a, 's> {
 
         let mut tails = Map::new();
 
+        let maybe = self.items.pinfo.maybe;
+        let string = self.items.pinfo.string;
         let mut blower = MatchBranchLower::new(self, inite.as_ref(), key::DecisionTreeTail(0));
-        let mut tree = blower.first(&ty, initp.as_ref());
+        let mut tree = blower.first(string, maybe, &ty, initp.as_ref());
 
         let Some(expr) = blower.lowered_tail else {
             warn!("poisoning due to missing tail, assuming error has already occured");
@@ -402,7 +407,7 @@ impl<'a, 's> Lower<'a, 's> {
             let tailkey = tails.next_key();
 
             let mut blower = MatchBranchLower::new(self, expr.as_ref(), tailkey);
-            let reachable = blower.branch(&mut tree, pat.as_ref());
+            let reachable = blower.branch(string, maybe, &mut tree, pat.as_ref());
 
             if !reachable {
                 blower
@@ -443,42 +448,26 @@ impl fmt::Display for Expr {
         let oc = '{'.symbol();
         let cc = '}'.symbol();
         match self {
-            Expr::CallFunc(call, inst, params) => {
-                write!(f, "{op}{call}({inst}) {}{cp}", params.iter().format(" "))
+            Expr::Call(call, params) if params.is_empty() => {
+                write!(f, "{call}")
             }
-            Expr::CallLambda(lambda, inst, params) => {
-                write!(f, "{op}{lambda}({inst}) {}{cc}", params.iter().format(" "))
+            Expr::Call(call, params) => {
+                write!(f, "{op}{call} {}{cp}", params.iter().format(" "))
             }
-            Expr::CallLocal(local, params) => {
-                write!(f, "{op}{local} {}{cc}", params.iter().format(" "))
+            Expr::PartiallyApplicate(call, params) if params.is_empty() => {
+                write!(f, "{op}{} {call}{cp}", "partial".keyword(),)
             }
-            Expr::PartialFunc(call, inst, params) => {
+            Expr::PartiallyApplicate(call, params) => {
                 write!(
                     f,
-                    "{op}{} {call}({inst}) {}{cp}",
+                    "{op}{} {call} {}{cp}",
                     "partial".keyword(),
                     params.iter().format(" ")
                 )
             }
-            Expr::PartialLocal(local, params) => {
-                write!(
-                    f,
-                    "{op}{} {local} {}{cp}",
-                    "partial".keyword(),
-                    params.iter().format(" ")
-                )
+            Expr::Yield(call) => {
+                write!(f, "{call}")
             }
-            Expr::PartialLambda(lambda, inst, params) => {
-                write!(
-                    f,
-                    "{op}{} {lambda}({inst}) {}{cp}",
-                    "partial".keyword(),
-                    params.iter().format(" ")
-                )
-            }
-            Expr::Yield(local) => write!(f, "{local}"),
-            Expr::YieldFunc(func, inst) => write!(f, "#{func}({inst})"),
-            Expr::YieldLambda(lkey, inst) => write!(f, "#{lkey}({inst})"),
             Expr::Num(instr, p) => write!(f, "{op}{} {} {}{cp}", instr.keyword(), &p[0], &p[1]),
             Expr::Cmp(instr, p) => write!(f, "{op}{} {} {}{cp}", instr.keyword(), &p[0], &p[1]),
             Expr::Access(object, key, _, field) => write!(f, "({object} {as_} {key}).{field}"),
@@ -556,6 +545,17 @@ impl fmt::Display for Expr {
             Expr::SizeOf(ty) => write!(f, "{op}{} {ty}{cp}", "size-of".keyword()),
             Expr::Poison => "<poison>".fmt(f),
             Expr::Unreachable(_) => write!(f, "{}", "unreachable".keyword()),
+        }
+    }
+}
+
+impl fmt::Display for Callable {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Callable::Func(nfunc, mapper) => write!(f, "{nfunc}{mapper}"),
+            Callable::Lambda(lambda, mapper) => write!(f, "{lambda}{mapper}"),
+            Callable::Binding(binding) => binding.fmt(f),
+            Callable::Param(param) => param.fmt(f),
         }
     }
 }

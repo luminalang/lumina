@@ -16,88 +16,58 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    pub fn yield_to_value(&mut self, local: mir::Local) -> Value {
-        match local {
-            mir::Local::Param(pid) => {
-                let offset = self.current.captures.unwrap_or(0);
-                self.ssa()
-                    .get_block_param(ssa::Block::entry(), pid.0 + offset as u32)
-                    .value()
-            }
-            mir::Local::Binding(bind) => self.current.bindmap[&bind],
-        }
+    pub fn param_to_value(&self, pid: key::Param) -> Value {
+        let offset = self.current.captures.unwrap_or(0);
+        self.lir.functions[self.current.mfkey]
+            .blocks
+            .get_block_param(ssa::Block::entry(), pid.0 + offset as u32)
+            .value()
+    }
+
+    pub fn bind_to_value(&self, bind: key::Bind) -> Value {
+        self.current.bindmap[&bind]
     }
 
     pub fn expr_to_value(&mut self, expr: &mir::Expr) -> Value {
         trace!("lowering {expr}");
 
         match expr {
-            mir::Expr::CallFunc(func, inst, params) => self.call_nfunc(*func, inst, params),
-            mir::Expr::CallLambda(lambda, inst, params) => {
+            mir::Expr::Call(call, params) => {
                 let params = self.params_to_values(params);
-                let (mfunc, mut captures) = self.morphise_lambda(*lambda, inst);
-                let returns = self.lir.functions[mfunc].returns.clone();
-
-                captures.extend(params);
-
-                self.ssa().call(mfunc, captures, returns)
+                println!("{params:#?}");
+                self.call(call, params)
             }
-            mir::Expr::PartialLambda(lambda, inst, partials) => {
-                let (mfunc, mut captures) = self.morphise_lambda(*lambda, inst);
-
+            mir::Expr::PartiallyApplicate(call, partials) => {
                 let partials = self.params_to_values(partials);
-                captures.extend(partials);
-
-                self.partially_applicate_func(mfunc, captures)
+                self.pass(call, partials)
             }
-            mir::Expr::PartialLocal(local, partials) => {
-                let Value::V(cap) = self.yield_to_value(*local) else {
-                    panic!("partial call of non-closure");
-                };
-                let partials = self.params_to_values(partials);
-                self.partially_applicate_closure(cap, partials)
-            }
-            mir::Expr::PartialFunc(func, inst, partials) => match self.resolve_nfunc(*func, inst) {
-                ResolvedNFunc::Static(mfunc, _) => {
-                    let partials = self.params_to_values(partials);
-                    self.partially_applicate_func(mfunc, partials)
+            mir::Expr::Yield(call) => match self.lower_callable(call) {
+                Callable::Extern(fkey) => Value::ExternFuncPtr(fkey),
+                Callable::Static(mfunc) => Value::FuncPtr(mfunc),
+                Callable::LiftedLambda(mfunc, captures) => {
+                    let ctypes = captures.iter().map(|v| self.type_of_value(*v)).collect();
+                    let cap = self.lir.mono.get_or_make_tuple(ctypes);
+                    self.construct_closure(mfunc, captures, cap)
                 }
-                ResolvedNFunc::Sum { tmap, var, ty, .. } => {
-                    let partials = self.params_to_values(partials);
+                Callable::Val(_) => todo!("yield fnptr returnt by global value"),
+                Callable::Sum { tmap, var, ty, .. } => {
                     let mfunc = self.monofunc_wrapper_for_sumvar(ty, tmap, var);
-                    self.partially_applicate_func(mfunc, partials)
+                    Value::FuncPtr(mfunc)
                 }
-                ResolvedNFunc::Extern(_, _) => todo!("partially applicating a FFI function"),
-                ResolvedNFunc::Val(_, _) => todo!("partially applicating a global value"),
+                Callable::Local(value) => value,
             },
-            mir::Expr::YieldLambda(lambda, inst) => {
-                let (mfunc, captures) = self.morphise_lambda(*lambda, inst);
-                self.dyn_lambda(mfunc, captures)
-            }
-            mir::Expr::CallLocal(local, params) => {
-                let params = self.params_to_values(params);
-                let to_call = self.yield_to_value(*local);
-                let ty = self.type_of_value(to_call);
-                match ty {
-                    MonoType::FnPointer(_, ret) => self.ssa().call(to_call, params, (*ret).clone()),
-                    MonoType::Monomorphised(mk) => self.call_closure(mk, to_call, params),
-                    _ => panic!("attempted to call {ty:#?} as a function"),
-                }
-            }
             mir::Expr::ValToRef(val) => match &**val {
-                mir::Expr::CallFunc(M { value: ast::NFunc::Val(val), module }, _, _) => {
-                    let key = module.m(*val);
+                mir::Expr::Call(
+                    mir::Callable::Func(M { value: ast::NFunc::Val(key), module }, _),
+                    _,
+                ) => {
+                    let key = module.m(*key);
                     let ty = self.lir.vals[key].clone();
                     self.ssa().val_to_ref(key, MonoType::pointer(ty))
                 }
                 other => panic!("non-val given to val_to_ref builtin: {other}"),
             },
-            mir::Expr::Yield(local) => self.yield_to_value(*local),
-            mir::Expr::YieldFunc(fkey, mapper) => {
-                let tmap = self.morphise_inst(&mapper);
-                let (mfunc, _) = self.call_to_mfunc(FuncOrigin::Defined(*fkey), tmap);
-                Value::FuncPtr(mfunc)
-            }
+
             mir::Expr::Access(object, record, types, field) => {
                 let value = self.expr_to_value(object);
 
@@ -256,6 +226,75 @@ impl<'a> FuncLower<'a> {
         }
     }
 
+    fn call(&mut self, call: &mir::Callable, params: Vec<Value>) -> Value {
+        match self.lower_callable(call) {
+            Callable::Extern(fkey) => {
+                let ret = self.lir.extern_funcs[&fkey].returns.clone();
+                self.ssa().call_extern(fkey, params, ret)
+            }
+            Callable::Static(mfunc) => {
+                let ret = self.lir.functions[mfunc].returns.clone();
+                self.ssa().call(mfunc, params, ret)
+            }
+            Callable::LiftedLambda(mfunc, mut captures) => {
+                let ret = self.lir.functions[mfunc].returns.clone();
+                captures.extend(params);
+                self.ssa().call(mfunc, captures, ret)
+            }
+            Callable::Val(key) => {
+                assert!(params.is_empty(), "giving parameters to the function returnt by a static value is not yet supported");
+                let ty = self.lir.vals[key].clone();
+                let v = self.ssa().val_to_ref(key, ty.clone());
+                self.ssa().deref(v, ty)
+            }
+            Callable::Sum { var, payload_size, ty, .. } => {
+                let parameters = self.elems_to_tuple(params, Some(payload_size));
+
+                let tag = Value::Int(var.0 as i128, mono::TAG_SIZE);
+
+                self.ssa()
+                    .construct(vec![tag, parameters.into()], MonoType::Monomorphised(ty))
+            }
+            Callable::Local(to_call) => {
+                let ty = self.type_of_value(to_call);
+                match ty {
+                    MonoType::FnPointer(_, ret) => self.ssa().call(to_call, params, (*ret).clone()),
+                    MonoType::Monomorphised(mk) => self.call_closure(mk, to_call, params),
+                    _ => panic!("attempted to call {ty:#?} as a function"),
+                }
+            }
+        }
+    }
+
+    pub fn pass(&mut self, call: &mir::Callable, partials: Vec<Value>) -> Value {
+        match self.lower_callable(call) {
+            Callable::Extern(fkey) => {
+                todo!(
+                    "partial application of extern functions: {}",
+                    self.mir.func_names[fkey]
+                );
+            }
+            Callable::Static(mfunc) => self.partially_applicate_func(mfunc, partials),
+            Callable::LiftedLambda(mfunc, mut captures) => {
+                captures.extend(partials);
+                self.partially_applicate_func(mfunc, captures)
+            }
+            Callable::Val(_) => {
+                panic!("TODO: partially applicate value returned from global");
+            }
+            Callable::Sum { tmap, var, ty, .. } => {
+                let mfunc = self.monofunc_wrapper_for_sumvar(ty, tmap, var);
+                self.partially_applicate_func(mfunc, partials)
+            }
+            Callable::Local(value) => {
+                let Value::V(cap) = value else {
+                    panic!("partial call of non-closure");
+                };
+                self.partially_applicate_closure(cap, partials)
+            }
+        }
+    }
+
     pub fn heap_alloc(&mut self, value: lir::Value, ty: MonoType) -> Value {
         let size = self.lir.mono.types.size_of(&ty);
         if size == 0 {
@@ -267,37 +306,7 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    fn call_nfunc(
-        &mut self,
-        func: M<ast::NFunc>,
-        inst: &GenericMapper<Static>,
-        params: &[mir::Expr],
-    ) -> Value {
-        match self.resolve_nfunc(func, inst) {
-            ResolvedNFunc::Extern(key, ret) => {
-                let params = self.params_to_values(params);
-                self.ssa().call_extern(key, params, ret)
-            }
-            ResolvedNFunc::Static(mfunc, ret) => {
-                let params = self.params_to_values(params);
-                self.ssa().call(mfunc, params, ret)
-            }
-            ResolvedNFunc::Sum { tag, payload_size, ty, .. } => {
-                let params = self.params_to_values(params);
-                let parameters = self.elems_to_tuple(params, Some(payload_size));
-
-                self.ssa()
-                    .construct(vec![tag, parameters.into()], MonoType::Monomorphised(ty))
-            }
-            ResolvedNFunc::Val(key, ty) => {
-                assert!(params.is_empty(), "giving parameters to the function returnt by a static value is not yet supported");
-                let v = self.ssa().val_to_ref(key, ty.clone());
-                self.ssa().deref(v, ty)
-            }
-        }
-    }
-
-    fn call_closure(&mut self, objty: MonoTypeKey, obj: Value, params: Vec<Value>) -> Value {
+    pub fn call_closure(&mut self, objty: MonoTypeKey, obj: Value, params: Vec<Value>) -> Value {
         let dataptr_type = self
             .lir
             .mono
@@ -378,7 +387,7 @@ impl<'a> FuncLower<'a> {
             .unwrap()
     }
 
-    pub fn call_to_mfunc(&mut self, func: FuncOrigin, mut tmap: TypeMap) -> (MonoFunc, MonoType) {
+    pub fn call_to_mfunc(&mut self, func: FuncOrigin, mut tmap: TypeMap) -> MonoFunc {
         assert!(
             !matches!(func, FuncOrigin::Lambda(..)),
             "call_to_value does not handle captures"
@@ -393,7 +402,6 @@ impl<'a> FuncLower<'a> {
 
         let typing =
             to_morphization!(self.lir, self.mir, &mut tmap).apply_typing(func, &fdef.typing);
-        let ret = typing.returns.clone();
 
         info!(
             "calling function {} ({})",
@@ -401,10 +409,7 @@ impl<'a> FuncLower<'a> {
             typing.origin.name(&self.mir)
         );
 
-        let mfunc = self
-            .lir
-            .func(self.mir, self.iquery, self.info, tmap, typing, None);
-
-        (mfunc, ret)
+        self.lir
+            .func(self.mir, self.iquery, self.info, tmap, typing, None)
     }
 }

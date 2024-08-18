@@ -261,6 +261,25 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         self.next(&falsey.1);
     }
 
+    fn is_just(&mut self, maybe: Value) -> (Value, Value) {
+        let tag_ty = MonoType::Int(mono::TAG_SIZE);
+        let maybe_mk = self.f.type_of_value(maybe).as_key();
+
+        let tag = self
+            .ssa()
+            .field(maybe, maybe_mk, key::RecordField(0), tag_ty);
+
+        let data_ty = MonoType::SumDataCast {
+            largest: self.f.lir.mono.types.size_of_defined(maybe_mk) - mono::TAG_SIZE.bits() as u32,
+        };
+        let data = self
+            .ssa()
+            .field(maybe, maybe_mk, key::RecordField(1), data_ty);
+
+        let check = self.ssa().eq([tag, Value::maybe_just()], mono::TAG_SIZE);
+        (check, data)
+    }
+
     fn list(&mut self, on: Value, ty: &Type, vars: &SumBranches) {
         self.can_skip_continuation = false;
 
@@ -289,24 +308,12 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         );
 
         let split = FuncOrigin::Method(ikey, LISTABLE_SPLIT);
-        let (split, ret) = self.f.call_to_mfunc(split, tmap);
+        let split = self.f.call_to_mfunc(split, tmap);
+        let ret = self.f.lir.functions[split].returns.clone();
 
         let maybe = self.ssa().call(split, vec![on], ret);
-        let maybe_mk = self.f.type_of_value(maybe).as_key();
 
-        let tag_ty = MonoType::Int(mono::TAG_SIZE);
-        let tag = self
-            .ssa()
-            .field(maybe, maybe_mk, key::RecordField(0), tag_ty);
-
-        let data_ty = MonoType::SumDataCast {
-            largest: self.f.lir.mono.types.size_of_defined(maybe_mk) - mono::TAG_SIZE.bits() as u32,
-        };
-        let data = self
-            .ssa()
-            .field(maybe, maybe_mk, key::RecordField(1), data_ty);
-
-        let is_just = self.ssa().eq([tag, Value::maybe_just()], mono::TAG_SIZE);
+        let (is_just, data) = self.is_just(maybe);
 
         let [con_block, nil_block] = [mir::pat::LIST_CONS, mir::pat::LIST_NIL].map(|constr| {
             let vblock = self.ssa().new_block(0);
@@ -396,8 +403,6 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         (on, falsely): (ssa::Value, Block),
         (checks, next): (&[StrCheck], &DecTree<key::DecisionTreeTail>),
     ) {
-        dbg!(&falsely);
-
         checks.iter().enumerate().fold(on, |mut on, (i, check)| {
             let is_last = i == checks.len() - 1;
 
@@ -415,7 +420,6 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     };
 
                     let next_check_block = self.ssa().new_block(0);
-                    dbg!(&next_check_block);
 
                     self.ssa()
                         .select(eq, [(next_check_block, vec![]), (falsely, vec![])]);
@@ -423,24 +427,6 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     self.ssa().switch_to_block(next_check_block);
 
                     on
-                }
-                StrCheck::Take(bytes) => {
-                    let (at, uint) = self.f.uint(*bytes as i128);
-                    let [lhs, rhs] = self.f.string_split_at(on, at);
-                    self.map.push(lhs);
-
-                    let lhs_len = self.f.string_len(lhs);
-                    let len_ok = self.ssa().eq([at, lhs_len], uint);
-
-                    let next_check_block = self.ssa().new_block(0);
-                    dbg!(&next_check_block);
-
-                    self.ssa()
-                        .select(len_ok, [(next_check_block, vec![]), (falsely, vec![])]);
-
-                    self.ssa().switch_to_block(next_check_block);
-
-                    rhs
                 }
                 StrCheck::TakeExcess => {
                     assert!(is_last);
@@ -456,7 +442,6 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     let ok = self.ssa().eq([x, null], u8);
 
                     let next_check_block = self.ssa().new_block(0);
-                    dbg!(&next_check_block);
 
                     self.ssa()
                         .select(ok, [(next_check_block, vec![]), (falsely, vec![])]);
@@ -465,36 +450,46 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
                     xs
                 }
-                StrCheck::TakeWhileLocal(local) => {
-                    let f = self.f.yield_to_value(*local);
+                StrCheck::TakeWhile(call, params) => {
+                    let params = self.f.params_to_values(params);
+                    let closure = self.f.pass(call, params);
 
-                    let [lhs, rhs] = self.f.string_split_while(on, f);
+                    let [lhs, rhs] = self.f.string_split_while(on, closure);
                     self.map.push(lhs);
 
                     rhs
                 }
-                StrCheck::TakeWhileFunc(nfunc) => {
-                    let string = Type::string(self.f.info.string, vec![]);
-                    let generics = GenericMapper::new(vec![], Some(string));
-                    let ResolvedNFunc::Static(mfunc, _) = self.f.resolve_nfunc(*nfunc, &generics)
-                    else {
-                        panic!("not a static function in string pattern")
-                    };
+                StrCheck::TakeBySplit(call, _, params) => {
+                    let params = self.f.params_to_values(params);
+                    let closure = self.f.pass(call, params);
+                    let objty = self.f.type_of_value(closure).as_key();
 
-                    let [lhs, rhs] = self.f.string_split_while_static(on, mfunc);
-                    self.map.push(lhs);
+                    let maybe = self.f.call_closure(objty, closure, vec![on]);
 
-                    rhs
-                }
-                StrCheck::TakeWhileLambda(lambda) => {
-                    let generics = GenericMapper::new(vec![], None);
-                    let (mfunc, captures) = self.f.morphise_lambda(*lambda, &generics);
-                    let f = self.f.dyn_lambda(mfunc, captures);
+                    let (is_just, data) = self.is_just(maybe);
 
-                    let [lhs, rhs] = self.f.string_split_while(on, f);
-                    self.map.push(lhs);
+                    let next_check_block = self.ssa().new_block(0);
 
-                    rhs
+                    self.ssa()
+                        .select(is_just, [(next_check_block, vec![]), (falsely, vec![])]);
+
+                    self.ssa().switch_to_block(next_check_block);
+
+                    let string = self.f.string_type();
+                    let tuple_ty = self
+                        .f
+                        .lir
+                        .mono
+                        .get_or_make_tuple(vec![string.into(), string.into()]);
+                    let tuple = self.ssa().sum_field(data, BitOffset(0), tuple_ty.into());
+
+                    let [x, xs] = [0, 1]
+                        .map(key::RecordField)
+                        .map(|field| self.ssa().field(tuple, tuple_ty, field, string.into()));
+
+                    self.map.push(x);
+
+                    xs
                 }
             }
         });

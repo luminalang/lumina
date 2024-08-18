@@ -432,7 +432,9 @@ impl<'s> Collector<'s> {
                 span,
                 format!("expected {exp} but got this {}", got.describe()),
             ),
-            // ParseError::Unexpected(span, got) => error.eline(span, format!("unexpected {got}")),
+            ParseError::MissingSquareForExtractor(span) => error
+                .eline(span, "unexpected expression")
+                .text("note: if this is an extractor, it's missing it's closure prefix `#`. "),
             ParseError::BadIndentation(span) => {
                 error.eline(span, "invalid indentation level for declaration")
             }

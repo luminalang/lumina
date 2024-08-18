@@ -70,6 +70,7 @@ struct LIR {
     mono_resolve: HashMap<MonoTypesKey, MonoFunc>,
     #[new(default)]
     functions: Map<MonoFunc, Function>,
+    extern_funcs: HashMap<M<key::Func>, ExternFunction>,
     mono: mono::MonomorphisedTypes,
 
     #[new(default)]
@@ -184,6 +185,20 @@ impl FuncOrigin {
     }
 }
 
+enum Callable {
+    Extern(M<key::Func>),
+    Static(MonoFunc),
+    LiftedLambda(MonoFunc, Vec<Value>),
+    Val(M<key::Val>),
+    Sum {
+        tmap: TypeMap,
+        var: key::SumVariant,
+        payload_size: u32,
+        ty: MonoTypeKey,
+    },
+    Local(Value),
+}
+
 pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: mir::MIR) -> Output {
     info!("starting LIR lower");
 
@@ -206,6 +221,27 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
             tmap,
         )
     }
+
+    // TODO: This is kinda hacky and inefficient.
+    //
+    // We should probably seperate out externs entirely instead of treating them like semi-functions.
+    let extern_funcs = mir
+        .funcs
+        .iter()
+        .filter_map(|func| match &mir.funcs[func] {
+            mir::FunctionStatus::Extern { link_name, typing } => {
+                let mut tmap = TypeMap::new();
+                let mut monomorphization = to_morphization(&mir, &mut mono, &mut tmap);
+                let params = monomorphization.applys(&typing.params);
+                let returns = monomorphization.apply(&typing.returns);
+                Some((
+                    func,
+                    ExternFunction { symbol: link_name.clone(), params, returns },
+                ))
+            }
+            _ => None,
+        })
+        .collect();
 
     let mut tmap = TypeMap::new();
     let mut monomorphization = to_morphization(&mir, &mut mono, &mut tmap);
@@ -245,7 +281,7 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
         "main function can not take parameters"
     );
 
-    let mut lir = LIR::new(mono, read_only_table, target, vals);
+    let mut lir = LIR::new(extern_funcs, mono, read_only_table, target, vals);
 
     // fn alloc size as int -> *u8 =
     // fn dealloc ptr size as *u8, int -> () =
@@ -272,30 +308,9 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
         assert_eq!(previous, None);
     }
 
-    // TODO: This is kinda hacky and inefficient.
-    //
-    // We should probably seperate out externs entirely instead of treating them like semi-functions.
-    let extern_funcs = mir
-        .funcs
-        .iter()
-        .filter_map(|func| match &mir.funcs[func] {
-            mir::FunctionStatus::Extern { link_name, typing } => {
-                let mut tmap = TypeMap::new();
-                let mut monomorphization = to_morphization(&mir, &mut lir.mono, &mut tmap);
-                let params = monomorphization.applys(&typing.params);
-                let returns = monomorphization.apply(&typing.returns);
-                Some((
-                    func,
-                    ExternFunction { symbol: link_name.clone(), params, returns },
-                ))
-            }
-            _ => None,
-        })
-        .collect();
-
     Output {
         functions: lir.functions,
-        extern_funcs,
+        extern_funcs: lir.extern_funcs,
         val_initializers: lir.val_initialisers,
         val_types: lir.vals,
         read_only_table: lir.read_only_table,
@@ -595,19 +610,16 @@ impl<'a> FuncLower<'a> {
                 let (ikey, tmap) =
                     self.find_implementation(self.info.stringable, &[], weakstring, type_.into());
 
-                let [split_at, split_while, split_while_static, split_first, equals, len, from_raw_parts] =
-                    [0, 1, 2, 3, 4, 5, 6]
-                        .map(key::Method)
-                        .map(|method| FuncOrigin::Method(ikey, method))
-                        .map(|origin| self.call_to_mfunc(origin, tmap.clone()).0);
+                let [split_at, split_while, split_first, equals, from_raw_parts] = [0, 1, 2, 3, 4]
+                    .map(key::Method)
+                    .map(|method| FuncOrigin::Method(ikey, method))
+                    .map(|origin| self.call_to_mfunc(origin, tmap.clone()));
 
                 let str = Stringable {
                     split_at,
                     split_while,
-                    split_while_static,
                     split_first,
                     equals,
-                    len,
                     from_raw_parts,
                     type_,
                 };
@@ -694,21 +706,6 @@ impl<'a> FuncLower<'a> {
             .map(|f| self.ssa().field(splitted, str_tuple, f, string.into()))
     }
 
-    fn string_split_while_static(&mut self, str: Value, f: MonoFunc) -> [Value; 2] {
-        let stringable = self.stringable();
-
-        let string = stringable.type_;
-        let str_tuple = self.lir.mono.get_or_make_tuple(vec![string.into(); 2]);
-
-        let mfunc = stringable.split_while_static;
-        let splitted = self
-            .ssa()
-            .call(mfunc, vec![str, Value::FuncPtr(f)], str_tuple.into());
-
-        [key::RecordField(0), key::RecordField(1)]
-            .map(|f| self.ssa().field(splitted, str_tuple, f, string.into()))
-    }
-
     fn string_split_first(&mut self, str: Value) -> [Value; 2] {
         let stringable = self.stringable();
 
@@ -735,14 +732,6 @@ impl<'a> FuncLower<'a> {
 
         self.ssa()
             .call(stringable.equals, strs.into(), MonoType::bool())
-    }
-
-    fn string_len(&mut self, str: Value) -> Value {
-        let stringable = self.stringable();
-
-        let size = self.lir.target.uint();
-        self.ssa()
-            .call(stringable.len, vec![str], MonoType::Int(size))
     }
 
     fn string_type(&mut self) -> MonoTypeKey {
@@ -850,76 +839,82 @@ impl<'a> FuncLower<'a> {
                 let func = &self.lir.functions[ptr];
                 func.as_fnpointer()
             }
+            ssa::Value::ExternFuncPtr(ptr) => {
+                let func = &self.lir.extern_funcs[&ptr];
+                MonoType::FnPointer(func.params.clone(), Box::new(func.returns.clone()))
+            }
         }
     }
 
-    fn resolve_nfunc(
-        &mut self,
-        func: M<ast::NFunc>,
-        inst: &GenericMapper<Static>,
-    ) -> ResolvedNFunc {
-        match func.value {
-            ast::NFunc::Key(key) => {
-                let key = func.module.m(key);
-                match &self.mir.funcs[key] {
-                    mir::FunctionStatus::Extern { typing, .. } => {
-                        let mut map = TypeMap::new();
-                        let ret =
-                            to_morphization!(self.lir, self.mir, &mut map).apply(&typing.returns);
-                        ResolvedNFunc::Extern(key, ret)
-                    }
-                    _ => {
-                        let func = FuncOrigin::Defined(key);
-                        let tmap = self.morphise_inst(inst);
-                        let (mfunc, ret) = self.call_to_mfunc(func, tmap);
-                        ResolvedNFunc::Static(mfunc, ret)
+    fn lower_callable(&mut self, callable: &mir::Callable) -> Callable {
+        match callable {
+            mir::Callable::Func(nfunc, mapper) => match nfunc.value {
+                ast::NFunc::Key(key) => {
+                    let key = nfunc.module.m(key);
+                    match &self.mir.funcs[key] {
+                        mir::FunctionStatus::Extern { .. } => Callable::Extern(key),
+                        _ => {
+                            let func = FuncOrigin::Defined(key);
+                            let tmap = self.morphise_inst(mapper);
+                            let mfunc = self.call_to_mfunc(func, tmap);
+                            Callable::Static(mfunc)
+                        }
                     }
                 }
+                ast::NFunc::Val(val) => {
+                    let key = nfunc.module.m(val);
+                    Callable::Val(key)
+                }
+                ast::NFunc::Method(key, method) => {
+                    let trait_ = nfunc.module.m(key);
+
+                    let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
+
+                    let self_ = mapper.self_.as_ref().unwrap();
+
+                    let weak_impltor = morph.apply_weak(self_);
+                    let impltor = morph.apply(self_);
+
+                    let trtp = mapper
+                        .types(GenericKind::Parent)
+                        .map(|ty| morph.apply_weak(ty))
+                        .collect::<Vec<_>>();
+
+                    let (ikey, itmap) =
+                        self.find_implementation(trait_, &trtp, weak_impltor, impltor);
+
+                    let forigin = FuncOrigin::Method(ikey, method);
+
+                    let mfunc = self.call_to_mfunc(forigin, itmap);
+
+                    Callable::Static(mfunc)
+                }
+                ast::NFunc::SumVar(sum, var) => {
+                    let sum = nfunc.map(|_| sum);
+
+                    let mut tmap = self.morphise_inst(mapper);
+                    let type_params = tmap.weak.to_types(GenericKind::Entity);
+
+                    let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
+                    let ty = morph.sum(sum, &type_params);
+
+                    let (tag_size, payload_size) = self.lir.mono.types.as_sum_type(ty).unwrap();
+                    assert_eq!(tag_size, mono::TAG_SIZE.bits() as u32);
+
+                    Callable::Sum { var, ty, tmap, payload_size }
+                }
+            },
+            mir::Callable::Lambda(lambda, mapper) => {
+                let (mfunc, captures) = self.morphise_lambda(*lambda, mapper);
+                Callable::LiftedLambda(mfunc, captures)
             }
-            ast::NFunc::Val(val) => {
-                let key = func.module.m(val);
-                let ty: MonoType = self.lir.vals[key].clone();
-
-                ResolvedNFunc::Val(key, ty)
+            mir::Callable::Binding(bind) => {
+                let v = self.bind_to_value(*bind);
+                Callable::Local(v)
             }
-            ast::NFunc::Method(key, method) => {
-                let trait_ = func.module.m(key);
-
-                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
-
-                let self_ = inst.self_.as_ref().unwrap();
-
-                let weak_impltor = morph.apply_weak(self_);
-                let impltor = morph.apply(self_);
-
-                let trtp = inst
-                    .types(GenericKind::Parent)
-                    .map(|ty| morph.apply_weak(ty))
-                    .collect::<Vec<_>>();
-
-                let (ikey, itmap) = self.find_implementation(trait_, &trtp, weak_impltor, impltor);
-
-                let forigin = FuncOrigin::Method(ikey, method);
-
-                let (mfunc, ret) = self.call_to_mfunc(forigin, itmap);
-
-                ResolvedNFunc::Static(mfunc, ret)
-            }
-            ast::NFunc::SumVar(sum, var) => {
-                let sum = func.map(|_| sum);
-
-                let mut tmap = self.morphise_inst(inst);
-                let type_params = tmap.weak.to_types(GenericKind::Entity);
-
-                let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
-                let ty = morph.sum(sum, &type_params);
-
-                let tag = Value::Int(var.0 as i128, mono::TAG_SIZE);
-
-                let (tag_size, payload_size) = self.lir.mono.types.as_sum_type(ty).unwrap();
-                assert_eq!(tag_size, mono::TAG_SIZE.bits() as u32);
-
-                ResolvedNFunc::Sum { tag, var, ty, tmap, payload_size }
+            mir::Callable::Param(param) => {
+                let v = self.param_to_value(*param);
+                Callable::Local(v)
             }
         }
     }
@@ -955,30 +950,14 @@ fn func_symbol(mir: &mir::MIR, key: MonoFunc, origin: &FuncOrigin) -> String {
     format!("{module}:{mname}:{fname}:{key}")
 }
 
-#[derive(Debug)]
-enum ResolvedNFunc {
-    Extern(M<key::Func>, MonoType),
-    Static(MonoFunc, MonoType),
-    Sum {
-        tmap: TypeMap,
-        var: key::SumVariant,
-        tag: Value,
-        payload_size: u32,
-        ty: MonoTypeKey,
-    },
-    Val(M<key::Val>, MonoType),
-}
-
 // Convenience access to the mono functions for the `string` langitem's implementation of `Stringable`
 #[derive(Clone, Copy)]
 struct Stringable {
-    split_at: MonoFunc,           // self, int -> (self, self)
-    split_while: MonoFunc,        // self, fn(u8 -> bool) -> (self, self)
-    split_while_static: MonoFunc, // self, fnptr(u8 -> bool) -> (self, self)
-    split_first: MonoFunc,        // self -> (u8, self)
-    equals: MonoFunc,             // self, self -> bool
-    len: MonoFunc,                // self -> uint
-    from_raw_parts: MonoFunc,     // *u8, uint -> self
+    split_at: MonoFunc,       // self, int -> (self, self)
+    split_while: MonoFunc,    // self, fn(u8 -> bool) -> (self, self)
+    split_first: MonoFunc,    // self -> (u8, self)
+    equals: MonoFunc,         // self, self -> bool
+    from_raw_parts: MonoFunc, // *u8, uint -> self
 
     type_: MonoTypeKey,
 }

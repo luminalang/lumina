@@ -1,0 +1,5 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"\\\"hello\\\" #(f 0)@a #(f 1) #f@b x xs\"; format! (\"\\n{}\", ast) }"
+---
+"hello" #((1^f 0))@a #((1^f 1)) #(f)@b x xs

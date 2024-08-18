@@ -67,6 +67,9 @@ macro_rules! select {
                         _ => false,
                     }, settings.sensitive);
 
+                    let (_, _select_span) = if settings.sensitive { $parser.lexer.peek_line_sensitive() } else { $parser.lexer.peek() };
+                    $( let $span = _select_span; )?
+
                     match recovered_to {
                         $($token $(if $guard)? => {
                             if !settings.peeked {

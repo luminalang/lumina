@@ -21,7 +21,7 @@ pub const LISTABLE_NEW: key::Method = key::Method(1);
 pub const LISTABLE_WITH_CAPACITY: key::Method = key::Method(2);
 pub const LISTABLE_SPLIT: key::Method = key::Method(3);
 
-pub const STRINGABLE_FROM_RAW_PARTS: key::Method = key::Method(6);
+pub const STRINGABLE_FROM_RAW_PARTS: key::Method = key::Method(4);
 
 pub const LIST_CONCAT: key::SumVariant = key::SumVariant(1);
 pub const LIST_SINGLETON: key::SumVariant = key::SumVariant(2);
@@ -50,4 +50,5 @@ pub struct ProjectInfo {
     global_list_default: M<key::TypeKind>,
     stringable: M<key::Trait>,
     string: M<key::Record>,
+    maybe: M<key::Sum>,
 }

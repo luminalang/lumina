@@ -30,7 +30,6 @@ use std::fmt;
 use tracing::info_span;
 
 mod expr;
-use expr::ExprLower;
 pub use expr::{Callable, Expr, Literal};
 mod pat;
 pub use pat::{Pattern, StringPattern};
@@ -243,6 +242,22 @@ fn lower_langitems<'a, 's>(
         .collect()
 }
 
+#[derive(new)]
+pub struct FuncLower<'t, 'a, 's> {
+    pub module: key::Module,
+    pub ast: &'a ast::AST<'s>,
+
+    pub type_info: &'t mut TypeEnvInfo<'s>,
+    where_binds: &'a [parser::func::Declaration<'s>],
+
+    pub target: Target,
+
+    #[new(default)]
+    pub bindings: Bindings<'s>,
+    #[new(default)]
+    pub lambdas: Lambdas<'s>,
+}
+
 fn lower_func<'a, 's>(
     Info { ast, target, langitems, pinfo, .. }: Info<'a, 's>,
     tforalls: &ModMap<key::Trait, (Tr<&'s str>, Forall<'s, Static>)>,
@@ -279,7 +294,7 @@ fn lower_func<'a, 's>(
         }
         ast::FuncBody::Val(body, _) | ast::FuncBody::Func(body) => {
             let mut tinfo = tinfo.inference(TEnv::new());
-            let (fdef, env) = ExprLower::new(module, ast, &mut tinfo, &body.where_binds, target)
+            let (fdef, env) = FuncLower::new(module, ast, &mut tinfo, &body.where_binds, target)
                 .lower_func(&header, &body, no_mangle);
             (FuncDefKind::Defined(fdef), env)
         }
@@ -287,7 +302,7 @@ fn lower_func<'a, 's>(
             let mut tinfo = tinfo.inference(TEnv::new());
             tinfo.enter_type_or_impl_or_method(tforalls[*tr].1.clone(), GenericKind::Parent);
             tinfo.self_handler = SelfHandler::Direct;
-            let (fdef, env) = ExprLower::new(module, ast, &mut tinfo, &body.where_binds, target)
+            let (fdef, env) = FuncLower::new(module, ast, &mut tinfo, &body.where_binds, target)
                 .lower_func(&header, &body, no_mangle);
 
             let kind = disallow_inference_in_trait_default(module, ast, *tr, fdef);
@@ -300,7 +315,7 @@ fn lower_func<'a, 's>(
             let mut tinfo = tinfo.inference(env);
             tinfo.enter_type_or_impl_or_method(iforalls[*imp].clone(), GenericKind::Parent);
             tinfo.self_handler = SelfHandler::Direct;
-            let (fdef, env) = ExprLower::new(module, ast, &mut tinfo, &body.where_binds, target)
+            let (fdef, env) = FuncLower::new(module, ast, &mut tinfo, &body.where_binds, target)
                 .lower_func(&header, &body, no_mangle);
             (FuncDefKind::ImplMethod(*imp, fdef), env)
         }
@@ -588,7 +603,7 @@ impl<'s, T: ty::FromVar> Typing<Ty<T>> {
     }
 }
 
-impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
+impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
     fn lower_func(
         mut self,
         header: &parser::func::Header<'s>,
@@ -740,9 +755,116 @@ impl<'t, 'a, 's> ExprLower<'t, 'a, 's> {
         (params, expr)
     }
 
-    pub fn to_type_lower(&mut self) -> ty::TypeLower<'_, 'a, 's> {
+    fn to_type_lower(&mut self) -> ty::TypeLower<'_, 'a, 's> {
         let int_size = self.target.int_size();
         ty::TypeLower::new(self.module, self.ast, int_size, self.type_info)
+    }
+
+    fn resolve_callable(
+        &mut self,
+        span: Span,
+        ident: &Identifier<'s>,
+    ) -> Option<(Callable<'s>, ToAnnotate)> {
+        if let Some(name) = ident.as_name() {
+            if let Some(bind) = self.bindings.resolve(name) {
+                return Some((Callable::Binding(bind), ToAnnotate::None));
+            }
+
+            if let Some(lkey) = self.where_binds.find(|decl| *decl.header.name == name) {
+                self.bindings.reference_lambda(lkey);
+                return Some((Callable::Lambda(lkey), ToAnnotate::Some(None)));
+            }
+        }
+
+        let path = ident.as_slice();
+
+        match self.ast.lookups.resolve_func(self.module, path) {
+            Ok(entity) => match entity.key {
+                ast::Entity::Func(nfunc) => {
+                    let type_ = match nfunc {
+                        ast::NFunc::SumVar(key, _) => {
+                            Some(entity.module.m(key::TypeKind::Sum(key)))
+                        }
+                        _ => None,
+                    };
+                    let callable = Callable::Func(entity.map(|_| nfunc));
+                    Some((callable, ToAnnotate::Some(type_)))
+                }
+                ast::Entity::Member(type_, name) => {
+                    let module = entity.module;
+                    let ty = self.ast.entities.header_of_ty(module.m(type_));
+                    let tname = ty.header.name;
+
+                    let nfunc = match type_ {
+                        key::TypeKind::Trait(trait_) => {
+                            let methods = &self.ast.entities.methods[module.m(trait_)];
+                            let fheaders = &self.ast.entities.fheaders;
+
+                            let Some(method) =
+                                methods.find(|fkey| *fheaders[module.m(*fkey)].name == name)
+                            else {
+                                self.ast
+                                    .sources
+                                    .emit_member_not_found(module, span, "trait", tname, name);
+                                return None;
+                            };
+
+                            ast::NFunc::Method(trait_, method)
+                        }
+                        key::TypeKind::Sum(sum) => {
+                            let variants = &self.ast.entities.variant_names[module.m(sum)];
+                            match variants.find(|n| **n == name) {
+                                None => {
+                                    self.ast
+                                        .sources
+                                        .emit_member_not_found(module, span, "type", tname, name);
+                                    return None;
+                                }
+                                Some(var) => ast::NFunc::SumVar(sum, var),
+                            }
+                        }
+                        key::TypeKind::Record(key) => {
+                            let is_valid_field = self.ast.entities.field_names[module.m(key)]
+                                .values()
+                                .any(|n| **n == name);
+
+                            let message = if is_valid_field {
+                                format!("if you're trying to use the field named `{name}` from `{tname}`, then use `.{name}`")
+                            } else {
+                                format!("tried to use the type `{tname}` as a module")
+                            };
+                            self.ast
+                                .sources
+                                .emit_identifier_not_found(module, span, message);
+
+                            return None;
+                        }
+                    };
+
+                    let to_anot = ToAnnotate::Some(Some(entity.module.m(type_)));
+                    Some((Callable::Func(entity.map(|_| nfunc)), to_anot))
+                }
+                _ => {
+                    let name = path[path.len() - 1];
+                    self.ast.sources.emit_wrong_entity(
+                        self.module,
+                        span,
+                        name,
+                        "function",
+                        entity.key,
+                    );
+
+                    None
+                }
+            },
+            Err(err) => {
+                self.ast
+                    .sources
+                    .emit_lookup_err(span, self.module, "function or binding", err);
+
+                None
+            }
+        }
     }
 }
 
@@ -810,104 +932,6 @@ fn lower_impl<'a, 's>(
 enum ToAnnotate {
     Some(Option<M<key::TypeKind>>),
     None,
-}
-
-fn resolve_callable<'s>(
-    ast: &ast::AST<'s>,
-    bindings: &mut Bindings<'s>,
-    module: key::Module,
-    where_binds: &[parser::func::Declaration<'s>],
-    span: Span,
-    ident: &Identifier<'s>,
-) -> Option<(Callable<'s>, ToAnnotate)> {
-    if let Some(name) = ident.as_name() {
-        if let Some(bind) = bindings.resolve(name) {
-            return Some((Callable::Binding(bind), ToAnnotate::None));
-        }
-
-        if let Some(lkey) = where_binds.find(|decl| *decl.header.name == name) {
-            bindings.reference_lambda(lkey);
-            return Some((Callable::Lambda(lkey), ToAnnotate::Some(None)));
-        }
-    }
-
-    let path = ident.as_slice();
-
-    match ast.lookups.resolve_func(module, path) {
-        Ok(entity) => match entity.key {
-            ast::Entity::Func(nfunc) => {
-                let type_ = match nfunc {
-                    ast::NFunc::SumVar(key, _) => Some(entity.module.m(key::TypeKind::Sum(key))),
-                    _ => None,
-                };
-                let callable = Callable::Func(entity.map(|_| nfunc));
-                Some((callable, ToAnnotate::Some(type_)))
-            }
-            ast::Entity::Member(type_, name) => {
-                let module = entity.module;
-                let ty = ast.entities.header_of_ty(module.m(type_));
-                let tname = ty.header.name;
-
-                let nfunc = match type_ {
-                    key::TypeKind::Trait(trait_) => {
-                        let methods = &ast.entities.methods[module.m(trait_)];
-                        let fheaders = &ast.entities.fheaders;
-
-                        let Some(method) =
-                            methods.find(|fkey| *fheaders[module.m(*fkey)].name == name)
-                        else {
-                            ast.sources
-                                .emit_member_not_found(module, span, "trait", tname, name);
-                            return None;
-                        };
-
-                        ast::NFunc::Method(trait_, method)
-                    }
-                    key::TypeKind::Sum(sum) => {
-                        let variants = &ast.entities.variant_names[module.m(sum)];
-                        match variants.find(|n| **n == name) {
-                            None => {
-                                ast.sources
-                                    .emit_member_not_found(module, span, "type", tname, name);
-                                return None;
-                            }
-                            Some(var) => ast::NFunc::SumVar(sum, var),
-                        }
-                    }
-                    key::TypeKind::Record(key) => {
-                        let is_valid_field = ast.entities.field_names[module.m(key)]
-                            .values()
-                            .any(|n| **n == name);
-
-                        let message = if is_valid_field {
-                            format!("if you're trying to use the field named `{name}` from `{tname}`, then use `.{name}`")
-                        } else {
-                            format!("tried to use the type `{tname}` as a module")
-                        };
-                        ast.sources.emit_identifier_not_found(module, span, message);
-
-                        return None;
-                    }
-                };
-
-                let to_anot = ToAnnotate::Some(Some(entity.module.m(type_)));
-                Some((Callable::Func(entity.map(|_| nfunc)), to_anot))
-            }
-            _ => {
-                let name = path[path.len() - 1];
-                ast.sources
-                    .emit_wrong_entity(module, span, name, "function", entity.key);
-
-                None
-            }
-        },
-        Err(err) => {
-            ast.sources
-                .emit_lookup_err(span, module, "function or binding", err);
-
-            None
-        }
-    }
 }
 
 impl ast::Sources {

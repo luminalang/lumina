@@ -81,16 +81,9 @@ impl<'a, 's> Verify<'a, 's> {
             hir::Pattern::Bool(_) => IType::bool(),
             hir::Pattern::String(spats) => {
                 for spat in spats {
-                    if let hir::StringPattern::BindWhile(_, call) = spat {
-                        let tanot = hir::TypeAnnotation::new();
-                        let instcall = self.type_of_callable(pat.span, None, call, 1, &tanot);
-                        // TODO: use `char` langitem instead of byte
-                        let ptypes = vec![IType::u8().tr(pat.span)];
-                        let ret = self.type_check_call(pat.span, instcall, ptypes);
-                        self.type_check_and_emit(
-                            (&IType::bool()).tr(pat.span),
-                            (&ret).tr(pat.span),
-                        );
+                    if let hir::StringPattern::Extractor(extractor) = spat {
+                        let params = self.type_check_params(&extractor.params);
+                        self.type_check_pass(pat.span, &extractor.call, &extractor.tanot, params);
                     }
                 }
 

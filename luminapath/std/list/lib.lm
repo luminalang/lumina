@@ -1,6 +1,7 @@
 use std:maybe [Maybe [..]]
 use std:math [Compare, Num [+]]
-use vec [Vec, Slice]
+use vec [Vec]
+use slice [Slice]
 
 @![langItem(list as List)]
 
@@ -28,7 +29,7 @@ impl Listable a for List a
   fn split list as List a -> Maybe (a, List a) = 
     match list
     | Slice slice -> 
-      vec:split slice
+      slice:split slice
       . map #(\(v, right) -> (v, if right . is_empty then Nil else Slice right))
 
     | Singleton a -> Just (a, Nil)
@@ -105,6 +106,22 @@ pub fn break f list as fn(a -> bool), [a] -> ([a], [a]) =
         (x : left, right)
       // TODO: if we do pointer-equality on `:` could we optimise appending two `Slice`s
       // into shifting start of a singlular Slice?
+
+// pub fn split_at n list as uint, self -> (self, self) =
+//   if list == 0 then
+//     (Nil, list)
+//   else 
+//     match list
+//     | Slice {vec, start} -> 
+//       if vec.len - start > n then
+//         ( { vec = { len = vec.len + start - n, ptr = vec.ptr }, start }, Nil )
+//       else
+//         // same vec but shortened on one side and start shifted on other
+//         // ( { vec = { len = vec.len - n }, start}, { vec = { len =  )
+//     
+//     | Singleton a -> 1
+//     | Concat left right -> len left + len right
+//     | Nil -> 0 
 
 when a can ToString
 impl ToString for [a]

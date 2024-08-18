@@ -4,6 +4,7 @@ use super::tyfmt::TyFmtState;
 use super::{Current, LangItems, RSolver, ReadOnlyBytes};
 use crate::prelude::*;
 use crate::Target;
+use ast::NFunc;
 use std::ops::Not;
 
 mod expr;
@@ -12,7 +13,7 @@ pub mod pat;
 
 use derive_new::new;
 use lumina_typesystem::{
-    Finalizer, Forall, GenericMapper, IType, Inference, Static, TEnv, Transformer, Type,
+    Finalizer, Forall, GenericMapper, IType, Inference, RecordVar, Static, TEnv, Transformer, Type,
 };
 use lumina_util::Highlighting;
 use std::fmt;
@@ -58,6 +59,14 @@ pub struct CallTypes {
 pub struct Lambda {
     pub typing: ConcreteTyping,
     pub expr: Expr,
+}
+
+#[derive(Clone, Debug)]
+pub enum Callable {
+    Func(M<NFunc>, GenericMapper<Static>),
+    Lambda(key::Lambda, GenericMapper<Static>),
+    Binding(key::Bind),
+    Param(key::Param),
 }
 
 #[derive(new)]
@@ -268,7 +277,8 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
                 let i = self.current_param;
                 self.current_param += 1;
 
-                let tree = self.first(ty, self.patterns[i].as_ref());
+                let (string, maybe) = (self.lower.items.pinfo.string, self.lower.items.pinfo.maybe);
+                let tree = self.first(string, maybe, ty, self.patterns[i].as_ref());
 
                 let missing = pat::MissingGeneration::new(pat::Init::new(
                     self.lower.rsolver.ftypes,
@@ -282,25 +292,50 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
                         .push(FinError::MissingPatterns(self.patterns[i].span, missing));
                 }
 
-                let on = Expr::Yield(mir::func::Local::Param(key::Param(i as u32)));
+                let on = Expr::Yield(Callable::Param(key::Param(i as u32)));
 
                 let mut tails = Map::new();
-                tails.push(self.lowered_tail.take().unwrap());
-
-                let pred = [1].into_iter().collect();
-                self.lowered_tail = Some(Expr::Match(Box::new(on), tree, tails, pred));
+                match self.lowered_tail.take() {
+                    Some(tail) => {
+                        tails.push(tail);
+                        let pred = [1].into_iter().collect();
+                        self.lowered_tail = Some(Expr::Match(Box::new(on), tree, tails, pred));
+                    }
+                    None => {
+                        self.lowered_tail = Some(Expr::Poison);
+                    }
+                }
 
                 key::DecisionTreeTail(0)
             }
         }
     }
 
+    fn type_of_bind(&mut self, bind: key::Bind) -> Type {
+        let ty = self.lower.current.binds[&bind].value.clone();
+        self.lower.finalizer(|fin| fin.transform(&ty))
+    }
+
     fn str_to_ro(&mut self, str: &'s str) -> M<lumina_key::ReadOnly> {
         self.lower.str_to_ro(str)
     }
 
-    fn pop_inst(&mut self, span: Span) -> Option<InstInfo> {
-        self.lower.current.pop_inst(span)
+    fn extractor_params(&mut self, params: &[Tr<hir::Expr<'s>>]) -> Vec<mir::Expr> {
+        params
+            .iter()
+            .map(|expr| self.lower.lower_expr(expr.as_ref()))
+            .collect()
+    }
+
+    fn fin_popped_inst(&mut self, span: Span) -> Option<(GenericMapper<Static>, CallTypes)> {
+        self.lower
+            .current
+            .pop_inst(span)
+            .map(|instinfo| self.lower.fin_typing(&instinfo))
+    }
+
+    fn fin_record(&mut self, rvar: RecordVar) -> Option<(M<key::Record>, Vec<Type>)> {
+        self.lower.finalizer(|fin| fin.record(rvar))
     }
 
     fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
@@ -334,12 +369,31 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for MatchBranchLower<'l, 
         *self.lower.rsolver.fnames[record][field]
     }
 
-    fn str_to_ro(&mut self, str: &'s str) -> M<lumina_key::ReadOnly> {
+    fn type_of_bind(&mut self, bind: key::Bind) -> Type {
+        let ty = self.lower.current.binds[&bind].value.clone();
+        self.lower.finalizer(|fin| fin.transform(&ty))
+    }
+
+    fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
         self.lower.str_to_ro(str)
     }
 
-    fn pop_inst(&mut self, span: Span) -> Option<InstInfo> {
-        self.lower.current.pop_inst(span)
+    fn fin_popped_inst(&mut self, span: Span) -> Option<(GenericMapper<Static>, CallTypes)> {
+        self.lower
+            .current
+            .pop_inst(span)
+            .map(|instinfo| self.lower.fin_typing(&instinfo))
+    }
+
+    fn fin_record(&mut self, rvar: RecordVar) -> Option<(M<key::Record>, Vec<Type>)> {
+        self.lower.finalizer(|fin| fin.record(rvar))
+    }
+
+    fn extractor_params(&mut self, params: &[Tr<hir::Expr<'s>>]) -> Vec<mir::Expr> {
+        params
+            .iter()
+            .map(|expr| self.lower.lower_expr(expr.as_ref()))
+            .collect()
     }
 
     fn to_init(&self) -> pat::Init {

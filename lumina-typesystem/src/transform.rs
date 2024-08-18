@@ -363,13 +363,17 @@ impl<'a, 's> CircularInst<'a, 's, Inference> {
 
 impl<T: fmt::Display> fmt::Display for GenericMapper<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{{{}}}",
-            self.generics
-                .iter()
-                .format_with(", ", |(g, t), f| f(&format_args!("{g} -> {t}")))
-        )
+        if self.generics.is_empty() {
+            Ok(())
+        } else {
+            write!(
+                f,
+                "({})",
+                self.generics
+                    .iter()
+                    .format_with(", ", |(g, t), f| f(&format_args!("{g} -> {t}")))
+            )
+        }
     }
 }
 

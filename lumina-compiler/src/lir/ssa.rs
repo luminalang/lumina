@@ -537,6 +537,7 @@ pub enum Entry {
 pub enum Value {
     #[from] ReadOnly(M<key::ReadOnly>),
     #[from] FuncPtr(MonoFunc),
+    #[from] ExternFuncPtr(M<key::Func>),
     V(V),
     
     Int(i128, IntSize),
@@ -679,6 +680,7 @@ impl fmt::Display for Value {
             Value::V(v) => v.fmt(f),
             Value::Int(n, _) => n.fmt(f),
             Value::FuncPtr(ptr) => ptr.fmt(f),
+            Value::ExternFuncPtr(ptr) => ptr.fmt(f),
             Value::Float(n) => write!(f, "{n:?}"),
         }
     }

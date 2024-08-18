@@ -6,7 +6,7 @@ list variant0
     u8 ..
         {
           table = [PointTable { binds: [(v10, 1), (v20, 2)] }],
-          excess = [(▵·0:sum1 u8)]
+          excess = [[u8]]
           tail = 0
         }
 list variant1

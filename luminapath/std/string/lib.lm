@@ -3,6 +3,27 @@ use std:io
 use std:list [List [Slice, Nil]]
 use std:list:vec [Vec]
 
+// NOTE: DO NOT SWITCH PLACES OF METHODS.
+//
+// THEIR INDICES ARE CONSTANTS IN COMPILER. 
+pub trait Stringable
+  fn split_at as self, int -> (self, self)
+  fn split_while as self, fn(u8 -> bool) -> (self, self)
+  fn split_first as self -> (u8, self)
+  fn equals as self, self -> bool
+  fn from_raw_parts as *u8, uint -> self
+
+// TODO: Real impl
+impl Stringable for string
+  fn split_at str i as string, int -> (string, string) = (str, str)
+  fn split_while str f as string, fn(u8 -> bool) -> (string, string) = (str, str)
+  fn split_first str as string -> (u8, string) = (0, str)
+  fn equals lhs rhs as string, string -> bool = false
+  fn from_raw_parts ptr len as *u8, uint -> string =
+    if len == 0
+      then { string | inner = List:Nil }
+      else { string | inner = List:Slice ({ Vec u8 | ptr, len } . slice) }
+
 pub type string {
   inner List u8
 }

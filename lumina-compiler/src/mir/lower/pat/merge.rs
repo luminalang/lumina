@@ -1,11 +1,12 @@
 use super::{
-    super::InstInfo, range, BranchKey, Branching, DecTree, Init, PointTable, StrCheck, StrChecks,
-    TreeTail, LIST_CONS, LIST_NIL,
+    super::{CallTypes, Callable},
+    range, BranchKey, Branching, DecTree, Init, PointTable, StrCheck, StrChecks, TreeTail,
+    LIST_CONS, LIST_NIL,
 };
 use crate::prelude::*;
 use hir::Pattern;
 use lumina_key::M as Mod;
-use lumina_typesystem::Type;
+use lumina_typesystem::{Container, GenericMapper, RecordVar, Static, Type};
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::{file, line};
@@ -26,6 +27,8 @@ macro_rules! reachable_as_poison {
 pub struct Merger<'h, 's, Tail, M> {
     remaining: Vec<(&'h Tr<Pattern<'s>>, Option<key::Bind>)>,
     merge: &'h mut M,
+    maybe: key::M<key::Sum>,
+    string: key::M<key::Record>,
     table: PointTable,
     depth: usize,
     _tail: std::marker::PhantomData<Tail>,
@@ -66,6 +69,9 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                     self.merge_params(next, pelems)
                 )
             }
+            DecTree::Record { record, fields, next, .. } if *record == self.string => {
+                todo!();
+            }
             DecTree::Record { record, fields, next, .. } => {
                 expected!(
                     Pattern::Record(_, _, pfields) =>
@@ -94,46 +100,77 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
             }
             DecTree::Opaque { .. } => reachable_as_poison!(pat),
             DecTree::String { next, wildcard_next } => {
-                expected!(
-                    Pattern::String(spats) =>
-                    self.merge_strings(pat.span, spats, next, wildcard_next)
-                )
+                match pat.value {
+                    Pattern::String(spats) => {
+                        self.merge_strings(pat.span, spats, next, wildcard_next)
+                    }
+                    // Hack for allowing record patterns for strings
+                    Pattern::Record(rvar, bind, fields) => match self.merge.fin_record(*rvar) {
+                        Some((record, params)) if record == self.string => {
+                            assert!(params.is_empty());
+                            if !next.branches.is_empty() {
+                                panic!("cannot use a mixture of record and string patterns for string langitem");
+                            }
+
+                            let string_ty = Type::defined(record, params.clone());
+                            // *tree = self
+                            //     .merge
+                            //     .to_init()
+                            //     .reached_from_type(string_ty, *wildcard_next);
+
+                            *tree = self
+                                .expand_wildcard_and_bump_tails(&string_ty, &mut **wildcard_next);
+
+                            const STRING_FIELDS: usize = 1;
+                            self.merge_record(record, STRING_FIELDS, tree, fields)
+                        }
+                        _ => reachable_as_poison!(pat),
+                    },
+                    _ => reachable_as_poison!(pat),
+                }
             }
             DecTree::Wildcard { ty, next } => {
-                let next = std::mem::replace(&mut **next, DecTree::End(TreeTail::Poison));
-
-                let mut expanded_wildcard = self.merge.to_init().unreached_from_type(ty);
-
-                // If we have `_ next` and the actual type is found to be for example `(int, int)`.
-                // Then; we eagerly expand `(_, _) next` instead.
-                //
-                // This is normally done lazily so that we support recursive types however; we
-                // want to expand here because we have `pat` which isn't a wildcard. Thereby;
-                // we know we will need a deeper tree.
-                expanded_wildcard.for_each_tail_mut(&mut |tail| {
-                    match tail {
-                        TreeTail::Poison => todo!(),
-                        TreeTail::Unreached(types) => {
-                            let mut next = next.clone();
-
-                            // Since we're expanding a wildcard in the middle of a pattern tree, we
-                            // need to adjust the points on the tails to compensate.
-                            next.bump_tail_table_points(types.len());
-
-                            types_into_wildcards(types.into_iter(), next)
-                        }
-                        TreeTail::Reached(_, _, _) => {
-                            unreachable!("tree_from_type shouldn't generate reached")
-                        }
-                    }
-                });
-
-                *tree = expanded_wildcard;
-
+                *tree = self.expand_wildcard_and_bump_tails(ty, &mut **next);
                 self.merge(tree, pat)
             }
             DecTree::End(_) => self.merge_into_tail(tree, pat),
         }
+    }
+
+    fn expand_wildcard_and_bump_tails(
+        &mut self,
+        ty: &Type,
+        next: &mut DecTree<Tail>,
+    ) -> DecTree<Tail> {
+        let next = std::mem::replace(next, DecTree::End(TreeTail::Poison));
+
+        let mut expanded_wildcard = self.merge.to_init().unreached_from_type(ty);
+
+        // If we have `_ next` and the actual type is found to be for example `(int, int)`.
+        // Then; we eagerly expand `(_, _) next` instead.
+        //
+        // This is normally done lazily so that we support recursive types however; we
+        // want to expand here because we have `pat` which isn't a wildcard. Thereby;
+        // we know we will need a deeper tree.
+        expanded_wildcard.for_each_tail_mut(&mut |tail| {
+            match tail {
+                TreeTail::Poison => todo!(),
+                TreeTail::Unreached(types) => {
+                    let mut next = next.clone();
+
+                    // Since we're expanding a wildcard in the middle of a pattern tree, we
+                    // need to adjust the points on the tails to compensate.
+                    next.bump_tail_table_points(types.len());
+
+                    types_into_wildcards(types.into_iter(), next)
+                }
+                TreeTail::Reached(_, _, _) => {
+                    unreachable!("tree_from_type shouldn't generate reached")
+                }
+            }
+        });
+
+        expanded_wildcard
     }
 
     // TODO: theoretically we could find instances of the StrChecks being identical and merge those
@@ -148,7 +185,7 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
         let checks = spats
             .iter()
             .enumerate()
-            .map(|(i, spat)| {
+            .filter_map(|(i, spat)| {
                 let check = match spat {
                     hir::StringPattern::Literal(name) => {
                         let ro = self.merge.str_to_ro(name);
@@ -163,34 +200,52 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                         self.table.binds.push((*bind, self.depth));
                         StrCheck::TakeByte
                     }
-                    hir::StringPattern::BindBytes(bind, n) => {
-                        self.table.binds.push((*bind, self.depth));
-                        StrCheck::Take(*n)
-                    }
-                    hir::StringPattern::BindWhile(bind, callable) => {
-                        self.table.binds.push((*bind, self.depth));
-                        let inst = self.merge.pop_inst(span);
-                        if inst.is_none() {
-                            StrCheck::Take(0)
-                        } else {
-                            match callable {
-                                hir::Callable::Func(nfunc) => {
-                                    StrCheck::TakeWhileFunc(nfunc.module.m(nfunc.key))
-                                }
-                                hir::Callable::Lambda(lkey) => StrCheck::TakeWhileLambda(*lkey),
-                                hir::Callable::Binding(bind) => {
-                                    StrCheck::TakeWhileLocal(mir::Local::Binding(*bind))
-                                }
-                                hir::Callable::Builtin(_) => {
-                                    panic!("cannot use builtin in string pattern")
-                                }
-                                hir::Callable::TypeDependentLookup(_) => unreachable!(),
+                    hir::StringPattern::Extractor(extractor) => {
+                        let params = self.merge.extractor_params(&extractor.params);
+
+                        // then:
+                        match &extractor.call {
+                            hir::Callable::Func(nfunc) => {
+                                let (mapping, calltypes) = self.merge.fin_popped_inst(span)?;
+                                let call = Callable::Func(nfunc.module.m(nfunc.key), mapping);
+                                self.extractor_by_typing(call, calltypes, params)
                             }
+                            hir::Callable::Lambda(lambda) => {
+                                let (mapping, calltypes) = self.merge.fin_popped_inst(span)?;
+                                let call = Callable::Lambda(*lambda, mapping);
+                                self.extractor_by_typing(call, calltypes, params)
+                            }
+                            hir::Callable::Binding(bind) => {
+                                let ty = self.merge.type_of_bind(*bind);
+                                match ty {
+                                    Type::Container(Container::FnPointer, elems) => {
+                                        let call = Callable::Binding(*bind);
+                                        let (ret, ptypes) = elems.split_last().unwrap();
+                                        let ptypes = ptypes.iter().cloned().collect();
+                                        let ctypes = CallTypes::new(ptypes, ret.clone());
+                                        self.extractor_by_typing(call, ctypes, params)
+                                    }
+                                    Type::Container(Container::Closure, elems) => {
+                                        let call = Callable::Binding(*bind);
+                                        let (ret, ptypes) = elems.split_last().unwrap();
+                                        let ptypes = ptypes.iter().cloned().collect();
+                                        let ctypes = CallTypes::new(ptypes, ret.clone());
+                                        self.extractor_by_typing(call, ctypes, params)
+                                    }
+                                    _ => {
+                                        panic!("ET: invalid type for extractor");
+                                    }
+                                }
+                            }
+                            hir::Callable::Builtin(_) => {
+                                panic!("builtin functions are not allowed as extractors")
+                            }
+                            hir::Callable::TypeDependentLookup(_) => unreachable!(),
                         }
                     }
                 };
                 self.depth += 1;
-                check
+                Some(check)
             })
             .collect::<Vec<_>>();
 
@@ -202,6 +257,42 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
             next.branches.push((StrChecks { checks }, branch_next));
             true
         }
+    }
+
+    fn extractor_by_typing(
+        &mut self,
+        callable: Callable,
+        types: CallTypes,
+        params: Vec<mir::Expr>,
+    ) -> StrCheck {
+        let start_at = key::Param(params.len() as u32);
+        match &types.params[start_at] {
+            Type::Container(Container::String(_), _) => match &types.ret {
+                Type::Container(Container::Defined(key), elems)
+                    if self.maybe.map(key::TypeKind::Sum) == *key =>
+                {
+                    match &elems[..] {
+                        [Type::Container(Container::Tuple, elems)] => match &elems[..] {
+                            [ty, Type::Container(Container::String(_), _)] => {
+                                return StrCheck::TakeBySplit(callable, ty.clone(), params);
+                            }
+                            _ => {}
+                        },
+                        _ => {}
+                    }
+                }
+                _ => {}
+            },
+            Type::Int(size) if !size.signed && size.bits() == 8 => match &types.ret {
+                Type::Simple("bool") => {
+                    return StrCheck::TakeWhile(callable, params);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+
+        panic!("ET: invalid type annotation for extractor: {types:?}")
     }
 
     fn merge_record(
@@ -350,6 +441,8 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
         Merger {
             remaining: self.remaining.clone(),
             merge: self.merge,
+            maybe: self.maybe,
+            string: self.string,
             table: self.table.clone(),
             depth: self.depth,
             _tail: std::marker::PhantomData,
@@ -423,9 +516,20 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
 
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly>;
 
-    fn pop_inst(&mut self, span: Span) -> Option<InstInfo>;
+    fn fin_popped_inst(&mut self, span: Span) -> Option<(GenericMapper<Static>, CallTypes)>;
+    fn fin_record(&mut self, rvar: RecordVar) -> Option<(M<key::Record>, Vec<Type>)>;
 
-    fn first(&mut self, ty: &Type, mut pat: Tr<&Pattern<'s>>) -> DecTree<Tail> {
+    fn type_of_bind(&mut self, bind: key::Bind) -> Type;
+
+    fn extractor_params(&mut self, params: &[Tr<hir::Expr<'s>>]) -> Vec<mir::Expr>;
+
+    fn first(
+        &mut self,
+        string: M<key::Record>,
+        maybe: M<key::Sum>,
+        ty: &Type,
+        mut pat: Tr<&Pattern<'s>>,
+    ) -> DecTree<Tail> {
         let mut table = PointTable::new(vec![]);
 
         // edge-case for whether it's instantly completed, we don't want to generate extra branches
@@ -450,6 +554,8 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
         let reachable = Merger {
             remaining: Vec::new(),
             merge: self,
+            maybe,
+            string,
             table,
             depth: 0,
             _tail: std::marker::PhantomData,
@@ -460,10 +566,18 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
         tree
     }
 
-    fn branch(&mut self, tree: &mut DecTree<Tail>, pat: Tr<&Pattern<'s>>) -> IsReachable {
+    fn branch(
+        &mut self,
+        string: M<key::Record>,
+        maybe: M<key::Sum>,
+        tree: &mut DecTree<Tail>,
+        pat: Tr<&Pattern<'s>>,
+    ) -> IsReachable {
         Merger {
             remaining: Vec::new(),
             depth: 0,
+            maybe,
+            string,
             table: PointTable { binds: vec![] },
             merge: self,
             _tail: std::marker::PhantomData,

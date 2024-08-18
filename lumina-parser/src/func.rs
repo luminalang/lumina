@@ -55,7 +55,7 @@ impl<'a> Parser<'a> {
             identifier.split_last().1
         });
 
-        let params = match self.pat_params() {
+        let params = match self.pat_params(false) {
             Some(params) => params,
             None => {
                 self.recover_for([T::Equal, T::As], true);

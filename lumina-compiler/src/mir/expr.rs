@@ -146,7 +146,7 @@ impl<'a, 's> Verify<'a, 's> {
         .tr(expr.span)
     }
 
-    fn type_check_params<'e, 'es: 'e + 's>(
+    pub fn type_check_params<'e, 'es: 'e + 's>(
         &mut self,
         iter: impl IntoIterator<Item = &'e Tr<hir::Expr<'es>>>,
     ) -> Vec<Tr<IType>> {

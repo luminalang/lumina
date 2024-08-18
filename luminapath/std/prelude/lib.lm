@@ -2,6 +2,7 @@ pub use std:math [Num [..], Compare [..]]
 pub use std:maybe [Maybe [..]]
 pub use std:result [Result [..]]
 pub use std:string [string, ToString [show], <:>, <++>, <+>]
+use std:string [Stringable]
 pub use std:nothing [nothing]
 use std:ptr
 use std:list [Listable [:], List, ++]
@@ -45,12 +46,6 @@ pub type Type
 
 impl Size for a
   fn of as uint = builtin:size_of(self as a)
-
-// WARNING: Compiler assumes specific layout of `string_from_raw_parts`
-fn string_from_raw_parts ptr len as *u8, uint -> string =
-  if len == 0
-    then { string | inner = List:Nil }
-    else { string | inner = List:Slice ({ Vec u8 | ptr, len } . slice) }
 
 // fn size_of_ty ty as Type -> int =
 //     match ty

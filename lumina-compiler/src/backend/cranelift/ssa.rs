@@ -291,7 +291,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                         let call = self.ins().call_indirect(sigref, ptr, &params);
                         self.map_call_results_to_ventry(call, &typing.ret, slot)
                     }
-                    _ => panic!("not a fnpointer: {ptr:?}"),
+                    _ => panic!("not a fnpointer: {ptr:?}\n{}", &self.f.builder.func),
                 }
             }
             lir::Entry::Construct(values) => match ty {
@@ -539,7 +539,29 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 VEntry::Direct(ptr)
             }
             lir::Value::FuncPtr(mfunc) => {
-                let fptr = self.fptr_to_value(mfunc);
+                let header = &self.ctx.funcmap[mfunc];
+                let typing = abi::Typing {
+                    conv: self
+                        .ctx
+                        .objmodule
+                        .declarations()
+                        .get_function_decl(header.id)
+                        .signature
+                        .call_conv,
+                    params: header.params.clone(),
+                    ret: header.ret.clone(),
+                };
+                let fref = self.declare_func_in_func(header.id);
+                let ptr_type = self.ctx.pointer_type();
+                let fptr = self.ins().func_addr(ptr_type, fref);
+
+                VEntry::FuncPointer(Box::new(typing), fptr)
+            }
+            lir::Value::ExternFuncPtr(key) => {
+                let fheader = &self.ctx.externmap[&key];
+                let fref = self.declare_func_in_func(fheader.id);
+                let ptr_type = self.ctx.pointer_type();
+                let fptr = self.ins().func_addr(ptr_type, fref);
                 VEntry::Direct(fptr)
             }
             lir::Value::Int(n, bitsize) => {
@@ -672,13 +694,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     fn param(&mut self, src: lir::Value, dst: &mut Vec<Value>) {
         let entry = self.value_to_entry(src);
         self.flatten_entry(&entry, dst);
-    }
-
-    fn fptr_to_value(&mut self, mfunc: MonoFunc) -> Value {
-        let header = &self.ctx.funcmap[mfunc];
-        let fref = self.declare_func_in_func(header.id);
-        let ptr_type = self.ctx.pointer_type();
-        self.ins().func_addr(ptr_type, fref)
     }
 }
 

@@ -1,0 +1,35 @@
+use std:list:vec [get, unsafe_get, from_range]
+
+pub type Slice a {
+  vec   Vec a
+  start uint
+}
+
+pub fn split {vec, start} as Slice a -> Maybe (a, Slice a) =
+  get start vec
+  . map #(\v -> (v, {Slice a | vec, start = start + 1}))
+
+pub fn is_empty {vec, start} as Slice a -> bool =
+  start >= vec.len
+
+pub fn forEach f slice as fn(a -> ()), Slice a -> () =
+  list:itimes #perform (slice.vec.len - slice.start)
+ where
+  fn perform i as uint -> () = unsafe_get i slice.vec . f
+
+pub fn map f slice as fn(a -> b), Slice a -> Vec b =
+  from_range
+    (slice.start, slice.vec.len)
+    #(\i -> unsafe_get i slice.vec . f)
+
+// [1, 2, 3][1..] . take 3
+//         [2, 3] . take 3
+// TODO: The `len` field of slice and vec are semantically different. It does not make sense to have 
+// slice contain a vec. 
+// pub fn take n {vec, start} as uint, Slice a -> Slice a =
+//   if n < vec.len - start then
+//     { vec = vec . unsafe_take n, start }
+//   else
+//     { vec, start }
+// 
+// pub fn trim_right as uint, Slice a -> Slice a = 

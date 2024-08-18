@@ -2,7 +2,6 @@ use super::{lower, tyfmt::TyFmtState, Current, LangItems, RSolver, ReadOnlyBytes
 use crate::prelude::*;
 use crate::{ProjectInfo, Target};
 use ast::NFunc;
-use derive_more::{Display, From};
 use either::Either;
 use hir::HIR;
 use lumina_typesystem::{
@@ -60,13 +59,13 @@ impl FunctionStatus {
     }
 }
 
-#[derive(From, Debug, Clone, Copy, Display)]
-pub enum Local {
-    #[from]
-    Param(key::Param),
-    #[from]
-    Binding(key::Bind),
-}
+// #[derive(From, Debug, Clone, Copy, Display)]
+// pub enum Local {
+//     #[from]
+//     Param(key::Param),
+//     #[from]
+//     Binding(key::Bind),
+// }
 
 impl<'a, 's> Verify<'a, 's> {
     pub fn start_at(

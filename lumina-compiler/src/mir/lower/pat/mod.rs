@@ -1,6 +1,5 @@
-use crate::mir::Local;
+use super::Callable;
 use crate::prelude::*;
-use ast::NFunc;
 use lumina_typesystem::{IntSize, Type};
 use std::collections::VecDeque;
 
@@ -80,12 +79,12 @@ pub struct StrChecks {
 #[derive(Clone, Debug)]
 pub enum StrCheck {
     Literal(M<key::ReadOnly>),
-    Take(usize),
     TakeExcess,
     TakeByte,
-    TakeWhileLocal(Local),
-    TakeWhileFunc(M<NFunc>),
-    TakeWhileLambda(key::Lambda),
+    // fn(u8 -> bool) -> Maybe string
+    TakeWhile(Callable, Vec<mir::Expr>),
+    // string -> (a, string)
+    TakeBySplit(Callable, Type, Vec<mir::Expr>),
 }
 
 #[derive(Clone, Debug)]
@@ -276,11 +275,13 @@ impl std::fmt::Display for StrChecks {
             .iter()
             .map(|check| match check {
                 StrCheck::Literal(name) => name.to_string(),
-                StrCheck::Take(n) => format!(":{n}"),
                 StrCheck::TakeExcess | StrCheck::TakeByte => format!("_"),
-                StrCheck::TakeWhileLocal(local) => format!(":{local}"),
-                StrCheck::TakeWhileFunc(mfunc) => format!(":{mfunc}"),
-                StrCheck::TakeWhileLambda(lkey) => format!(":{lkey}"),
+                StrCheck::TakeWhile(call, params) => {
+                    format!("#({call} {})", params.iter().format(" "))
+                }
+                StrCheck::TakeBySplit(call, _, params) => {
+                    format!("#({call} {})", params.iter().format(" "))
+                }
             })
             .format(" ")
             .fmt(f)

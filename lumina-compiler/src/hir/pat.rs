@@ -1,26 +1,11 @@
-use super::scope::Bindings;
-use super::{resolve_callable, ty, Callable, IType, TypeEnvInfo};
+use super::{Callable, Expr, FuncLower, IType, TypeAnnotation};
 use crate::prelude::*;
 use ast::{Entity, Mod, NFunc};
-use derive_more::Constructor;
 use lumina_parser as parser;
 use lumina_typesystem::{RecordVar, Var};
 use lumina_util::{Highlighting, Identifier, ParamFmt};
 use std::fmt;
 use tracing::trace;
-
-#[derive(Constructor)]
-pub struct PatLower<'a, 's> {
-    module: key::Module,
-
-    ast: &'a ast::AST<'s>,
-    where_binds: &'a [parser::func::Declaration<'s>],
-
-    default_int_size: u8,
-
-    type_info: &'a mut TypeEnvInfo<'s>,
-    bindings: &'a mut Bindings<'s>,
-}
 
 #[derive(Clone, Debug)]
 pub enum Pattern<'s> {
@@ -45,20 +30,50 @@ pub enum Pattern<'s> {
 #[derive(Clone, Debug)]
 pub enum StringPattern<'s> {
     Literal(&'s str),
-    BindBytes(key::Bind, usize),
-    BindWhile(key::Bind, Callable<'s>),
+    Extractor(Extractor<'s>),
     Wildcard(key::Bind),
 }
 
-impl<'a, 's> PatLower<'a, 's> {
+#[derive(Clone, Debug)]
+pub struct Extractor<'s> {
+    pub call: Callable<'s>,
+    pub tanot: TypeAnnotation<'s>,
+    pub params: Vec<Tr<Expr<'s>>>,
+    pub bind: Option<Tr<&'s str>>,
+}
+
+impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
     pub fn pat(&mut self, pat: Tr<&parser::Pattern<'s>>) -> Tr<Pattern<'s>> {
         trace!("lowering pattern {pat}");
 
         match pat.value {
-            parser::Pattern::Name(identifier, params) => self.name(pat.span, identifier, params),
-            parser::Pattern::String(spats) => self.strings(spats),
-            parser::Pattern::Fields(init, fields) => self.record(pat.span, init, fields),
-            parser::Pattern::List(elems) => self.list(pat.span, elems),
+            parser::Pattern::Name(identifier, params) => {
+                let is_str = params.iter().any(|pat| {
+                    matches!(
+                        &pat.value,
+                        parser::Pattern::String(..) | parser::Pattern::Extractor(..)
+                    )
+                }) && identifier.is_name();
+
+                if is_str {
+                    let bind = self.bindings.declare(identifier.as_name().unwrap());
+                    let init = StringPattern::Wildcard(bind);
+                    self.pat_strings(init, params)
+                } else {
+                    self.pat_name(pat.span, identifier, params)
+                }
+            }
+            parser::Pattern::String(str, params) => {
+                self.pat_strings(StringPattern::Literal(*str), params)
+            }
+            parser::Pattern::Extractor(expr, bind, params) => {
+                match self.extractor((**expr).as_ref(), *bind) {
+                    None => Pattern::Poison,
+                    Some(spat) => self.pat_strings(spat, params),
+                }
+            }
+            parser::Pattern::Fields(init, fields) => self.pat_record(pat.span, init, fields),
+            parser::Pattern::List(elems) => self.pat_list(pat.span, elems),
             parser::Pattern::Tuple(elems) => {
                 let params = self.pats(elems);
                 Pattern::Tuple(params)
@@ -74,43 +89,85 @@ impl<'a, 's> PatLower<'a, 's> {
         .tr(pat.span)
     }
 
+    fn extractor(
+        &mut self,
+        expr: Tr<&parser::Expr<'s>>,
+        bind: Option<Tr<&'s str>>,
+    ) -> Option<StringPattern<'s>> {
+        let expr = self.expr(expr);
+        match expr.value {
+            Expr::Call(call, tanot, params) => {
+                let extractor = Extractor { call, tanot, params, bind };
+                Some(StringPattern::Extractor(extractor))
+            }
+            Expr::Poison => None,
+            _ => {
+                self.emit_unexpected_expression(expr.span);
+                None
+            }
+        }
+    }
+
+    fn emit_unexpected_expression(&self, span: Span) {
+        self.ast
+            .sources
+            .error("syntax error")
+            .m(self.module)
+            .eline(span, "unexpected expression")
+            .text("note: only extractors are allowed in patterns")
+            .emit()
+    }
+
     fn pats(&mut self, pats: &[Tr<parser::Pattern<'s>>]) -> Vec<Tr<Pattern<'s>>> {
         pats.iter().map(|p| self.pat(p.as_ref())).collect()
     }
 
-    fn strings(&mut self, spats: &[parser::pat::StringPattern<'s>]) -> Pattern<'s> {
-        spats
-            .iter()
-            .map(|spat| match spat {
-                parser::pat::StringPattern::Literal(name) => Some(StringPattern::Literal(*name)),
-                parser::pat::StringPattern::BindBytes(name, n) => {
-                    let bind = self.bindings.declare(*name);
-                    Some(StringPattern::BindBytes(bind, *n))
-                }
-                parser::pat::StringPattern::Wildcard(name) => {
-                    let bind = self.bindings.declare(*name);
-                    Some(StringPattern::Wildcard(bind))
-                }
-                parser::pat::StringPattern::BindWhile(name, ident) => {
-                    let (callable, _) = resolve_callable(
-                        self.ast,
-                        self.bindings,
-                        self.module,
-                        self.where_binds,
-                        ident.span,
-                        ident,
-                    )?;
+    fn pat_strings(
+        &mut self,
+        init: StringPattern<'s>,
+        params: &[Tr<parser::Pattern<'s>>],
+    ) -> Pattern<'s> {
+        let mut pats = vec![init];
 
-                    let bind = self.bindings.declare(*name);
-                    Some(StringPattern::BindWhile(bind, callable))
+        for pat in params {
+            match &pat.value {
+                parser::Pattern::String(str, params) => {
+                    if !params.is_empty() {
+                        self.emit_unexpected_expression(params[0].span);
+                    }
+
+                    pats.push(StringPattern::Literal(*str))
                 }
-            })
-            .collect::<Option<Vec<_>>>()
-            .map(Pattern::String)
-            .unwrap_or(Pattern::Poison)
+                parser::Pattern::Extractor(expr, bind, params) => {
+                    if !params.is_empty() {
+                        self.emit_unexpected_expression(params[0].span);
+                    }
+
+                    if let Some(extractor) = self.extractor((**expr).as_ref(), *bind) {
+                        pats.push(extractor);
+                    }
+                }
+                parser::Pattern::Name(name, params) if name.is_name() && params.is_empty() => {
+                    let bind = self.bindings.declare(name.as_name().unwrap());
+                    pats.push(StringPattern::Wildcard(bind));
+                }
+                _ => {
+                    self.ast
+                        .sources
+                        .error("invalid string pattern")
+                        .m(self.module)
+                        .eline(pat.span, "")
+                        .emit();
+
+                    return Pattern::Poison;
+                }
+            }
+        }
+
+        Pattern::String(pats)
     }
 
-    fn record(
+    fn pat_record(
         &mut self,
         span: Span,
         init: &parser::CurlyInit<'s>,
@@ -122,21 +179,19 @@ impl<'a, 's> PatLower<'a, 's> {
         match init {
             parser::CurlyInit::Modify(_) => panic!("modify is not allowed in this context"),
             parser::CurlyInit::Construct(ty) => {
-                let int_size = self.default_int_size;
-                let ty = ty::TypeLower::new(self.module, self.ast, int_size, self.type_info)
-                    .ty_spanned(ty.as_ref());
+                let ty = self.to_type_lower().ty_spanned(ty.as_ref());
 
-                let fields = self.record_fields(fields);
+                let fields = self.pat_record_fields(fields);
                 Pattern::Record(var, Some(ty), fields)
             }
             parser::CurlyInit::None => {
-                let fields = self.record_fields(fields);
+                let fields = self.pat_record_fields(fields);
                 Pattern::Record(var, None, fields)
             }
         }
     }
 
-    fn list(&mut self, span: Span, elems: &[Tr<parser::Pattern<'s>>]) -> Pattern<'s> {
+    fn pat_list(&mut self, span: Span, elems: &[Tr<parser::Pattern<'s>>]) -> Pattern<'s> {
         let inf = self.type_info.inference_mut().unwrap();
         let ivar = inf.var(elems.get(0).map(|p| p.span).unwrap_or(span));
 
@@ -192,7 +247,7 @@ impl<'a, 's> PatLower<'a, 's> {
             .value
     }
 
-    fn name(
+    fn pat_name(
         &mut self,
         span: Span,
         ident: &Identifier<'s>,
@@ -205,9 +260,9 @@ impl<'a, 's> PatLower<'a, 's> {
         };
 
         match path {
-            ["true"] => self.forbid_params(params, Pattern::Bool(true)),
-            ["false"] => self.forbid_params(params, Pattern::Bool(false)),
-            ["_"] => self.forbid_params(params, Pattern::Any),
+            ["true"] => self.pat_forbid_params(params, Pattern::Bool(true)),
+            ["false"] => self.pat_forbid_params(params, Pattern::Bool(false)),
+            ["_"] => self.pat_forbid_params(params, Pattern::Any),
             path => match self.ast.lookups.resolve_func(self.module, path) {
                 Ok(Mod { key: Entity::Func(NFunc::SumVar(type_, var)), module, .. }) => {
                     let params = self.pats(params);
@@ -242,7 +297,7 @@ impl<'a, 's> PatLower<'a, 's> {
         }
     }
 
-    fn forbid_params(
+    fn pat_forbid_params(
         &mut self,
         params: &[Tr<parser::Pattern<'s>>],
         constr: Pattern<'s>,
@@ -260,7 +315,7 @@ impl<'a, 's> PatLower<'a, 's> {
         }
     }
 
-    fn record_fields(
+    fn pat_record_fields(
         &mut self,
         fields: &parser::Fields<'s, parser::Pattern<'s>>,
     ) -> Vec<(Tr<&'s str>, key::Bind, Tr<Pattern<'s>>)> {
@@ -270,7 +325,7 @@ impl<'a, 's> PatLower<'a, 's> {
                 parser::Field::Punned(names) => {
                     let last = names[names.len()-1];
                     let value = parser::Pattern::Name(Identifier::from_raw(*last), vec![]);
-                    self.handle_assignment(names, None, (&value).tr(last.span))
+                    self.pat_handle_assignment(names, None, (&value).tr(last.span))
                 },
                 parser::Field::Value(v) => {
                     #[rustfmt::skip]
@@ -287,12 +342,12 @@ impl<'a, 's> PatLower<'a, 's> {
                     field_path,
                     bind,
                     value,
-                } => self.handle_assignment(field_path, *bind, value.as_ref()),
+                } => self.pat_handle_assignment(field_path, *bind, value.as_ref()),
             })
             .collect()
     }
 
-    fn handle_assignment(
+    fn pat_handle_assignment(
         &mut self,
         field_path: &[Tr<&'s str>],
         bind: Option<Tr<&'s str>>,

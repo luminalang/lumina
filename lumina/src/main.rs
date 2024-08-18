@@ -256,6 +256,11 @@ fn project_info<'s>(
         _ => None,
     })?;
 
+    let maybe = resolve_or_error(lookups, &["std", "prelude", "Maybe"], |k| match k {
+        ast::Entity::Type(key::TypeKind::Sum(key)) => Some(key),
+        _ => None,
+    })?;
+
     let list_default = resolve_or_error(lookups, &["std", "prelude", "List"], |k| match k {
         ast::Entity::Type(kind) => Some(kind),
         _ => None,
@@ -277,6 +282,7 @@ fn project_info<'s>(
         list_default,
         stringable,
         string,
+        maybe,
     ))
 }
 

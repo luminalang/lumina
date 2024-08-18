@@ -170,6 +170,6 @@ mod tests {
         let path = identifier.to_filepath(|_| PathBuf::new(), "lm");
         assert_eq!(&path, FilePath::new("utilities/span/spanned.lm"));
 
-        assert_eq!(identifier.to_string(), "mod:utilities:span:spanned")
+        assert_eq!(identifier.to_string(), "project:utilities:span:spanned")
     }
 }

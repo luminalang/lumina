@@ -1,6 +1,7 @@
 use super::*;
+use crate::mir::CallTypes;
 use insta::assert_snapshot;
-use lumina_typesystem::{Generic, GenericKind};
+use lumina_typesystem::{Generic, GenericKind, GenericMapper, RecordVar, Static};
 
 macro_rules! snapshot_tree_and_missing {
     ($lower:ident, $tree:expr) => {{
@@ -28,6 +29,7 @@ const MAYBE: key::Sum = key::Sum(0);
 const LIST: key::Sum = key::Sum(1);
 const JUST: key::SumVariant = key::SumVariant(0);
 const NONE: key::SumVariant = key::SumVariant(1);
+const STRING: key::Record = key::Record(0);
 
 fn m<T>(v: T) -> M<T> {
     key::Module(0).m(v)
@@ -100,7 +102,19 @@ impl<'a, 's> Merge<'s, Tail> for Lower {
         todo!()
     }
 
-    fn pop_inst(&mut self, _: Span) -> Option<mir::func::InstInfo> {
+    fn fin_popped_inst(&mut self, _: Span) -> Option<(GenericMapper<Static>, CallTypes)> {
+        todo!();
+    }
+
+    fn fin_record(&mut self, _: RecordVar) -> Option<(M<lumina_key::Record>, Vec<Type>)> {
+        todo!();
+    }
+
+    fn type_of_bind(&mut self, _: lumina_key::Bind) -> Type {
+        todo!()
+    }
+
+    fn extractor_params(&mut self, _: &[Tr<hir::Expr<'s>>]) -> Vec<mir::Expr> {
         todo!()
     }
 }
@@ -110,12 +124,12 @@ impl Lower {
         let mut iter = pats.iter();
 
         let (pat, _) = iter.next().unwrap();
-        let mut tree = self.first(&ty, pat.as_ref());
+        let mut tree = self.first(m(STRING), m(MAYBE), &ty, pat.as_ref());
 
         for (p, expected) in iter {
             self.tail += 1;
             let old = tree.clone();
-            let reachable = self.branch(&mut tree, p.as_ref());
+            let reachable = self.branch(m(STRING), m(MAYBE), &mut tree, p.as_ref());
 
             if *expected != reachable {
                 panic!("{p} had expected reachability of {expected}\nbefore merge:\n{old}\nafter merge:\n{tree}");
@@ -134,11 +148,11 @@ fn instant_wildcard() {
 
     let tuple = Type::tuple(vec![u8().value, u8().value]);
     let any = hir::Pattern::Any.tr(Span::null());
-    let tree = lower.first(&tuple, any.as_ref());
+    let tree = lower.first(m(STRING), m(MAYBE), &tuple, any.as_ref());
     snapshot_tree_and_missing!(lower, tree);
 
     let bind = hir::Pattern::Bind(key::Bind(0), Box::new(any.value.clone())).tr(Span::null());
-    let tree = lower.first(&tuple, bind.as_ref());
+    let tree = lower.first(m(STRING), m(MAYBE), &tuple, bind.as_ref());
     snapshot_tree_and_missing!(lower, tree);
 }
 

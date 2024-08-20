@@ -197,8 +197,17 @@ impl<'a> Debugger<'a> {
             | Entry::IntMul(lhs, rhs)
             | Entry::IntDiv(lhs, rhs) => {
                 let [lhs, rhs] = [lhs, rhs].map(|v| self.lir.type_of_value(self.mfunc, *v));
-                assert_eq!(lhs, rhs, "{} != {}", self.tfmt(&lhs), self.tfmt(&rhs));
-                self.as_int(&lhs, "div");
+                match lhs {
+                    MonoType::Pointer(inner) => {
+                        self.as_int(&rhs, "numeric operator");
+                        assert_eq!(&*inner, self.as_ptr(exp));
+                    }
+                    MonoType::Int(_) => {
+                        assert_eq!(lhs, rhs, "{} != {}", self.tfmt(&lhs), self.tfmt(&rhs));
+                        self.as_int(&lhs, "numeric operator");
+                    }
+                    _ => panic!("invalid operand for builtin numeric operation: {lhs:?}"),
+                }
             }
             Entry::Reduce(v) => {
                 let ty = self.lir.type_of_value(self.mfunc, *v);

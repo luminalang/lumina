@@ -239,6 +239,9 @@ impl<'a> FuncLower<'a> {
         let ty = MonoType::Int(to);
 
         match from.bits().cmp(&to.bits()) {
+            Ordering::Equal if from.signed != to.signed => {
+                self.ssa().transmute(v, MonoType::Int(to))
+            }
             Ordering::Equal => v,
             Ordering::Less => self.ssa().extend(v, from.signed, ty),
             Ordering::Greater => self.ssa().reduce(v, ty),

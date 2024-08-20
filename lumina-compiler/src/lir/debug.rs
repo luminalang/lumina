@@ -37,6 +37,7 @@ impl<'a> Debugger<'a> {
         MonoFormatter { types: &self.lir.mono.types, v }
     }
 
+    #[track_caller]
     fn tcheck(
         &self,
         mut given: impl Iterator<Item = MonoType>,
@@ -94,6 +95,7 @@ impl<'a> Debugger<'a> {
         }
     }
 
+    #[track_caller]
     fn params(&self, given: &[Value], expected: impl Iterator<Item = &'a MonoType>) {
         let given = given.iter().map(|v| self.lir.type_of_value(self.mfunc, *v));
         self.tcheck(given, expected);
@@ -164,7 +166,6 @@ impl<'a> Debugger<'a> {
                         })
                         .sum::<u32>();
                     assert!(size <= *largest);
-                    todo!();
                 }
                 MonoType::Monomorphised(mk) => {
                     let fields = self.lir.mono.fields(*mk);

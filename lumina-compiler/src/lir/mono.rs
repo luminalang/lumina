@@ -467,7 +467,6 @@ impl<'a> Monomorphization<'a> {
             Some(key) => *key,
             None => {
                 let mk = self.mono.types.push(MonomorphisedRecord::placeholder());
-                dbg!(&mk);
                 self.mono.resolve.insert(key, mk);
                 tmap.set_self(
                     Type::defined(kind, params.to_vec()),

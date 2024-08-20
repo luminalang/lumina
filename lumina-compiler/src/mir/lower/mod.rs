@@ -223,7 +223,9 @@ impl<'a, 's> Lower<'a, 's> {
             buffer.push(b);
         }
 
-        let ty = Type::defined(self.items.pinfo.string, vec![]);
+        // We set the type to `u8` because when this data is accessed
+        // with ReadOnly, it's treated by-reference so it'll become `*u8`
+        let ty = Type::u8();
 
         self.read_only_table.push(
             self.current.fkey.module,

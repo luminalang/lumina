@@ -433,7 +433,7 @@ impl LIR {
 
     fn type_of_value(&self, mfkey: MonoFunc, value: ssa::Value) -> MonoType {
         match value {
-            ssa::Value::ReadOnly(ro) => self.read_only_table[ro].1.clone(),
+            ssa::Value::ReadOnly(ro) => MonoType::pointer(self.read_only_table[ro].1.clone()),
             ssa::Value::V(v) => self.functions[mfkey].blocks.type_of(v).clone(),
             ssa::Value::Int(_, intsize) => MonoType::Int(intsize),
             ssa::Value::Float(_) => MonoType::Float,

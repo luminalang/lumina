@@ -2,6 +2,8 @@ use std:ptr
 use std:list [Listable]
 use std:list:slice [Slice]
 use std:math [Compare [>=]]
+use std:io [crash]
+use std:string [<++>]
 
 // An immutable heap-allocated array
 pub type Vec a {
@@ -35,7 +37,10 @@ fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
 
 pub fn from_range (start, end) f as (uint, uint), fn(uint -> a) -> Vec a =
   // TODO: bound checks
-  let count = (end - start) in // 1 - 0 = 1
+  if end > start then
+    crash (show end <++> ">" <++> show start)
+  else
+  let count = (end - start) in
   let vec = capacity count in
     do list:itimes #(\i -> unsafe_set i (f (i + start)) vec) count
     then vec

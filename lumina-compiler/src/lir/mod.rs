@@ -12,6 +12,8 @@ use lumina_typesystem::{Generic, GenericKind, GenericMapper, ImplIndex, IntSize,
 use lumina_util::Highlighting;
 use std::fmt;
 use tracing::info_span;
+mod debug;
+pub use debug::Debugger;
 
 const UNIT: MonoTypeKey = MonoTypeKey(0);
 
@@ -308,6 +310,9 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
         assert_eq!(previous, None);
     }
 
+    #[cfg(debug_assertions)]
+    Debugger::new(&lir, &mir).run();
+
     Output {
         functions: lir.functions,
         extern_funcs: lir.extern_funcs,
@@ -426,6 +431,23 @@ impl LIR {
         }
     }
 
+    fn type_of_value(&self, mfkey: MonoFunc, value: ssa::Value) -> MonoType {
+        match value {
+            ssa::Value::ReadOnly(ro) => self.read_only_table[ro].1.clone(),
+            ssa::Value::V(v) => self.functions[mfkey].blocks.type_of(v).clone(),
+            ssa::Value::Int(_, intsize) => MonoType::Int(intsize),
+            ssa::Value::Float(_) => MonoType::Float,
+            ssa::Value::FuncPtr(ptr) => {
+                let func = &self.functions[ptr];
+                func.as_fnpointer()
+            }
+            ssa::Value::ExternFuncPtr(ptr) => {
+                let func = &self.extern_funcs[&ptr];
+                MonoType::FnPointer(func.params.clone(), Box::new(func.returns.clone()))
+            }
+        }
+    }
+
     fn push_function(
         &mut self,
         symbol: String,
@@ -475,6 +497,10 @@ impl<'a> FuncLower<'a> {
 
     fn types(&self) -> &Records {
         &self.lir.mono.types
+    }
+
+    fn type_of_value(&self, v: Value) -> MonoType {
+        self.lir.type_of_value(self.current.mfkey, v)
     }
 
     fn expr_of_origin(&mut self, f: FuncOrigin) -> &'a mir::Expr {
@@ -735,7 +761,7 @@ impl<'a> FuncLower<'a> {
     }
 
     fn string_type(&mut self) -> MonoTypeKey {
-        self.lir.mono.get_or_make_record(self.info.string, vec![])
+        to_morphization!(self.lir, self.mir, &mut self.current.tmap).record(self.info.string, &[])
     }
 
     fn uint(&self, n: i128) -> (Value, IntSize) {
@@ -823,26 +849,6 @@ impl<'a> FuncLower<'a> {
             }
             FuncOrigin::Lambda(origin, _) => self.get_lambda_origin((**origin).clone(), lambda),
             FuncOrigin::SumConstructorWrapper(_, _) => unreachable!(),
-        }
-    }
-
-    fn type_of_value(&self, value: ssa::Value) -> MonoType {
-        match value {
-            ssa::Value::ReadOnly(ro) => self.lir.read_only_table[ro].1.clone(),
-            ssa::Value::V(v) => self.lir.functions[self.current.mfkey]
-                .blocks
-                .type_of(v)
-                .clone(),
-            ssa::Value::Int(_, intsize) => MonoType::Int(intsize),
-            ssa::Value::Float(_) => MonoType::Float,
-            ssa::Value::FuncPtr(ptr) => {
-                let func = &self.lir.functions[ptr];
-                func.as_fnpointer()
-            }
-            ssa::Value::ExternFuncPtr(ptr) => {
-                let func = &self.lir.extern_funcs[&ptr];
-                MonoType::FnPointer(func.params.clone(), Box::new(func.returns.clone()))
-            }
         }
     }
 

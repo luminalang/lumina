@@ -2,6 +2,7 @@ use std:maybe [Maybe [..]]
 use std:math [Compare, Num [+]]
 use vec [Vec]
 use slice [Slice]
+use std:io [crash]
 
 @![langItem(list as List)]
 
@@ -93,7 +94,7 @@ pub fn itimes f n as fn(uint -> ()), uint -> () =
   next 0
  where
   fn next i as uint -> () =
-    if n == i then () else do f i then next (i + 1)
+    if n == i then () else do f i then next (io:trace (i + 1))
 
 pub fn break f list as fn(a -> bool), [a] -> ([a], [a]) =
   match list
@@ -107,21 +108,28 @@ pub fn break f list as fn(a -> bool), [a] -> ([a], [a]) =
       // TODO: if we do pointer-equality on `:` could we optimise appending two `Slice`s
       // into shifting start of a singlular Slice?
 
-// pub fn split_at n list as uint, self -> (self, self) =
-//   if list == 0 then
-//     (Nil, list)
-//   else 
-//     match list
-//     | Slice {vec, start} -> 
-//       if vec.len - start > n then
-//         ( { vec = { len = vec.len + start - n, ptr = vec.ptr }, start }, Nil )
-//       else
-//         // same vec but shortened on one side and start shifted on other
-//         // ( { vec = { len = vec.len - n }, start}, { vec = { len =  )
-//     
-//     | Singleton a -> 1
-//     | Concat left right -> len left + len right
-//     | Nil -> 0 
+pub fn split_at at list as uint, List a -> (List a, List a) =
+  if at == 0 then
+    (Nil, list)
+  else 
+    match list
+    | Slice slice -> 
+      let (left, right) = slice . split_at at
+       in (Slice left, if right . is_empty then Nil else Slice right)
+
+    | Singleton a -> 
+      (Singleton a, Nil)
+
+    | Concat left right ->
+      let (l, r) = split_at at left in
+        let remaining = (l . len) - at in
+          // I think we need the extra len == 0 edge-case because concat of Nil isn't allowed? 
+          //
+          // but perhaps we should just allow concat of Nil and handle that properly instead. 
+          let (x, y) = split_at remaining (if len r == 0 then right else r ++ right)
+           in (l ++ x, y)
+
+    | Nil -> ([], [])
 
 when a can ToString
 impl ToString for [a]
@@ -134,3 +142,31 @@ impl ToString for [a]
       | [last] -> show last <++> "]"
       | [x : xs] -> show x <++> ", " <++> show_ xs
 
+
+// TODO: Considder splitting equality out from Compare
+// (Eq + Ordering)
+//
+// Since adding it for string is kinda stupid
+//
+// Trait aliases could be nice here
+//
+// TODO: We need a lazy `&&` operator
+when a can Compare
+impl Compare for List a
+  fn == lhs rhs as self, self -> bool =
+    if len lhs /= len rhs then
+      false
+    else
+      match (lhs, rhs)
+      | ([lx : lxs], [rx : rxs]) -> 
+        if lx /= rx
+          then false
+          else lxs == rxs
+      | ([], []) -> true
+      | _ -> crash "linear scan for lists of non-equal length"
+      
+  fn < lhs rhs as self, self -> bool = 
+    len lhs < len rhs
+
+  fn > lhs rhs as self, self -> bool =
+    len lhs < len rhs

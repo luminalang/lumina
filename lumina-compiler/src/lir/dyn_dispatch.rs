@@ -29,7 +29,7 @@ impl<'a> FuncLower<'a> {
             Some(mfunc) => *mfunc,
             None => {
                 let mut fnptr_ptypes = vec![MonoType::u8_pointer()];
-                fnptr_ptypes.extend(remaining);
+                fnptr_ptypes.extend(remaining.iter().cloned());
 
                 // TODO: remember caching
 
@@ -39,7 +39,8 @@ impl<'a> FuncLower<'a> {
                 );
 
                 let construct = |this: &mut Self, ssa: &mut Blocks| {
-                    let data = ssa.deref(V(0).value(), capture_tuple.into());
+                    let ptr = ssa.transmute(V(0).value(), MonoType::pointer(capture_tuple.into()));
+                    let data = ssa.deref(ptr, capture_tuple.into());
 
                     let mut applicated = this
                         .lir
@@ -65,7 +66,7 @@ impl<'a> FuncLower<'a> {
             }
         };
 
-        self.construct_closure(mfunc, params, capture_tuple)
+        self.construct_closure(mfunc, remaining, params, capture_tuple)
     }
 
     // let f = #(f 0) in
@@ -93,7 +94,12 @@ impl<'a> FuncLower<'a> {
 
         let mut fnptr_ptypes = Vec::with_capacity(inner_ptypes.len() - params.len());
         fnptr_ptypes.push(MonoType::u8_pointer());
-        fnptr_ptypes.extend(inner_ptypes.iter().skip(1 + params.len()).cloned());
+        let remaining = inner_ptypes
+            .iter()
+            .skip(1 + params.len())
+            .cloned()
+            .collect::<Vec<_>>();
+        fnptr_ptypes.extend(remaining.iter().cloned());
 
         let capture_tuple = {
             let mut types = vec![inner_object.into()];
@@ -106,7 +112,8 @@ impl<'a> FuncLower<'a> {
         let construct = |this: &mut Self, ssa: &mut Blocks| {
             use key::RecordField as field;
 
-            let data = ssa.deref(V(0).value(), capture_tuple.into());
+            let ptr = ssa.transmute(V(0).value(), MonoType::pointer(capture_tuple.into()));
+            let data = ssa.deref(ptr, capture_tuple.into());
             let inner = ssa.field(data, capture_tuple, field(0), inner_object.into());
             let inner_data = ssa.field(inner, inner_object, field(0), MonoType::u8_pointer());
             let inner_call = ssa.field(inner, inner_object, field(1), inner_fnptr);
@@ -133,20 +140,24 @@ impl<'a> FuncLower<'a> {
             self.create_deref_funcwrapper(symbol, construct, fnptr_ptypes, inner_ret.clone());
 
         params.insert(0, target.value());
-        self.construct_closure(mfunc, params, capture_tuple)
+        self.construct_closure(mfunc, remaining, params, capture_tuple)
     }
 
     pub fn construct_closure(
         &mut self,
         mfunc: MonoFunc,
+        remaining: Vec<MonoType>,
         captures: Vec<Value>,
         cap: MonoTypeKey,
     ) -> Value {
-        let object_type =
-            self.get_object_type(self.info.closure, self.lir.mfunc_to_fnpointer_type(mfunc));
+        let ret = self.lir.functions[mfunc].returns.clone();
+
+        let object_type = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
+            .closure_object(self.info.closure, remaining, ret);
 
         let data = self.ssa().construct(captures, cap.into());
         let dataptr = self.heap_alloc(data, cap.into());
+        let dataptr = self.ssa().transmute(dataptr, MonoType::u8_pointer());
 
         self.ssa()
             .construct(vec![dataptr, Value::FuncPtr(mfunc)], object_type.into())
@@ -172,10 +183,12 @@ impl<'a> FuncLower<'a> {
     pub fn dyn_object(
         &mut self,
         ikey: M<key::Impl>,
+        trait_params: Vec<MonoType>,
         impltorv: Value,
         methods: Map<key::Method, MonoFunc>,
     ) -> Value {
         let trait_ = self.mir.itraits[ikey].0;
+        assert_ne!(trait_, self.info.closure);
 
         let impltor = self.type_of_value(impltorv);
         let self_positions = self.mir.trait_objects[trait_].as_ref().unwrap();
@@ -237,8 +250,8 @@ impl<'a> FuncLower<'a> {
 
         match target {
             Either::Right(mfunc) => {
-                let object_type =
-                    self.get_object_type(trait_, self.lir.mfunc_to_fnpointer_type(mfunc));
+                let object_type = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
+                    .trait_object(trait_, trait_params);
 
                 self.ssa()
                     .construct(vec![dataptr, Value::FuncPtr(mfunc)], object_type.into())
@@ -246,19 +259,14 @@ impl<'a> FuncLower<'a> {
             Either::Left(val) => {
                 let vtable_type = self.lir.vals[val].clone();
 
-                let object_type = self.get_object_type(trait_, vtable_type.clone());
+                let object_type = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
+                    .trait_object(trait_, trait_params);
                 let vtableptr = self.ssa().val_to_ref(val, vtable_type);
 
                 self.ssa()
                     .construct(vec![dataptr, vtableptr], object_type.into())
             }
         }
-    }
-
-    fn get_object_type(&mut self, trait_: M<key::Trait>, vtable: MonoType) -> MonoTypeKey {
-        self.lir
-            .mono
-            .get_or_make_record(trait_, vec![MonoType::u8_pointer(), vtable])
     }
 
     fn create_method_funcwrapper(
@@ -282,7 +290,10 @@ impl<'a> FuncLower<'a> {
             let params = ssa
                 .params(lir::Block::entry())
                 .map(|v| match v.0 == self_ {
-                    true => ssa.deref(v.value(), impltor.clone()),
+                    true => {
+                        let ptr = ssa.transmute(v.value(), MonoType::pointer(impltor.clone()));
+                        ssa.deref(ptr, impltor.clone())
+                    }
                     false => v.value(),
                 })
                 .collect();

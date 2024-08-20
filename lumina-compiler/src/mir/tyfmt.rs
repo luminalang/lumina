@@ -83,7 +83,12 @@ impl<'a, 's, P: TyFormatted<'a, 's>, K: Into<key::TypeKind> + Clone> TyFormatted
 
 impl<'a, 's, T: TyFormatted<'a, 's>> TyFormatted<'a, 's> for hir::Typing<T> {
     fn tyfmt(&self, state: TyFmtState<'a, 's>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let params = self.params.values().map(|t| &t.value).collect::<Vec<_>>();
+        let params = self
+            .params
+            .values()
+            .map(|t| &t.value)
+            .chain(std::iter::once(&*self.returns))
+            .collect::<Vec<_>>();
         Container::fmt_func("", &params, |ty| state.clone().fmts(ty).to_string(), f)
     }
 }

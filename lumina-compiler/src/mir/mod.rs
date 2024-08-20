@@ -366,7 +366,7 @@ fn verify_impl_headers<'s>(
                         env: &mut tenvs[ifkey],
                         self_: Downgrade.transform(&tinst.self_.as_ref().unwrap()),
                     }
-                    .typing(&idef.typing, trmtyping);
+                    .typing(&idef.typing, trmtyping.clone());
 
                     if !result.is_ok() {
                         failed_methods.push((tfkey, ifkey, result));

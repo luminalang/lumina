@@ -34,7 +34,6 @@ impl<'a> FuncLower<'a> {
         match expr {
             mir::Expr::Call(call, params) => {
                 let params = self.params_to_values(params);
-                println!("{params:#?}");
                 self.call(call, params)
             }
             mir::Expr::PartiallyApplicate(call, partials) => {
@@ -42,12 +41,12 @@ impl<'a> FuncLower<'a> {
                 self.pass(call, partials)
             }
             mir::Expr::Yield(call) => match self.lower_callable(call) {
-                Callable::Extern(fkey) => Value::ExternFuncPtr(fkey),
-                Callable::Static(mfunc) => Value::FuncPtr(mfunc),
+                Callable::Extern(fkey) => todo!(),
+                // Value::ExternFuncPtr(fkey),
+                // Value::FuncPtr(mfunc),
+                Callable::Static(mfunc) => todo!(), // TODO: are we meant to check the type for whether this should be converted into a closure?
                 Callable::LiftedLambda(mfunc, captures) => {
-                    let ctypes = captures.iter().map(|v| self.type_of_value(*v)).collect();
-                    let cap = self.lir.mono.get_or_make_tuple(ctypes);
-                    self.construct_closure(mfunc, captures, cap)
+                    self.partially_applicate_func(mfunc, captures)
                 }
                 Callable::Val(_) => todo!("yield fnptr returnt by global value"),
                 Callable::Sum { tmap, var, ty, .. } => {
@@ -103,16 +102,23 @@ impl<'a> FuncLower<'a> {
                 let params = self.params_to_values(elems);
                 self.elems_to_tuple(params, None)
             }
+            mir::Expr::PointerToPointerCast(expr, to) | mir::Expr::ToPointerCast(expr, _, to) => {
+                let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(to);
+                let v = self.expr_to_value(&expr);
+                let MonoType::Int(fromint) = self.type_of_value(v) else {
+                    unreachable!()
+                };
+                let v = self.int_cast(v, [fromint, IntSize::new(false, 64)]);
+                self.ssa().transmute(v, MonoType::pointer(ty))
+            }
+            mir::Expr::FromPointerCast(expr, toint) => {
+                let v = self.expr_to_value(&expr);
+                let v = self.int_cast(v, [IntSize::new(false, 64), *toint]);
+                self.ssa().transmute(v, MonoType::Int(*toint))
+            }
             mir::Expr::IntCast(expr, from, to) => {
                 let inner = self.expr_to_value(&expr);
-
-                let ty = MonoType::Int(*to);
-
-                match from.bits().cmp(&to.bits()) {
-                    Ordering::Equal => inner,
-                    Ordering::Less => self.ssa().extend(inner, from.signed, ty),
-                    Ordering::Greater => self.ssa().reduce(inner, ty),
-                }
+                self.int_cast(inner, [*from, *to])
             }
             mir::Expr::ToFloatCast(expr, fromint) => {
                 let inner = self.expr_to_value(&expr);
@@ -139,6 +145,7 @@ impl<'a> FuncLower<'a> {
                 let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
                 let weak_impltor = morph.apply_weak(weak_impltor);
                 let weak_trait_params = morph.applys_weak::<Vec<_>>(trait_params);
+                let trait_params = morph.applys(trait_params);
 
                 let (impl_, tmap) = self.find_implementation(
                     trait_,
@@ -165,7 +172,7 @@ impl<'a> FuncLower<'a> {
                     })
                     .collect();
 
-                self.dyn_object(impl_, expr, methods)
+                self.dyn_object(impl_, trait_params, expr, methods)
             }
             mir::Expr::Match(on, tree, branches, pred) => {
                 let on = self.expr_to_value(on);
@@ -223,6 +230,16 @@ impl<'a> FuncLower<'a> {
                 // self.ssa().unreachable(ty).value()
             }
             mir::Expr::Poison => todo!(),
+        }
+    }
+
+    fn int_cast(&mut self, v: Value, [from, to]: [IntSize; 2]) -> Value {
+        let ty = MonoType::Int(to);
+
+        match from.bits().cmp(&to.bits()) {
+            Ordering::Equal => v,
+            Ordering::Less => self.ssa().extend(v, from.signed, ty),
+            Ordering::Greater => self.ssa().reduce(v, ty),
         }
     }
 
@@ -298,7 +315,8 @@ impl<'a> FuncLower<'a> {
     pub fn heap_alloc(&mut self, value: lir::Value, ty: MonoType) -> Value {
         let size = self.lir.mono.types.size_of(&ty);
         if size == 0 {
-            Value::Int(0, self.lir.target.uint())
+            let zero = Value::Int(0, self.lir.target.uint());
+            self.ssa().transmute(zero, MonoType::pointer(ty))
         } else {
             let ptr = self.ssa().alloc(size, ty);
             self.ssa().write(ptr, value);
@@ -327,9 +345,8 @@ impl<'a> FuncLower<'a> {
             .ssa()
             .field(obj, objty, VTABLE_FIELD, fnptr_type.clone());
 
-        let param_tuple = self.elems_to_tuple(params, None);
-
-        let call_method_params = vec![objptr, param_tuple];
+        let mut call_method_params = vec![objptr];
+        call_method_params.extend(params);
 
         self.ssa().call(fnptr, call_method_params, ret)
     }

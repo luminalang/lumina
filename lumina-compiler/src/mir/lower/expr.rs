@@ -22,6 +22,9 @@ pub enum Expr {
     Float(f64),
     ReadOnly(M<key::ReadOnly>),
 
+    PointerToPointerCast(Box<Self>, Type),
+    ToPointerCast(Box<Self>, IntSize, Type),
+    FromPointerCast(Box<Self>, IntSize),
     IntCast(Box<Self>, IntSize, IntSize),
     ToFloatCast(Box<Self>, IntSize),
     FromFloatCast(Box<Self>, IntSize),
@@ -321,18 +324,17 @@ impl<'a, 's> Lower<'a, 's> {
                 self.env.push_constraint(ty_of_expr.clone(), con);
                 Expr::ObjectCast(expr, ty_of_expr.value, trait_, params)
             }
-            (Type::Int(intsize), Type::Container(Container::Pointer, _)) => {
-                Expr::IntCast(expr, *intsize, self.target.uint())
+            (Type::Int(intsize), Type::Container(Container::Pointer, mut inner)) => {
+                Expr::ToPointerCast(expr, *intsize, inner.pop().unwrap())
             }
             (Type::Container(Container::Pointer, _), Type::Int(intsize)) => {
-                Expr::IntCast(expr, self.target.uint(), intsize)
+                Expr::FromPointerCast(expr, intsize)
             }
 
-            (Type::Container(Container::Pointer, _), Type::Container(Container::Pointer, _)) => {
-                // TODO: this cast does nothing. But; we still put it here because we need an expression
-                let ptr = self.target.uint();
-                Expr::IntCast(expr, ptr, ptr)
-            }
+            (
+                Type::Container(Container::Pointer, _),
+                Type::Container(Container::Pointer, mut inner),
+            ) => Expr::PointerToPointerCast(expr, inner.pop().unwrap()),
             (_, to) => {
                 self.errors.push(FinError::InvalidCast(ty_of_expr, to));
                 Expr::Poison
@@ -537,6 +539,12 @@ impl fmt::Display for Expr {
                     tr,
                     params.iter().format(" ")
                 )
+            }
+            Expr::ToPointerCast(expr, _, to) | Expr::PointerToPointerCast(expr, to) => {
+                write!(f, "{op}{expr} {} *{to}", "as".keyword())
+            }
+            Expr::FromPointerCast(expr, toint) => {
+                write!(f, "{op}{expr} {} {toint}", "as".keyword())
             }
             Expr::ValToRef(val) => write!(f, "{op}{} {val}{cp}", "ref_val".keyword()),
             Expr::Deref(inner) => write!(f, "{op}{} {inner}{cp}", "deref".keyword()),

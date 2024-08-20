@@ -350,31 +350,6 @@ impl MonomorphisedTypes {
         key
     }
 
-    pub fn get_or_make_record<K: Into<key::TypeKind>>(
-        &mut self,
-        kind: M<K>,
-        elems: Vec<MonoType>,
-    ) -> MonoTypeKey {
-        let kind = kind.map(|k| k.into());
-
-        let pair = (kind, elems);
-        if let Some(key) = self.resolve.get(&pair) {
-            return *key;
-        }
-
-        let record = MonomorphisedRecord {
-            size: pair.1.iter().map(|ty| self.types.size_of(ty)).sum(),
-            repr: Repr::Lumina,
-            autoboxed: HashSet::new(),
-            fields: pair.1.iter().cloned().collect(),
-            original: Some(kind),
-        };
-
-        let key = self.types.push(record);
-        self.resolve.insert(pair, key);
-        key
-    }
-
     pub fn fields(&self, ty: MonoTypeKey) -> impl Iterator<Item = key::RecordField> + 'static {
         self.types[ty].fields.keys()
     }
@@ -492,6 +467,7 @@ impl<'a> Monomorphization<'a> {
             Some(key) => *key,
             None => {
                 let mk = self.mono.types.push(MonomorphisedRecord::placeholder());
+                dbg!(&mk);
                 self.mono.resolve.insert(key, mk);
                 tmap.set_self(
                     Type::defined(kind, params.to_vec()),
@@ -530,11 +506,23 @@ impl<'a> Monomorphization<'a> {
         }
     }
 
+    // TODO: The refactor that makes it so that the defined type monomorphisation takes MonoType
+    // for trait objects instead of Types which are then monomorphised, is that something we should
+    // do for all types and not just trait objects?
+    //
+    // For trait objects we *had* to make that change. But; it's possible that we *have* to do it
+    // this way for the others for some reason.
+    //
+    // no there literally isn't. ok but let's make sure this works for trait objects first before
+    // making the change generally.
     pub fn defined(&mut self, key: M<key::TypeKind>, params: &[Type]) -> MonoTypeKey {
         match key.value {
             key::TypeKind::Record(k) => self.record(key.module.m(k), params),
             key::TypeKind::Sum(k) => self.sum(key.module.m(k), params),
-            key::TypeKind::Trait(k) => self.trait_object(key.module.m(k), params),
+            key::TypeKind::Trait(k) => {
+                let mparams = self.applys(params);
+                self.trait_object(key.module.m(k), mparams)
+            }
         }
     }
 
@@ -585,10 +573,38 @@ impl<'a> Monomorphization<'a> {
         })
     }
 
-    pub fn trait_object(&mut self, trait_: M<key::Trait>, params: &[Type]) -> MonoTypeKey {
-        let mparams = self.applys(params);
-        let params: Vec<_> = self.applys_weak(params);
-        let key = (trait_.map(key::TypeKind::Trait), mparams);
+    // For closures, the type parameter `p` actually expands from {a,b} to `a,b`
+    //
+    // This greatly simplifies partial application, but means we need to edge-case them
+    // instead of relying on the generalised `trait_object` monomorphisation.
+    pub fn closure_object(
+        &mut self,
+        trait_: M<key::Trait>,
+        mut ptypes: Vec<MonoType>,
+        ret: MonoType,
+    ) -> MonoTypeKey {
+        let mut params = ptypes.clone();
+        params.push(ret.clone());
+        let key = (trait_.map(key::TypeKind::Trait), params);
+
+        if let Some(&key) = self.mono.resolve.get(&key) {
+            return key;
+        }
+
+        // Reserve in case one of the methods contain the same trait object
+        let reserved = self.mono.types.push(MonomorphisedRecord::placeholder());
+        self.mono.resolve.insert(key.clone(), reserved);
+
+        ptypes.insert(0, MonoType::u8_pointer());
+        let vtable = MonoType::fn_pointer(ptypes, ret);
+
+        self.trait_object_from_vtable(trait_, reserved, vtable);
+
+        reserved
+    }
+
+    pub fn trait_object(&mut self, trait_: M<key::Trait>, params: Vec<MonoType>) -> MonoTypeKey {
+        let key = (trait_.map(key::TypeKind::Trait), params);
 
         if let Some(&key) = self.mono.resolve.get(&key) {
             return key;
@@ -619,7 +635,7 @@ impl<'a> Monomorphization<'a> {
             // Create a tmap to monomorphise the generics from the `trait` decl when creating fnpointers
             let mut tmap = TypeMap::new();
             tmap.set_self(Type::u8_pointer(), MonoType::u8_pointer());
-            tmap.extend(GenericKind::Parent, params.into_iter().zip(key.1));
+            tmap.extend_no_weak(GenericKind::Parent, key.1);
 
             let mut method_to_fnptr = |func| {
                 let typing = self.funcs[trait_.module.m(func)].as_done();
@@ -647,20 +663,24 @@ impl<'a> Monomorphization<'a> {
             }
         };
 
-        // Declare the trait object to be a record of `*u8 + *vtable`
+        self.trait_object_from_vtable(trait_, reserved, vtable);
+
+        reserved
+    }
+
+    // Declare the trait object to be a record of `*u8 + *vtable`
+    fn trait_object_from_vtable(&mut self, key: M<key::Trait>, dst: MonoTypeKey, vtable: MonoType) {
         let mut object_fields = Map::new();
         object_fields.push(MonoType::u8_pointer());
         object_fields.push(vtable);
-        let rdata = &mut self.mono.types[reserved];
+        let rdata = &mut self.mono.types[dst];
         *rdata = MonomorphisedRecord {
             size: 64 * 2, // TODO: platform-specific pointer size
             repr: Repr::Lumina,
             fields: object_fields,
             autoboxed: HashSet::new(),
-            original: Some(key.0),
+            original: Some(key.map(key::TypeKind::Trait)),
         };
-
-        reserved
     }
 
     pub fn apply(&mut self, ty: &Type) -> MonoType {
@@ -677,8 +697,10 @@ impl<'a> Monomorphization<'a> {
                     let mut params = params.clone();
                     let returns = params.pop().unwrap();
 
-                    let params = vec![Type::tuple(params), returns];
-                    let object = self.trait_object(self.mono.closure, &params);
+                    let mparams = self.applys(&params);
+                    let ret = self.apply(&returns);
+
+                    let object = self.closure_object(self.mono.closure, mparams, ret);
 
                     MonoType::Monomorphised(object)
                 }
@@ -703,6 +725,7 @@ impl<'a> Monomorphization<'a> {
                         }
 
                         key::TypeKind::Trait(trait_) => {
+                            let params = self.applys(params);
                             let mk = self.trait_object(key.module.m(trait_), params);
                             MonoType::Monomorphised(mk)
                         }
@@ -781,6 +804,13 @@ impl TypeMap {
         for (i, ty) in tys.into_iter().enumerate() {
             let generic = Generic::new(key::Generic(i as u32), kind);
             self.push(generic, ty.0, ty.1);
+        }
+    }
+
+    pub fn extend_no_weak(&mut self, kind: GenericKind, tys: impl IntoIterator<Item = MonoType>) {
+        for (i, ty) in tys.into_iter().enumerate() {
+            let generic = Generic::new(key::Generic(i as u32), kind);
+            self.generics.push((generic, ty));
         }
     }
 

@@ -227,6 +227,11 @@ impl Blocks {
         self.assign(entry, ty)
     }
 
+    pub fn transmute(&mut self, v: Value, to: MonoType) -> Value {
+        let entry = Entry::Transmute(v);
+        self.assign(entry, to)
+    }
+
     pub fn call<C: Callable>(&mut self, call: C, params: Vec<Value>, ret: MonoType) -> Value {
         let entry = C::construct(call, params);
         self.assign(entry, ret)
@@ -507,6 +512,7 @@ pub enum Entry {
     IntDiv(Value, Value),
     IntCmpInclusive(Value, std::cmp::Ordering, Value, IntSize),
 
+    Transmute(Value), // Transmute two values of equal size
     Reduce(Value),
     ExtendSigned(Value),
     ExtendUnsigned(Value),
@@ -620,6 +626,7 @@ impl fmt::Display for Entry {
             Entry::CallExtern(key, params) => {
                 write!(f, "{} {}", "callc".keyword(), CStyle(key, params))
             }
+            Entry::Transmute(v) => write!(f, "{} {v}", "transmute".keyword()),
             Entry::RefStaticVal(val) => write!(f, "&{val}"),
             Entry::Copy(v) => write!(f, "{} {v}", "copy".keyword()),
             Entry::BlockParam(param) => write!(f, "{} {param}", "fparam".keyword()),

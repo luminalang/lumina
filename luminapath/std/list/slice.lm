@@ -1,4 +1,4 @@
-use std:list:vec [get, unsafe_get, from_range]
+use std:list:vec [get, unsafe_get, unsafe_take, from_range]
 
 pub type Slice a {
   vec   Vec a
@@ -12,6 +12,14 @@ pub fn split {vec, start} as Slice a -> Maybe (a, Slice a) =
 pub fn is_empty {vec, start} as Slice a -> bool =
   start >= vec.len
 
+pub fn empty as Slice a = { vec = vec:empty, start = 0 }
+  
+// TODO: we should make it so that dot-calls prioritise type-specific *over* defined in current module
+// for the sake of overloading. Local bindings should still be prioritised though?
+
+pub fn len {vec, start} as Slice a -> uint =
+  vec.len - start
+
 pub fn forEach f slice as fn(a -> ()), Slice a -> () =
   list:itimes #perform (slice.vec.len - slice.start)
  where
@@ -22,14 +30,20 @@ pub fn map f slice as fn(a -> b), Slice a -> Vec b =
     (slice.start, slice.vec.len)
     #(\i -> unsafe_get i slice.vec . f)
 
-// [1, 2, 3][1..] . take 3
-//         [2, 3] . take 3
-// TODO: The `len` field of slice and vec are semantically different. It does not make sense to have 
-// slice contain a vec. 
-// pub fn take n {vec, start} as uint, Slice a -> Slice a =
-//   if n < vec.len - start then
-//     { vec = vec . unsafe_take n, start }
-//   else
-//     { vec, start }
-// 
-// pub fn trim_right as uint, Slice a -> Slice a = 
+pub fn slice slice as Slice a -> Maybe (a, Slice a) =
+  slice.vec . get slice.start
+  . map #(\elem -> (elem, skip 1 slice))
+
+// Splits the slice at the given index.
+pub fn split_at at slice as uint, Slice a -> (Slice a, Slice a) =
+    (take at slice, skip (at+1) slice)
+
+pub fn take n slice as uint, Slice a -> Slice a =
+  if n >= len slice
+    then slice
+    else { slice ~ vec @ vec = unsafe_take n vec }
+  
+pub fn skip n slice as uint, Slice a -> Slice a =
+  if n >= len slice
+    then empty
+    else { slice ~ start @ start = start + n }

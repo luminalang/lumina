@@ -45,6 +45,10 @@ pub trait Compare
   fn <= x y as self, self -> bool =
     if x == y then true else x < y
 
+  @[precedence 4000]
+  fn /= x y as self, self -> bool =
+    not (x == y)
+
   fn max x y as self, self -> self =
     if y > x then y else x
 

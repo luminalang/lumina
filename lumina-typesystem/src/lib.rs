@@ -236,15 +236,16 @@ impl Container {
         if elems.len() == 1 {
             write!(f, "{h}{open}{}{close}", format(&elems[0]))
         } else {
-            write!(
-                f,
-                "{h}{open}{} {} {}{close}",
-                elems[..elems.len() - 1]
-                    .iter()
-                    .format_with(", ", |elem, f| f(&format(elem))),
-                "->".symbol(),
-                format(&elems[0])
-            )
+            let params = elems[..elems.len() - 1]
+                .iter()
+                .format_with(", ", |elem, f| f(&format(elem)));
+            let ret = format(elems.last().unwrap());
+            let arrow = "->".symbol();
+            if h == "" {
+                write!(f, "{params} {arrow} {ret}")
+            } else {
+                write!(f, "{h}{open}{params} {arrow} {ret}{close}",)
+            }
         }
     }
 }

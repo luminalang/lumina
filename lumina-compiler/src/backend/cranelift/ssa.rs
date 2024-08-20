@@ -268,6 +268,20 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     fn entry(&mut self, entry: &lir::Entry, ty: &MonoType) -> VEntry {
         match entry {
             lir::Entry::Copy(value) => self.value_to_entry(*value),
+            lir::Entry::Transmute(value) => match self.value_to_entry(*value) {
+                VEntry::Direct(v) => VEntry::Direct(v),
+                VEntry::FuncPointer(_, v) => match ty {
+                    MonoType::FnPointer(_, _) => {
+                        todo!("casting function pointers to other function pointers")
+                    }
+                    MonoType::Int(size) if size.bits() == self.ctx.isa.pointer_bits() => {
+                        VEntry::Direct(v)
+                    }
+                    MonoType::Pointer(_) => todo!("casting fnptr to ptr"),
+                    _ => panic!("unsupported cast: {ty:?}"),
+                },
+                _ => panic!("unsupported transmute: {value} -> {ty:?}"),
+            },
             lir::Entry::BlockParam(_) => VEntry::ZST,
             lir::Entry::CallStatic(mfunc, params) => {
                 let fheader = &self.ctx.funcmap[*mfunc];

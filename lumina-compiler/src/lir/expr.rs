@@ -62,7 +62,7 @@ impl<'a> FuncLower<'a> {
                 ) => {
                     let key = module.m(*key);
                     let ty = self.lir.vals[key].clone();
-                    self.ssa().val_to_ref(key, MonoType::pointer(ty))
+                    self.ssa().val_to_ref(key, ty)
                 }
                 other => panic!("non-val given to val_to_ref builtin: {other}"),
             },
@@ -105,8 +105,10 @@ impl<'a> FuncLower<'a> {
             mir::Expr::PointerToPointerCast(expr, to) | mir::Expr::ToPointerCast(expr, _, to) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(to);
                 let v = self.expr_to_value(&expr);
-                let MonoType::Int(fromint) = self.type_of_value(v) else {
-                    unreachable!()
+                let fromint = match self.type_of_value(v) {
+                    MonoType::Int(size) => size,
+                    MonoType::Pointer(_) => IntSize::new(false, 64),
+                    ty => panic!("not a pointer or int: {ty:?}"),
                 };
                 let v = self.int_cast(v, [fromint, IntSize::new(false, 64)]);
                 self.ssa().transmute(v, MonoType::pointer(ty))

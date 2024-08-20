@@ -177,7 +177,7 @@ impl<'a> Debugger<'a> {
             },
             Entry::RefStaticVal(val) => {
                 let ty = &self.lir.vals[*val];
-                assert_eq!(exp, ty);
+                assert_eq!(exp, &MonoType::pointer(ty.clone()));
             }
             Entry::Field { of, key, field } => {
                 assert_eq!(self.lir.type_of_value(self.mfunc, *of).as_key(), *key);

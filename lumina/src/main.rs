@@ -11,6 +11,8 @@ use lumina_compiler::Target;
 use lumina_key as key;
 use lumina_key::M;
 use lumina_util::Span;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf as FilePathBuf;
 use std::process::Command;
 use std::process::ExitCode;
@@ -180,18 +182,33 @@ fn main() -> ExitCode {
             if run {
                 let excess_arguments = std::env::args().skip_while(|arg| arg != "--").skip(1);
 
-                u8::try_from(
-                    Command::new(output)
-                        .args(excess_arguments)
-                        .spawn()
-                        .expect("could not run binary")
-                        .wait()
-                        .unwrap()
-                        .code()
-                        .unwrap_or(0),
-                )
-                .map(ExitCode::from)
-                .unwrap_or(ExitCode::FAILURE)
+                let result = Command::new(output.clone())
+                    .args(excess_arguments)
+                    .spawn()
+                    .expect("could not run binary")
+                    .wait()
+                    .unwrap();
+
+                #[cfg(unix)]
+                if let Some(signal) = result.signal() {
+                    let text = match signal {
+                        1 => "SIGHUP".into(),
+                        2 => "SIGINT".into(),
+                        3 => "SIGQUIT".into(),
+                        4 => "SIGILL".into(),
+                        5 => "SITTRAP".into(),
+                        11 => "SIGSEGV".into(),
+                        12 => "SIGSYS".into(),
+                        15 => "SIGTERM".into(),
+                        _ => signal.to_string(),
+                    };
+
+                    println!("{} exited with signal {text}", output.display())
+                }
+
+                u8::try_from(result.code().unwrap_or(0))
+                    .map(ExitCode::from)
+                    .unwrap_or(ExitCode::FAILURE)
             } else {
                 ExitCode::SUCCESS
             }

@@ -262,16 +262,16 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
     }
 
     fn is_just(&mut self, maybe: Value) -> (Value, Value) {
-        let tag_ty = MonoType::Int(mono::TAG_SIZE);
         let maybe_mk = self.f.type_of_value(maybe).as_key();
+        let [tag_ty, data_ty] = [key::RecordField(0), key::RecordField(1)]
+            .map(|field| self.f.lir.mono.types.type_of_field(maybe_mk, field));
+
+        assert_eq!(tag_ty, MonoType::Int(mono::TAG_SIZE));
 
         let tag = self
             .ssa()
             .field(maybe, maybe_mk, key::RecordField(0), tag_ty);
 
-        let data_ty = MonoType::SumDataCast {
-            largest: self.f.lir.mono.types.size_of_defined(maybe_mk) - mono::TAG_SIZE.bits() as u32,
-        };
         let data = self
             .ssa()
             .field(maybe, maybe_mk, key::RecordField(1), data_ty);

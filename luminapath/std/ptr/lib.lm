@@ -9,7 +9,7 @@ pub fn offset ptr by as *a, int -> *a = builtin:offset ptr by
 
 pub fn offsetu ptr by as *a, uint -> *a = builtin:offset ptr (by as int)
 
-pub fn null as *a = builtin:transmute 0
+pub fn null as *a = 0 as *a
 
 when t can Size
 pub fn alloc as *t = std:prelude:alloc (Size(self as t):of as int) as *t

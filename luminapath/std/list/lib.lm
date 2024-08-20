@@ -94,7 +94,7 @@ pub fn itimes f n as fn(uint -> ()), uint -> () =
   next 0
  where
   fn next i as uint -> () =
-    if n == i then () else do f i then next (io:trace (i + 1))
+    if n == i then () else do f i then next (i + 1)
 
 pub fn break f list as fn(a -> bool), [a] -> ([a], [a]) =
   match list

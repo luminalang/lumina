@@ -28,6 +28,7 @@ impl<'a> Debugger<'a> {
                 }
 
                 let flow = func.blocks.flow_of(block);
+                info!("{flow}");
                 self.flow(flow);
             }
         }

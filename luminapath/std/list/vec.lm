@@ -37,8 +37,8 @@ fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
 
 pub fn from_range (start, end) f as (uint, uint), fn(uint -> a) -> Vec a =
   // TODO: bound checks
-  if end > start then
-    crash (show end <++> ">" <++> show start)
+  if start > end then
+    crash ("error: from_range end larger than start " <++> show end <++> " > " <++> show start)
   else
   let count = (end - start) in
   let vec = capacity count in

@@ -30,6 +30,9 @@ impl Stringable for string
     | Just (x, xs) -> (x, { inner = xs })
 
   fn equals lhs rhs as string, string -> bool = 
+    do io:println (show (len lhs)) then
+    do io:println (show (len rhs)) then
+    do io:println ("checking if " <++> lhs <++> " equals " <++> rhs) then
     lhs == rhs
 
   fn from_raw_parts ptr len as *u8, uint -> string =
@@ -76,6 +79,9 @@ pub fn <++> left right as string, string -> string =
 
 pub fn <+> left right as string, u8 -> string =
   { string | inner = left.inner ++ [right] }
+
+pub fn contains_char c str as u8, string -> bool =
+  str.inner . any #(\b -> b == c)
 
 impl ToString for string
   fn show str = str

@@ -124,12 +124,12 @@ impl Lower {
         let mut iter = pats.iter();
 
         let (pat, _) = iter.next().unwrap();
-        let mut tree = self.first(m(STRING), m(MAYBE), &ty, pat.as_ref());
+        let mut tree = self.first(m(STRING), m(MAYBE), m(LIST.into()), &ty, pat.as_ref());
 
         for (p, expected) in iter {
             self.tail += 1;
             let old = tree.clone();
-            let reachable = self.branch(m(STRING), m(MAYBE), &mut tree, p.as_ref());
+            let reachable = self.branch(m(STRING), m(MAYBE), m(LIST.into()), &mut tree, p.as_ref());
 
             if *expected != reachable {
                 panic!("{p} had expected reachability of {expected}\nbefore merge:\n{old}\nafter merge:\n{tree}");
@@ -148,11 +148,11 @@ fn instant_wildcard() {
 
     let tuple = Type::tuple(vec![u8().value, u8().value]);
     let any = hir::Pattern::Any.tr(Span::null());
-    let tree = lower.first(m(STRING), m(MAYBE), &tuple, any.as_ref());
+    let tree = lower.first(m(STRING), m(MAYBE), m(LIST.into()), &tuple, any.as_ref());
     snapshot_tree_and_missing!(lower, tree);
 
     let bind = hir::Pattern::Bind(key::Bind(0), Box::new(any.value.clone())).tr(Span::null());
-    let tree = lower.first(m(STRING), m(MAYBE), &tuple, bind.as_ref());
+    let tree = lower.first(m(STRING), m(MAYBE), m(LIST.into()), &tuple, bind.as_ref());
     snapshot_tree_and_missing!(lower, tree);
 }
 

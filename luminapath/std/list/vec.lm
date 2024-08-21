@@ -55,4 +55,4 @@ fn bytes_from_null_terminated ptr as *u8 -> Vec u8 =
 
 // TODO: we need checked add operations to make this safe
 pub fn unsafe_take n {ptr, len} as uint, Vec a -> Vec a =
-  { ptr, len = len - n }
+  { ptr, len = n }

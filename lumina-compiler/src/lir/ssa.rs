@@ -279,6 +279,11 @@ impl Blocks {
         let ty = MonoType::bool();
         self.assign(entry, ty)
     }
+    pub fn not(&mut self, v: Value) -> Value {
+        let entry = Entry::BitNot(v);
+        let ty = MonoType::bool();
+        self.assign(entry, ty)
+    }
     pub fn eq(&mut self, v: [Value; 2], bitsize: IntSize) -> Value {
         self.cmp(v, std::cmp::Ordering::Equal, bitsize)
     }
@@ -521,6 +526,7 @@ pub enum Entry {
     FloatToInt(Value, IntSize),
 
     BitAnd([Value; 2]),
+    BitNot(Value),
 
     BlockParam(V),
 
@@ -641,6 +647,7 @@ impl fmt::Display for Entry {
                 write!(f, "{} {} {}", header.keyword(), left, right)
             }
             Entry::BitAnd([left, right]) => write!(f, "{} {left} {right}", "bit-and".keyword()),
+            Entry::BitNot(v) => write!(f, "{} {v}", "bit-not".keyword()),
             Entry::Alloc { size } => write!(
                 f,
                 "{} {}{}{}",

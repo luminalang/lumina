@@ -2,7 +2,7 @@ use super::func::InstInfo;
 use super::Verify;
 use crate::prelude::*;
 
-use lumina_typesystem::IType;
+use lumina_typesystem::{IType, Ty};
 
 impl<'a, 's> Verify<'a, 's> {
     pub fn type_check_pat(&mut self, pat: Tr<&hir::Pattern<'s>>) -> Tr<IType> {
@@ -80,10 +80,31 @@ impl<'a, 's> Verify<'a, 's> {
             }
             hir::Pattern::Bool(_) => IType::bool(),
             hir::Pattern::String(spats) => {
-                for spat in spats {
-                    if let hir::StringPattern::Extractor(extractor) = spat {
-                        let params = self.type_check_params(&extractor.params);
-                        self.type_check_pass(pat.span, &extractor.call, &extractor.tanot, params);
+                for (i, spat) in spats.iter().enumerate() {
+                    let is_last = || i == spats.len() - 1;
+                    match spat {
+                        hir::StringPattern::Literal(_) => {}
+                        hir::StringPattern::Extractor(extractor) => {
+                            let params = self.type_check_params(&extractor.params);
+                            self.type_check_pass(
+                                pat.span,
+                                &extractor.call,
+                                &extractor.tanot,
+                                params,
+                            );
+                            if let Some(bind) = extractor.bind {
+                                let ty = Ty::string(self.items.pinfo.string, vec![]);
+                                self.new_bind_as(bind.value, ty.tr(bind.span));
+                            }
+                        }
+                        hir::StringPattern::Wildcard(bind) => {
+                            let ty = if is_last() {
+                                IType::string(self.items.pinfo.string, vec![])
+                            } else {
+                                Ty::u8()
+                            };
+                            self.new_bind_as(bind.value, ty.tr(bind.span))
+                        }
                     }
                 }
 

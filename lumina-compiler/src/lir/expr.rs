@@ -41,10 +41,8 @@ impl<'a> FuncLower<'a> {
                 self.pass(call, partials)
             }
             mir::Expr::Yield(call) => match self.lower_callable(call) {
-                Callable::Extern(fkey) => todo!(),
-                // Value::ExternFuncPtr(fkey),
-                // Value::FuncPtr(mfunc),
-                Callable::Static(mfunc) => todo!(), // TODO: are we meant to check the type for whether this should be converted into a closure?
+                Callable::Extern(fkey) => Value::ExternFuncPtr(fkey),
+                Callable::Static(mfunc) => Value::FuncPtr(mfunc),
                 Callable::LiftedLambda(mfunc, captures) => {
                     self.partially_applicate_func(mfunc, captures)
                 }

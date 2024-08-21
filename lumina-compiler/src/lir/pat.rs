@@ -439,7 +439,8 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
                     let u8 = IntSize::new(false, 8);
                     let null = Value::Int(0, u8);
-                    let ok = self.ssa().eq([x, null], u8);
+                    let is_null = self.ssa().eq([x, null], u8);
+                    let ok = self.ssa().not(is_null);
 
                     let next_check_block = self.ssa().new_block(0);
 

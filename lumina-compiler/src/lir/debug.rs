@@ -238,6 +238,10 @@ impl<'a> Debugger<'a> {
                 .iter()
                 .chain(std::iter::once(exp))
                 .for_each(|v| assert_eq!(self.as_int(v, "bitand").bits(), 8)),
+            Entry::BitNot(v) => {
+                let ty = self.lir.type_of_value(self.mfunc, *v);
+                self.as_int(&ty, "bitnot");
+            }
             Entry::BlockParam(v) => {
                 let ty = self.lir.functions[self.mfunc].blocks.type_of(*v);
                 assert_eq!(exp, ty);

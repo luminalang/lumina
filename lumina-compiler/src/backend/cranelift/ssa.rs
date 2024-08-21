@@ -432,6 +432,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 VEntry::Direct(v)
             }
             lir::Entry::BitAnd(_) => todo!(),
+            lir::Entry::BitNot(v) => {
+                let v = self.value_to_entry(*v).as_direct();
+                let v = self.ins().bnot(v);
+                VEntry::Direct(v)
+            }
             // TODO: for ZST we should just give a hardcoded `0`
             lir::Entry::Alloc { size } => VEntry::Direct(self.heap_alloc(*size as i128)),
             lir::Entry::Dealloc { ptr } => {

@@ -90,6 +90,16 @@ pub fn forEach f list as fn(a -> ()), List a -> () =
   | Concat left right -> do forEach #f left then forEach #f right
   | Nil -> ()
 
+pub fn any f list as fn(a -> bool), List a -> bool =
+  match list
+  | Slice slice -> slice . any #f
+  | Singleton a -> f a
+  | Concat left right ->
+    if any #f left
+      then true
+      else any #f right
+  | Nil -> false
+
 pub fn itimes f n as fn(uint -> ()), uint -> () = 
   next 0
  where
@@ -152,7 +162,7 @@ impl ToString for [a]
 //
 // TODO: We need a lazy `&&` operator
 when a can Compare
-impl Compare for List a
+impl Compare for [a]
   fn == lhs rhs as self, self -> bool =
     if len lhs /= len rhs then
       false

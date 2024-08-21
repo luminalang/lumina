@@ -279,8 +279,12 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
                 let i = self.current_param;
                 self.current_param += 1;
 
-                let (string, maybe) = (self.lower.items.pinfo.string, self.lower.items.pinfo.maybe);
-                let tree = self.first(string, maybe, ty, self.patterns[i].as_ref());
+                let (string, maybe, list) = (
+                    self.lower.items.pinfo.string,
+                    self.lower.items.pinfo.maybe,
+                    self.lower.items.list_default,
+                );
+                let tree = self.first(string, maybe, list, ty, self.patterns[i].as_ref());
 
                 let missing = pat::MissingGeneration::new(pat::Init::new(
                     self.lower.rsolver.ftypes,

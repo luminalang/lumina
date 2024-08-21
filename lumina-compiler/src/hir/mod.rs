@@ -380,7 +380,7 @@ fn lower_sum<'a, 's>(
     let list = list_from_langs(&tlangs, lang, pinfo);
     let string = pinfo.string.map(key::TypeKind::Record);
 
-    let mut tinfo = tydef_type_env(sum, &ty.header.type_params, string, list);
+    let mut tinfo = tydef_type_env(sum, &ty.header.type_params, list, string);
 
     let mut tlower = ty::TypeLower::new(sum.module, ast, target.int_size(), &mut tinfo);
 
@@ -409,7 +409,7 @@ fn lower_record<'a, 's>(
     let list = list_from_langs(&tlangs, lang, pinfo);
     let string = pinfo.string.map(key::TypeKind::Record);
 
-    let mut tinfo = tydef_type_env(rec, &ty.header.type_params, string, list);
+    let mut tinfo = tydef_type_env(rec, &ty.header.type_params, list, string);
 
     let mut tlower = ty::TypeLower::new(rec.module, ast, target.int_size(), &mut tinfo);
 

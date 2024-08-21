@@ -31,7 +31,7 @@ pub enum Pattern<'s> {
 pub enum StringPattern<'s> {
     Literal(&'s str),
     Extractor(Extractor<'s>),
-    Wildcard(key::Bind),
+    Wildcard(Tr<key::Bind>),
 }
 
 #[derive(Clone, Debug)]
@@ -39,7 +39,7 @@ pub struct Extractor<'s> {
     pub call: Callable<'s>,
     pub tanot: TypeAnnotation<'s>,
     pub params: Vec<Tr<Expr<'s>>>,
-    pub bind: Option<Tr<&'s str>>,
+    pub bind: Option<Tr<key::Bind>>,
 }
 
 impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
@@ -48,16 +48,22 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
 
         match pat.value {
             parser::Pattern::Name(identifier, params) => {
-                let is_str = params.iter().any(|pat| {
-                    matches!(
-                        &pat.value,
-                        parser::Pattern::String(..) | parser::Pattern::Extractor(..)
-                    )
-                }) && identifier.is_name();
+                let could_be_str_bind = |name: &Identifier<'s>| name.as_name().map(|s| s.chars().next().unwrap().is_lowercase()).unwrap_or(false);
+
+                let is_str = could_be_str_bind(identifier)
+                    && (params.iter().any(|pat| {
+                        matches!(
+                            &pat.value,
+                            parser::Pattern::String(..) | parser::Pattern::Extractor(..)
+                        )
+                    }) || params.len() > 0 && params.iter().all(|pat|
+                            matches!(&pat.value, parser::Pattern::Name(n, p) if could_be_str_bind(n) && p.is_empty() )
+                       )
+                    );
 
                 if is_str {
                     let bind = self.bindings.declare(identifier.as_name().unwrap());
-                    let init = StringPattern::Wildcard(bind);
+                    let init = StringPattern::Wildcard(bind.tr(pat.span));
                     self.pat_strings(init, params)
                 } else {
                     self.pat_name(pat.span, identifier, params)
@@ -96,7 +102,8 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
     ) -> Option<StringPattern<'s>> {
         let expr = self.expr(expr);
         match expr.value {
-            Expr::Call(call, tanot, params) => {
+            Expr::Pass(call, tanot, params) => {
+                let bind = bind.map(|name| self.bindings.declare(*name).tr(name.span));
                 let extractor = Extractor { call, tanot, params, bind };
                 Some(StringPattern::Extractor(extractor))
             }
@@ -149,7 +156,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 }
                 parser::Pattern::Name(name, params) if name.is_name() && params.is_empty() => {
                     let bind = self.bindings.declare(name.as_name().unwrap());
-                    pats.push(StringPattern::Wildcard(bind));
+                    pats.push(StringPattern::Wildcard(bind.tr(pat.span)));
                 }
                 _ => {
                     self.ast

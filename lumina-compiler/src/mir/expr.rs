@@ -19,7 +19,7 @@ impl<'a, 's> Verify<'a, 's> {
             }
             hir::Expr::Pass(call, tanot, params) => {
                 let ptypes = self.type_check_params(params);
-                self.type_check_pass(expr.span, call, tanot, ptypes)
+                self.type_check_pass(expr.span, call, tanot, ptypes).0
             }
             hir::Expr::PassFnptr(key, tanot) => match self.type_of_func(expr.span, *key, tanot) {
                 InstCall::Instantiated(instinfo) => {

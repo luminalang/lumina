@@ -29,6 +29,7 @@ pub struct Merger<'h, 's, Tail, M> {
     merge: &'h mut M,
     maybe: key::M<key::Sum>,
     string: key::M<key::Record>,
+    list: key::M<key::TypeKind>,
     table: PointTable,
     depth: usize,
     _tail: std::marker::PhantomData<Tail>,
@@ -69,8 +70,8 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                     self.merge_params(next, pelems)
                 )
             }
-            DecTree::Record { record, fields, next, .. } if *record == self.string => {
-                todo!();
+            DecTree::Record { record, .. } if *record == self.string => {
+                panic!("string type given as Ty::defined instead of Ty::string");
             }
             DecTree::Record { record, fields, next, .. } => {
                 expected!(
@@ -78,12 +79,18 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                     self.merge_record(*record, *fields, next, pfields)
                 )
             }
-            DecTree::Sum { sum, next, .. } => {
-                expected!(
-                     Pattern::Constructor(psum, var, params) if psum == sum =>
-                     self.merge_cmp_var(next, *var, params)
-                )
-            }
+            DecTree::Sum { sum, next, .. } => match pat.value {
+                Pattern::Cons(..) if sum.map(key::TypeKind::Sum) == self.list => {
+                    panic!("list sugar used on list type `List a` instead of `[a]");
+                }
+                Pattern::Nil(_) if sum.map(key::TypeKind::Sum) == self.list => {
+                    panic!("list sugar used on list type `List a` instead of `[a]");
+                }
+                Pattern::Constructor(psum, var, params) if psum == sum => {
+                    self.merge_cmp_var(next, *var, params)
+                }
+                _ => reachable_as_poison!(pat),
+            },
             DecTree::Bools(next) => {
                 expected!(Pattern::Bool(var) => self.merge_cmp_var(next, *var, &[]))
             }
@@ -105,7 +112,7 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                         self.merge_strings(pat.span, spats, next, wildcard_next)
                     }
                     // Hack for allowing record patterns for strings
-                    Pattern::Record(rvar, bind, fields) => match self.merge.fin_record(*rvar) {
+                    Pattern::Record(rvar, _, fields) => match self.merge.fin_record(*rvar) {
                         Some((record, params)) if record == self.string => {
                             assert!(params.is_empty());
                             if !next.branches.is_empty() {
@@ -113,10 +120,6 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                             }
 
                             let string_ty = Type::defined(record, params.clone());
-                            // *tree = self
-                            //     .merge
-                            //     .to_init()
-                            //     .reached_from_type(string_ty, *wildcard_next);
 
                             *tree = self
                                 .expand_wildcard_and_bump_tails(&string_ty, &mut **wildcard_next);
@@ -193,17 +196,20 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                     }
                     // The last wildcard will bind to excess string instead of char
                     hir::StringPattern::Wildcard(bind) if spats.len() - 1 == i => {
-                        self.table.binds.push((*bind, self.depth));
+                        self.table.binds.push((**bind, self.depth));
                         StrCheck::TakeExcess
                     }
                     hir::StringPattern::Wildcard(bind) => {
-                        self.table.binds.push((*bind, self.depth));
+                        self.table.binds.push((**bind, self.depth));
                         StrCheck::TakeByte
                     }
                     hir::StringPattern::Extractor(extractor) => {
                         let params = self.merge.extractor_params(&extractor.params);
 
-                        // then:
+                        if let Some(bind) = extractor.bind {
+                            self.table.binds.push((*bind, self.depth));
+                        }
+
                         match &extractor.call {
                             hir::Callable::Func(nfunc) => {
                                 let (mapping, calltypes) = self.merge.fin_popped_inst(span)?;
@@ -443,6 +449,7 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
             merge: self.merge,
             maybe: self.maybe,
             string: self.string,
+            list: self.list,
             table: self.table.clone(),
             depth: self.depth,
             _tail: std::marker::PhantomData,
@@ -527,6 +534,7 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
         &mut self,
         string: M<key::Record>,
         maybe: M<key::Sum>,
+        list: M<key::TypeKind>,
         ty: &Type,
         mut pat: Tr<&Pattern<'s>>,
     ) -> DecTree<Tail> {
@@ -556,6 +564,7 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
             merge: self,
             maybe,
             string,
+            list,
             table,
             depth: 0,
             _tail: std::marker::PhantomData,
@@ -570,6 +579,7 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
         &mut self,
         string: M<key::Record>,
         maybe: M<key::Sum>,
+        list: M<key::TypeKind>,
         tree: &mut DecTree<Tail>,
         pat: Tr<&Pattern<'s>>,
     ) -> IsReachable {
@@ -578,6 +588,7 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
             depth: 0,
             maybe,
             string,
+            list,
             table: PointTable { binds: vec![] },
             merge: self,
             _tail: std::marker::PhantomData,

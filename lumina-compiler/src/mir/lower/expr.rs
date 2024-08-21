@@ -393,8 +393,9 @@ impl<'a, 's> Lower<'a, 's> {
 
         let maybe = self.items.pinfo.maybe;
         let string = self.items.pinfo.string;
+        let list = self.items.list_default;
         let mut blower = MatchBranchLower::new(self, inite.as_ref(), key::DecisionTreeTail(0));
-        let mut tree = blower.first(string, maybe, &ty, initp.as_ref());
+        let mut tree = blower.first(string, maybe, list, &ty, initp.as_ref());
 
         let Some(expr) = blower.lowered_tail else {
             warn!("poisoning due to missing tail, assuming error has already occured");
@@ -409,7 +410,7 @@ impl<'a, 's> Lower<'a, 's> {
             let tailkey = tails.next_key();
 
             let mut blower = MatchBranchLower::new(self, expr.as_ref(), tailkey);
-            let reachable = blower.branch(string, maybe, &mut tree, pat.as_ref());
+            let reachable = blower.branch(string, maybe, list, &mut tree, pat.as_ref());
 
             if !reachable {
                 blower

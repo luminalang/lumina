@@ -546,7 +546,7 @@ impl<'a, 's> Verify<'a, 's> {
         let ptypes = self.hir.variant_types[sum][var]
             .iter()
             .map(|ty| (&finst).transform(&**ty).tr(ty.span))
-            .collect();
+            .collect::<Vec<_>>();
 
         let key = sum.map(key::TypeKind::Sum);
         let returns = finst.to_defined(GenericKind::Entity, key);
@@ -568,7 +568,7 @@ impl<'a, 's> Verify<'a, 's> {
         call: &hir::Callable<'s>,
         tanot: &hir::TypeAnnotation<'s>,
         params: Vec<Tr<IType>>,
-    ) -> IType {
+    ) -> (IType, IType) {
         let lhs = params.last();
         match self.type_of_callable(span, lhs, call, params.len(), tanot) {
             InstCall::LocalCall(_, ptypes, returns, cont) => {
@@ -578,8 +578,8 @@ impl<'a, 's> Verify<'a, 's> {
                 });
 
                 let mut remaining = xs.to_vec();
-                remaining.push(returns);
-                IType::Container(cont, remaining)
+                remaining.push(returns.clone());
+                (IType::Container(cont, remaining), returns)
             }
             InstCall::Local(_) if !params.is_empty() => todo!("ET: can not take parameters"),
             InstCall::Local(_) => todo!("turn it into a function"),
@@ -593,7 +593,7 @@ impl<'a, 's> Verify<'a, 's> {
             InstCall::CircularRecursion { .. } => {
                 todo!()
             }
-            InstCall::TypeDependentFailure => IType::poison(),
+            InstCall::TypeDependentFailure => (IType::poison(), IType::poison()),
         }
     }
 
@@ -602,7 +602,7 @@ impl<'a, 's> Verify<'a, 's> {
         span: Span,
         instinfo: InstInfo,
         params: Vec<Tr<IType>>,
-    ) -> IType {
+    ) -> (IType, IType) {
         self.type_check_and_emit_application(span, &params, &instinfo.ptypes[..params.len()]);
 
         let ret = instinfo.ret.value.clone();
@@ -613,7 +613,7 @@ impl<'a, 's> Verify<'a, 's> {
 
         self.current.push_inst(span, Some(instinfo));
 
-        IType::closure(ptypes, ret)
+        (IType::closure(ptypes, ret.clone()), ret)
     }
 
     pub fn type_of_callable(

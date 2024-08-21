@@ -610,7 +610,6 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         loop {
             match parser.lexer.next() {
                 (Token::Operator, ospan) => {
-                    // *self.parser = parser;
                     self.parser.progress();
                     let str = self.parser.take(ospan);
                     let identifier = Identifier::parse(str).unwrap();

@@ -65,7 +65,7 @@ impl<'a> Parser<'a> {
     }
 
     fn pat_extractor(&mut self, span: Span, params: bool) -> Option<Tr<Pattern<'a>>> {
-        let expr = ExprParser::new(self).expr_param()?;
+        let expr = ExprParser::new(self).expr_pass_expr(span)?;
 
         let bind = self
             .next_is(|t| t == T::At)

@@ -206,6 +206,11 @@ impl<'a> FuncLower<'a> {
                     _ => panic!("unknown comparison operator: {cmp}"),
                 }
             }
+            mir::Expr::IntAbs(n) => {
+                let n = self.expr_to_value(&*n);
+                let ty = self.type_of_value(n);
+                self.ssa().abs(n, ty)
+            }
             mir::Expr::Num(name, params) => {
                 let [left, right] = [
                     self.expr_to_value(&params[0]),
@@ -213,11 +218,21 @@ impl<'a> FuncLower<'a> {
                 ];
 
                 let ty = self.type_of_value(left);
+                let cty = self
+                    .lir
+                    .mono
+                    .get_or_make_tuple(vec![ty.clone(), MonoType::bool()])
+                    .into();
+
                 match *name {
                     "plus" => self.ssa().add(left, right, ty),
                     "minus" => self.ssa().sub(left, right, ty),
                     "mul" => self.ssa().mul(left, right, ty),
                     "div" => self.ssa().div(left, right, ty),
+                    "plus_checked" => self.ssa().add(left, right, cty),
+                    "minus_checked" => self.ssa().sub(left, right, cty),
+                    "mul_checked" => self.ssa().mul(left, right, cty),
+                    "div_checked" => self.ssa().div(left, right, cty),
                     _ => panic!("unknown num builtin: {name}"),
                 }
             }

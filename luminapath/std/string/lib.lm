@@ -86,43 +86,12 @@ pub fn contains_char c str as u8, string -> bool =
 impl ToString for string
   fn show str = str
 
-impl ToString for i64
-  fn show n = 
-    // TODO: we need to abs `n`
-    let str = show (n as u64) in
-      if n < 0
-        then 45 <:> str
-        else str
-
-impl ToString for i32
-  fn show n = ToString:show (n as i64)
-
-impl ToString for u8
-  fn show n = show (n as u64)
-
-// TODO: This would be much more efficient if we manually used `Vec`.
-// However; I think a better way to approach this is a more general MIR/LIR optimisation
-// which detects and transforms this kind of code? Should be possible. 
-//
-// Since `string` has the same layout as `List` perhaps we could do it transparently post-monomorphisation?
-impl ToString for u64
-  fn show n =
-    if n == 0 then "0" else showNext n
-  where
-    fn showNext n as u64 -> string =
-      match n
-      | 0 -> ""
-      | _ ->
-        let c = ((n % 10) as u8) + 48 in
-           showNext (n / 10) <+> c
-
 // TODO: we are gonna want `match` desugaring sugar for strings as well. 
 //
 // But I'm not sure how that'd look like. We could just use the List stuff but maybe we can be fancier? 
 pub fn split_first str as string -> Maybe (u8, string) =
   str.inner . split
   . map #(\(c, xs) -> (c, { string | inner = xs }))
-
 
 // TODO: Considder splitting equality out from Compare
 // (Eq + Ordering)

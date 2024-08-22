@@ -211,6 +211,10 @@ impl<'a> Debugger<'a> {
                     _ => panic!("invalid operand for builtin numeric operation: {lhs:?}"),
                 }
             }
+            Entry::IntAbs(v) => {
+                let ty = self.lir.type_of_value(self.mfunc, *v);
+                self.as_int(&ty, "iabs");
+            }
             Entry::Reduce(v) => {
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 self.as_int(&ty, "reduce");

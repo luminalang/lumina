@@ -1,4 +1,5 @@
 pub use non_zero [NonZero]
+use std:io [crash]
 
 when n can Num + Negate + Compare
 pub fn abs n as n -> n =
@@ -55,11 +56,23 @@ pub trait Compare
   fn min x y as self, self -> self =
     if y < x then y else x
 
+when a can ToString
+fn or_overflow_error char lhs rhs (n, overflown) as u8, a, a, (a, bool) -> a =
+  if overflown
+    then crash ("integer overflow " <++> show lhs <++> " " <+> char <++> " " <++> show rhs)
+    else n
+
+when a can ToString
+fn or_underflow_error char lhs rhs (n, underflown) as u8, a, a, (a, bool) -> a =
+  if underflown
+    then crash ("integer underflow " <++> show lhs <++> " " <+> char <++> " " <++> show rhs)
+    else n
+
 impl Num for u8
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus a b
-  fn - a b as self, self -> self = builtin:minus a b
-  fn * a b as self, self -> self = builtin:mul a b
+  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
   fn / a b as self, self -> self = builtin:div a b
   fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
@@ -72,9 +85,9 @@ impl Compare for u8
 
 impl Num for u16
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus a b
-  fn - a b as self, self -> self = builtin:minus a b
-  fn * a b as self, self -> self = builtin:mul a b
+  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
   fn / a b as self, self -> self = builtin:div a b
   fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
@@ -87,9 +100,9 @@ impl Compare for u16
 
 impl Num for u32
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus a b
-  fn - a b as self, self -> self = builtin:minus a b
-  fn * a b as self, self -> self = builtin:mul a b
+  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
   fn / a b as self, self -> self = builtin:div a b
   fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
@@ -102,9 +115,9 @@ impl Compare for u32
 
 impl Num for u64
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus a b
-  fn - a b as self, self -> self = builtin:minus a b
-  fn * a b as self, self -> self = builtin:mul a b
+  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
   fn / a b as self, self -> self = builtin:div a b
   fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
@@ -117,9 +130,9 @@ impl Compare for u64
 
 impl Num for i8
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus a b
-  fn - a b as self, self -> self = builtin:minus a b
-  fn * a b as self, self -> self = builtin:mul a b
+  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
   fn / a b as self, self -> self = builtin:div a b
   fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
@@ -132,9 +145,9 @@ impl Compare for i8
 
 impl Num for i16
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus a b
-  fn - a b as self, self -> self = builtin:minus a b
-  fn * a b as self, self -> self = builtin:mul a b
+  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
   fn / a b as self, self -> self = builtin:div a b
   fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
@@ -147,9 +160,9 @@ impl Compare for i16
 
 impl Num for i32
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus a b
-  fn - a b as self, self -> self = builtin:minus a b
-  fn * a b as self, self -> self = builtin:mul a b
+  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
   fn / a b as self, self -> self = builtin:div a b
   fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0
@@ -162,9 +175,9 @@ impl Compare for i32
 
 impl Num for i64
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus a b
-  fn - a b as self, self -> self = builtin:minus a b
-  fn * a b as self, self -> self = builtin:mul a b
+  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
   fn / a b as self, self -> self = builtin:div a b
   fn % a b as self, self -> self = a - (a / b * b)
   fn zero = 0

@@ -294,6 +294,7 @@ impl Blocks {
         self.cmp(v, std::cmp::Ordering::Greater, bitsize)
     }
 
+    // return type overloaded numeric operations
     pub fn add(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
         let entry = Entry::IntAdd(v, by);
         self.assign(entry, ty)
@@ -308,6 +309,10 @@ impl Blocks {
     }
     pub fn div(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
         let entry = Entry::IntDiv(v, by);
+        self.assign(entry, ty)
+    }
+    pub fn abs(&mut self, v: Value, ty: MonoType) -> Value {
+        let entry = Entry::IntAbs(v);
         self.assign(entry, ty)
     }
 
@@ -515,6 +520,7 @@ pub enum Entry {
     IntSub(Value, Value),
     IntMul(Value, Value),
     IntDiv(Value, Value),
+    IntAbs(Value),
     IntCmpInclusive(Value, std::cmp::Ordering, Value, IntSize),
 
     Transmute(Value), // Transmute two values of equal size
@@ -665,6 +671,7 @@ impl fmt::Display for Entry {
             Entry::IntSub(v, n) => write!(f, "{} {v} {n}", "sub".keyword()),
             Entry::IntMul(v, n) => write!(f, "{} {v} {n}", "mul".keyword()),
             Entry::IntDiv(v, n) => write!(f, "{} {v} {n}", "div".keyword()),
+            Entry::IntAbs(v) => write!(f, "{} {v}", "abs".keyword()),
             Entry::Reduce(v) => write!(f, "{} {v}", "reduce".keyword()),
             Entry::ExtendUnsigned(v) => write!(f, "{} {v}", "uextend".keyword()),
             Entry::ExtendSigned(v) => write!(f, "{} {v}", "sextend".keyword()),

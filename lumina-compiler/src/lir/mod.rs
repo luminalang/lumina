@@ -15,7 +15,7 @@ use tracing::info_span;
 mod debug;
 pub use debug::Debugger;
 
-const UNIT: MonoTypeKey = MonoTypeKey(0);
+pub const UNIT: MonoTypeKey = MonoTypeKey(0);
 
 #[macro_export]
 macro_rules! to_morphization {

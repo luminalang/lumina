@@ -1,0 +1,1 @@
+pub fn abs n as i64 -> i64 = builtin:iabs n

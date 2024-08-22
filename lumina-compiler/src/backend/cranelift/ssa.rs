@@ -354,18 +354,30 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
             lir::Entry::IntAdd(left, right) => {
                 let [left, right] = [*left, *right].map(|v| self.value_to_entry(v).as_direct());
-                let v = self.ins().iadd(left, right);
-                VEntry::Direct(v)
+                self.checked_numop(
+                    ty,
+                    |this| this.ins().sadd_overflow(left, right),
+                    |this| this.ins().uadd_overflow(left, right),
+                    |this| this.ins().iadd(left, right),
+                )
             }
             lir::Entry::IntSub(left, right) => {
                 let [left, right] = [*left, *right].map(|v| self.value_to_entry(v).as_direct());
-                let v = self.ins().isub(left, right);
-                VEntry::Direct(v)
+                self.checked_numop(
+                    ty,
+                    |this| this.ins().ssub_overflow(left, right),
+                    |this| this.ins().usub_overflow(left, right),
+                    |this| this.ins().isub(left, right),
+                )
             }
             lir::Entry::IntMul(left, right) => {
                 let [left, right] = [*left, *right].map(|v| self.value_to_entry(v).as_direct());
-                let v = self.ins().imul(left, right);
-                VEntry::Direct(v)
+                self.checked_numop(
+                    ty,
+                    |this| this.ins().smul_overflow(left, right),
+                    |this| this.ins().umul_overflow(left, right),
+                    |this| this.ins().imul(left, right),
+                )
             }
             lir::Entry::IntDiv(left, right) => {
                 let [left, right] = [*left, *right].map(|v| self.value_to_entry(v).as_direct());
@@ -374,6 +386,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 } else {
                     self.ins().udiv(left, right)
                 };
+                VEntry::Direct(v)
+            }
+            lir::Entry::IntAbs(v) => {
+                let v = self.value_to_entry(*v).as_direct();
+                let v = self.ins().iabs(v);
                 VEntry::Direct(v)
             }
             lir::Entry::IntCmpInclusive(left, cmp, right, bitsize) => {
@@ -713,6 +730,40 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     fn param(&mut self, src: lir::Value, dst: &mut Vec<Value>) {
         let entry = self.value_to_entry(src);
         self.flatten_entry(&entry, dst);
+    }
+
+    fn checked_numop<S, U, N>(&mut self, ty: &MonoType, signed: S, unsigned: U, simple: N) -> VEntry
+    where
+        S: FnOnce(&mut Self) -> (Value, Value),
+        U: FnOnce(&mut Self) -> (Value, Value),
+        N: FnOnce(&mut Self) -> Value,
+    {
+        let with_check = match ty {
+            MonoType::Monomorphised(mk) => {
+                let [int, bool_] = [0, 1]
+                    .map(key::RecordField)
+                    .map(|field| self.types().type_of_field(*mk, field));
+
+                assert_eq!(bool_, MonoType::bool());
+                Some((*mk, as_int(&int).signed))
+            }
+            MonoType::Int(_) | MonoType::Pointer(_) => None,
+            _ => panic!("invalid return signature for num binop: {ty:?}"),
+        };
+
+        match with_check {
+            Some((mk, true)) => {
+                let (n, c) = signed(self);
+                let fields = [n, c].into_iter().map(VField::Direct).collect();
+                VEntry::Struct(mk, fields)
+            }
+            Some((mk, false)) => {
+                let (n, c) = unsigned(self);
+                let fields = [n, c].into_iter().map(VField::Direct).collect();
+                VEntry::Struct(mk, fields)
+            }
+            None => VEntry::Direct(simple(self)),
+        }
     }
 }
 

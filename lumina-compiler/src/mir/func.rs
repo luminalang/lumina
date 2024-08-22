@@ -676,6 +676,17 @@ impl<'a, 's> Verify<'a, 's> {
                     let ptypes = vec![any.clone(), any.clone()];
                     InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
                 }
+                "plus_checked" | "minus_checked" | "mul_checked" | "div_checked" => {
+                    let any = Ty::infer(self.vars().var(span));
+                    let ptypes = vec![any.clone(), any.clone()];
+                    let ret = Ty::tuple(vec![any, Ty::bool()]);
+                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
+                }
+                "iabs" => {
+                    let any = Ty::infer(self.vars().var(span));
+                    let ptypes = vec![any.clone()];
+                    InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
+                }
                 "eq" | "lt" | "gt" => {
                     let any = Ty::infer(self.vars().var(span));
                     let ptypes = vec![any.clone(), any];

@@ -38,6 +38,7 @@ pub enum Expr {
 
     Cmp(&'static str, Box<[Expr; 2]>),
     Num(&'static str, Box<[Expr; 2]>),
+    IntAbs(Box<Expr>),
     ValToRef(Box<Self>),
 
     Tuple(Vec<Self>),
@@ -114,6 +115,19 @@ impl<'a, 's> Lower<'a, 's> {
                     "minus" => self.lower_builtin(params, |p| Expr::Num("minus", Box::new(p))),
                     "mul" => self.lower_builtin(params, |p| Expr::Num("mul", Box::new(p))),
                     "div" => self.lower_builtin(params, |p| Expr::Num("div", Box::new(p))),
+                    "plus_checked" => {
+                        self.lower_builtin(params, |p| Expr::Num("plus_checked", Box::new(p)))
+                    }
+                    "minus_checked" => {
+                        self.lower_builtin(params, |p| Expr::Num("minus_checked", Box::new(p)))
+                    }
+                    "mul_checked" => {
+                        self.lower_builtin(params, |p| Expr::Num("mul_checked", Box::new(p)))
+                    }
+                    "div_checked" => {
+                        self.lower_builtin(params, |p| Expr::Num("div_checked", Box::new(p)))
+                    }
+                    "iabs" => self.lower_builtin(params, |[p]| Expr::IntAbs(Box::new(p))),
                     "eq" => self.lower_builtin(params, |p| Expr::Cmp("eq", Box::new(p))),
                     "lt" => self.lower_builtin(params, |p| Expr::Cmp("lt", Box::new(p))),
                     "gt" => self.lower_builtin(params, |p| Expr::Cmp("gt", Box::new(p))),
@@ -472,6 +486,7 @@ impl fmt::Display for Expr {
                 write!(f, "{call}")
             }
             Expr::Num(instr, p) => write!(f, "{op}{} {} {}{cp}", instr.keyword(), &p[0], &p[1]),
+            Expr::IntAbs(n) => write!(f, "{op} {} {n}{cp}", "abs".keyword()),
             Expr::Cmp(instr, p) => write!(f, "{op}{} {} {}{cp}", instr.keyword(), &p[0], &p[1]),
             Expr::Access(object, key, _, field) => write!(f, "({object} {as_} {key}).{field}"),
             Expr::Record(record, ptypes, fields) => write!(

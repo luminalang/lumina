@@ -2,7 +2,7 @@ use super::{Callable, Expr, FuncLower, IType, TypeAnnotation};
 use crate::prelude::*;
 use ast::{Entity, Mod, NFunc};
 use lumina_parser as parser;
-use lumina_typesystem::{RecordVar, Var};
+use lumina_typesystem::Var;
 use lumina_util::{Highlighting, Identifier, ParamFmt};
 use std::fmt;
 use tracing::trace;
@@ -14,7 +14,7 @@ pub enum Pattern<'s> {
     Bind(key::Bind, Box<Self>),
     Constructor(M<key::Sum>, key::SumVariant, Vec<Tr<Self>>),
     Record(
-        RecordVar,
+        Var,
         Option<Tr<IType>>,
         Vec<(Tr<&'s str>, key::Bind, Tr<Self>)>,
     ),
@@ -85,7 +85,15 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 Pattern::Tuple(params)
             }
             parser::Pattern::Int(bound) => {
-                let var = self.type_info.inference_mut().unwrap().int(pat.span);
+                let min = match bound {
+                    [parser::pat::Bound::Neg(n), _] | [_, parser::pat::Bound::Neg(n)]=> -(*n as i128),
+                    _ => 0,
+                };
+                let max = match bound {
+                    [parser::pat::Bound::Pos(n), _] | [_, parser::pat::Bound::Pos(n)] => *n as u64,
+                    _ => 0,
+                };
+                let var = self.type_info.inference_mut().unwrap().int(pat.span, min, max);
                 Pattern::Int(*bound, var)
             }
             parser::Pattern::Float(_) => todo!(),
@@ -181,7 +189,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         fields: &parser::Fields<'s, parser::Pattern<'s>>,
     ) -> Pattern<'s> {
         let inf = self.type_info.inference_mut().unwrap();
-        let var = inf.record(span);
+        let var = inf.var(span);
 
         match init {
             parser::CurlyInit::Modify(_) => panic!("modify is not allowed in this context"),
@@ -378,7 +386,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                     init,
                     |next, (name, bind)| {
                         let inf = self.type_info.inference_mut().unwrap();
-                        let var = inf.record(name.span);
+                        let var = inf.var(name.span);
                         Pattern::Record(var, None, vec![(name, *bind, next)]).tr(name.span)
                     },
                 );

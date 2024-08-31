@@ -10,3 +10,6 @@ edition = "2021"
 owo-colors = { version = "4.0.*", features = ["supports-colors"] }
 itertools = "0.10.*" 
 tinyvec = { version = "1.6.0", features = ["alloc"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-tree = "0.3.0"
+tracing = "0.1.40"

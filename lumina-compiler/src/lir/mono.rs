@@ -711,25 +711,23 @@ impl<'a> Monomorphization<'a> {
                     let inner = self.apply(&params[0]);
                     MonoType::pointer(inner)
                 }
-                Container::String(key) | Container::List(key) | Container::Defined(key) => {
-                    match key.value {
-                        key::TypeKind::Record(rkey) => {
-                            let mk = self.record(key.module.m(rkey), params);
-                            MonoType::Monomorphised(mk)
-                        }
-
-                        key::TypeKind::Sum(sum) => {
-                            let mk = self.sum(key.module.m(sum), params);
-                            MonoType::Monomorphised(mk)
-                        }
-
-                        key::TypeKind::Trait(trait_) => {
-                            let params = self.applys(params);
-                            let mk = self.trait_object(key.module.m(trait_), params);
-                            MonoType::Monomorphised(mk)
-                        }
+                Container::Defined(key, _) => match key.value {
+                    key::TypeKind::Record(rkey) => {
+                        let mk = self.record(key.module.m(rkey), params);
+                        MonoType::Monomorphised(mk)
                     }
-                }
+
+                    key::TypeKind::Sum(sum) => {
+                        let mk = self.sum(key.module.m(sum), params);
+                        MonoType::Monomorphised(mk)
+                    }
+
+                    key::TypeKind::Trait(trait_) => {
+                        let params = self.applys(params);
+                        let mk = self.trait_object(key.module.m(trait_), params);
+                        MonoType::Monomorphised(mk)
+                    }
+                },
             },
             Ty::Generic(generic) => self.generic(*generic).clone(),
             Ty::Int(intsize) => MonoType::Int(*intsize),

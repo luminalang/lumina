@@ -6,8 +6,7 @@
 use crate::prelude::*;
 use crate::{ProjectInfo, Target};
 use lumina_typesystem::{
-    Downgrade, Forall, GenericKind, GenericMapper, IType, Inference, Static, TEnv, Transformer, Ty,
-    TypeSystem, Var,
+    Downgrade, Forall, GenericKind, GenericMapper, IType, Static, TEnv, Transformer, Ty, Var,
 };
 use lumina_util::Highlighting;
 use std::collections::VecDeque;
@@ -174,7 +173,6 @@ pub struct Verify<'a, 's> {
 
     tenvs: &'a mut ModMap<key::Func, TEnv<'s>>,
 
-    rsolver: RSolver<'a, 's>,
     items: LangItems,
 
     funcs: &'a mut ModMap<key::Func, FunctionStatus>,
@@ -183,6 +181,7 @@ pub struct Verify<'a, 's> {
     target: Target,
 
     current: Current,
+    field_lookup: &'a Map<key::Module, HashMap<&'s str, Vec<M<key::Record>>>>,
     pforall: &'a Forall<'s, Static>,
     fdef: &'a hir::FuncDef<'s>,
 }
@@ -202,30 +201,6 @@ pub struct Current {
     pub insts: HashMap<Option<key::Lambda>, VecDeque<Tr<Option<InstInfo>>>>,
     pub type_dependent_lookup: VecDeque<M<ast::NFunc>>,
     pub casts_and_matches: VecDeque<Tr<IType>>,
-}
-
-#[derive(new, Clone, Copy)]
-struct RSolver<'a, 's> {
-    field_lookup: &'a Map<key::Module, HashMap<&'s str, Vec<M<key::Record>>>>,
-    records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
-    ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
-    fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
-}
-
-impl<'a, 's> RSolver<'a, 's> {
-    pub fn as_typesystem<'t>(
-        &'t mut self,
-        module: key::Module,
-        env: &'t mut TEnv<'s>,
-    ) -> TypeSystem<'t, 's> {
-        TypeSystem::new(
-            env,
-            self.records,
-            self.ftypes,
-            self.fnames,
-            &self.field_lookup[module],
-        )
-    }
 }
 
 impl Current {
@@ -526,8 +501,8 @@ impl<'a, 's> ImplComparison<'a, 's> {
             (Ty::Container(g, gparams), Ty::Container(e, eparams)) if g == e => {
                 self.cmpis(span, gparams, eparams)
             }
-            (Ty::Special(Inference::Var(var)), ty) => self.assign_or_check(false, span, *var, ty),
-            (ty, Ty::Special(Inference::Var(var))) => self.assign_or_check(true, span, *var, ty),
+            (Ty::Special(var), ty) => self.assign_or_check(false, span, *var, ty),
+            (ty, Ty::Special(var)) => self.assign_or_check(true, span, *var, ty),
             (Ty::Simple("self"), ty) => {
                 let self_ = self.self_.clone();
                 self.cmpi(span, &self_, ty)
@@ -540,14 +515,13 @@ impl<'a, 's> ImplComparison<'a, 's> {
     }
 
     fn assign_or_check(&mut self, flip: bool, span: Span, var: Var, ty: &IType) -> bool {
-        let asgn = self.env.get(var);
-        match asgn.value {
-            None => {
-                self.env.assign(var, ty.clone().tr(span));
+        match self.env.get(var) {
+            Err(_) => {
+                self.env.assign_simple(var, ty.clone().tr(span));
                 true
             }
-            Some(var_ty) => {
-                let var_ty = var_ty.cloned();
+            Ok(var_ty) => {
+                let var_ty = var_ty.clone();
                 if flip {
                     self.cmpi(span, &ty, &var_ty)
                 } else {

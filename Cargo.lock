@@ -584,6 +584,7 @@ dependencies = [
  "itertools 0.12.1",
  "lumina-key",
  "lumina-util",
+ "smallvec",
  "tracing",
 ]
 
@@ -594,6 +595,9 @@ dependencies = [
  "itertools 0.10.5",
  "owo-colors",
  "tinyvec",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
 ]
 
 [[package]]

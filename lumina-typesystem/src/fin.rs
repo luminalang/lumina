@@ -1,208 +1,106 @@
 use super::{
-    tenv, Constraint, Downgrade, Forall, Generic, GenericKind, GenericMapper, IType, Inference,
-    IntConstraint, IntSize, RecordError, RecordVar, RecordVarField, Static, Transformer, Ty, Type,
-    TypeSystem, Var, M,
+    Container, Forall, Generic, GenericKind, IType, Inference, IntConstraint, IntSize, Ty,
+    TypeSystem, Var,
 };
 use derive_new::new;
-use key::{LinearFind, Map};
-use lumina_key as key;
-use lumina_util::{Span, Spanned, Tr};
-use tracing::info;
-use tracing::trace;
+use lumina_util::Spanned;
+use tracing::{info, trace};
 
 #[derive(new)]
-pub struct Finalizer<'a, 'f, 's> {
-    ts: TypeSystem<'a, 's>,
-    forall: &'f mut Forall<'s, Inference>,
-    lforalls: &'f mut Map<key::Lambda, Forall<'s, Inference>>,
-
-    default_intsize: IntSize,
-
-    implicits: bool,
-
-    #[new(default)]
-    pub errors: Vec<FinError<'s>>,
+pub struct Finalizer<'a, 's> {
+    pub ts: TypeSystem<'a, 's>,
+    pub default_to_generic: Option<&'a mut Forall<'s, Inference>>,
 }
 
-pub enum FinError<'s> {
-    FieldNotFound(M<key::Record>, Tr<&'s str>),
-    NotRecord(Span, Type, Vec<Tr<&'s str>>),
-    Record(RecordError<'s>),
-}
-
-impl<'a, 'f, 's> Transformer<Inference> for Finalizer<'a, 'f, 's> {
-    type Output = Static;
-
-    fn special(&mut self, inf: &Inference) -> Ty<Self::Output> {
-        match inf {
-            Inference::Var(var) => self.var(*var),
-            Inference::Record(rvar) => match self.record(*rvar) {
-                Some((key, params)) => Ty::defined(key, params),
-                None => Type::poison(),
-            },
-            Inference::Field(rvar, varfield) => self.field(*rvar, *varfield),
+impl IntConstraint {
+    pub fn to_default_type(self, default_int_size: u8) -> IntSize {
+        let mut intsize = IntSize::minimum_for(true, self.max as u128);
+        if intsize.bits() < default_int_size {
+            intsize = IntSize::new(true, default_int_size);
         }
-    }
-
-    fn generic(&mut self, generic: Generic) -> Ty<Self::Output> {
-        Ty::Generic(generic)
+        intsize
     }
 }
 
-impl<'a, 'f, 's> Finalizer<'a, 'f, 's> {
-    pub fn record(&mut self, var: RecordVar) -> Option<(M<key::Record>, Vec<Type>)> {
-        let rdata = &mut self.ts.env.records[var];
+impl<'a, 's> Finalizer<'a, 's> {
+    pub fn infer_all_unknown_types(&mut self) {
+        info!("inferring all {} vars", self.ts.env.vars.len());
 
-        match rdata.assignment.clone() {
-            tenv::RecordAssignment::Ok(key, params) => {
-                if !rdata.verified {
-                    rdata.verified = true;
-                    for name in rdata.fields.values() {
-                        if self.ts.fnames[key].find(|n| *n == *name).is_none() {
-                            self.errors.push(FinError::FieldNotFound(key, *name));
+        // Infer remaining records and ints
+        for i in 0..self.ts.env.vars.len() {
+            let var = Var(i as u32);
+
+            // Finalize as a record
+            if !self.ts.env[var].fields.is_empty() {
+                let span = self.ts.env[var].span;
+
+                match self.ts.env[var].assignment.as_ref() {
+                    Some(ty) => match &ty.value {
+                        Ty::Container(Container::Defined(_, _), _) => {
+                            #[cfg(debug_assertions)]
+                            for (_, fvar, _) in &self.ts.env[var].fields {
+                                assert_ne!(
+                                    self.ts.env[*fvar].assignment, None,
+                                    "{var} was assigned without updating fields"
+                                );
+                            }
+
+                            continue;
                         }
-                    }
-                }
-                let params = self.transforms(&params);
-                Some((key, params))
-            }
-            tenv::RecordAssignment::Redirect(var) => self.record(var),
-            tenv::RecordAssignment::NotRecord(ty) => {
-                let fields = rdata.fields.values().cloned().collect();
-                let span = rdata.span;
-                let ty = self.transform(&ty);
-                self.errors.push(FinError::NotRecord(span, ty, fields));
-                None
-            }
-            tenv::RecordAssignment::Unknown(rerror) => {
-                if !rdata.verified {
-                    rdata.verified = true;
-                    self.errors.push(FinError::Record(rerror));
-                }
-                None
-            }
-            tenv::RecordAssignment::None => {
-                let span = rdata.span;
-                self.ts.force_record_inference(span, var);
-                self.record(var)
-            }
-        }
-    }
-
-    pub fn var(&mut self, var: Var) -> Type {
-        let idata = &self.ts.env.vars[var];
-        match idata.assignment.clone() {
-            None => self.default_var(var),
-            Some(ty) => self.transform(&*ty),
-        }
-    }
-
-    pub fn forall(
-        &mut self,
-        lambda: Option<key::Lambda>,
-    ) -> (GenericKind, &mut Forall<'s, Inference>) {
-        match lambda {
-            None => (GenericKind::Entity, &mut *self.forall),
-            Some(lkey) => (GenericKind::Lambda(lkey), &mut self.lforalls[lkey]),
-        }
-    }
-
-    fn default_var(&mut self, var: Var) -> Type {
-        trace!("attempting to default {var}");
-
-        let span = self.ts.env.vars[var].span;
-
-        match self.ts.env.vars[var].int_constraint {
-            Some(IntConstraint { min }) => {
-                let ty = match min {
-                    Some((signed, n)) => {
-                        Type::Int(IntSize::minimum_for(signed, n).max(self.default_intsize))
-                    }
-                    None => Type::Int(self.default_intsize),
-                };
-
-                self.ts.env.assign(var, Downgrade.transform(&ty).tr(span));
-                ty
-            }
-            None if self.implicits => {
-                let (kind, forall) = (GenericKind::Entity, &mut *self.forall);
-
-                let (generic, _) = forall.implicitly_declare();
-
-                info!("defaulting {var} to generic {}", generic,);
-
-                let generic = Generic::new(generic, kind);
-                self.ts.env.assign(var, IType::Generic(generic).tr(span));
-                Type::Generic(generic)
-            }
-            None => {
-                self.ts.env.assign(var, IType::tuple(vec![]).tr(span));
-                Type::tuple(vec![])
-            }
-        }
-    }
-
-    pub fn field(&mut self, var: RecordVar, field: RecordVarField) -> Type {
-        match self.record(var) {
-            Some((key, params)) => {
-                let rdata = &self.ts.env.records[var];
-                let name = &rdata.fields[field];
-                match self.ts.fnames[key].find(|n| *n == *name) {
-                    Some(fieldkey) => {
-                        let finst =
-                            GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
-                        let ty = &self.ts.ftypes[key][fieldkey];
-                        (&finst).transform(&ty)
-                    }
-                    // error will be created by a separate check
-                    None => Type::poison(),
-                }
-            }
-            None => Type::poison(),
-        }
-    }
-
-    pub fn num_constraints(&mut self) -> Vec<(Span, Option<(bool, u128)>, Tr<Type>)> {
-        self.ts
-            .env
-            .vars
-            .keys()
-            .filter_map(|var| match self.ts.env.vars[var].int_constraint {
-                Some(IntConstraint { min }) => {
-                    let vdata = &self.ts.env.vars[var];
-                    let span = vdata.span;
-
-                    let ty = match vdata.assignment.clone() {
-                        Some(ty) => self.transform(&ty).tr(ty.span),
-                        None => {
-                            let ty = Type::Int(self.default_intsize);
-                            self.ts
-                                .env
-                                .assign(var, IType::Int(self.default_intsize).tr(span));
-                            ty.tr(span)
+                        _ => panic!("non-record defined to {var} with fields. Is this allowed?"),
+                    },
+                    None => match self.ts.find_record_by_fields(var).as_slice() {
+                        [record] => {
+                            trace!("inferring record {var} as {record}");
+                            let params = self.ts.new_record_type_params(span, *record);
+                            self.ts.assign_record_to_rvar(span, var, *record, params);
+                            continue;
                         }
-                    };
-
-                    Some((span, min, ty))
+                        _ambigious_or_empty => {
+                            trace!("poisoning {var} because of record inference failing");
+                            let ty = Ty::poison();
+                            self.ts.env[var].assignment = Some(ty.tr(span));
+                            continue;
+                        }
+                    },
                 }
-                None => None,
-            })
-            .collect()
-    }
+            }
 
-    pub fn constraints(&mut self) -> Vec<(Span, Type, Constraint<Static>)> {
-        let cons = std::mem::take(&mut self.ts.env.constraint_checks);
-        cons.into_iter()
-            .map(|(var, con)| {
-                let span = self.ts.env.vars[var].span;
-                let type_ = self.var(var);
-                let constraint = Constraint {
-                    params: self.transforms(&con.params),
-                    span: con.span,
-                    trait_: con.trait_,
-                };
-                (span, type_, constraint)
-            })
-            .collect()
+            let vinfo = &mut self.ts.env[var];
+
+            // Finalize as an int
+            if let Some(intcon) = vinfo.int_constraint {
+                if vinfo.assignment.is_some() {
+                    continue;
+                }
+
+                let intsize = intcon.to_default_type(self.ts.default_int_size);
+                let ty = IType::Int(intsize);
+                vinfo.assignment = Some(ty.tr(vinfo.span));
+            }
+        }
+
+        // Default other vars
+        for (i, vinfo) in self.ts.env.vars.iter_mut().enumerate() {
+            let var = Var(i as u32);
+
+            if vinfo.assignment.is_some() {
+                continue;
+            }
+
+            trace!("defaulting {var} without constraints");
+
+            let ty = if vinfo.lift_to_generic {
+                let forall = self.default_to_generic.as_deref_mut().unwrap();
+                Ty::Generic(Generic::new(
+                    forall.implicitly_declare().0,
+                    GenericKind::Entity,
+                ))
+            } else {
+                Ty::tuple(vec![])
+            };
+
+            vinfo.assignment = Some(ty.tr(vinfo.span));
+        }
     }
 }

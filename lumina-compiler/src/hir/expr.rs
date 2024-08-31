@@ -6,7 +6,7 @@ use ast::{Entity, Mod, NFunc};
 use derive_more::Display;
 use derive_more::From;
 use lumina_parser as parser;
-use lumina_typesystem::{Forall, IType, RecordVar, TEnv, Var};
+use lumina_typesystem::{Forall, IType, TEnv, Var};
 use lumina_util::Highlighting;
 use parser::AnnotatedPath;
 use std::fmt;
@@ -20,9 +20,9 @@ pub enum Expr<'s> {
 
     PassExpr(Box<Tr<Self>>),
 
-    Access(RecordVar, Box<Tr<Self>>, Tr<&'s str>),
+    Access(Var, Box<Tr<Self>>, Tr<&'s str>),
     Record(
-        RecordVar,
+        Var,
         Option<Tr<IType>>,
         Option<Tr<key::Bind>>,
         Vec<(Tr<&'s str>, Tr<Self>)>,
@@ -83,8 +83,9 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
 
         match expr.value {
             parser::Expr::Lit(parser::Literal::Int(neg, n)) => {
-                let var = self.vars().int(expr.span);
-                self.vars().hint_min_int(var, *neg, *n);
+                let max = *n as u64;
+                let min = neg.then_some(-(*n as i128)).unwrap_or(0);
+                let var = self.vars().int(expr.span, min, max);
 
                 Expr::Lit(Literal::Int(*neg, *n, var))
             }
@@ -117,7 +118,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             parser::Expr::Operators { init, ops } => self.operators((**init).as_ref(), ops),
             parser::Expr::FieldAccess(object, name) => {
                 let object = self.expr((**object).as_ref());
-                let rvar = self.vars().record(object.span);
+                let rvar = self.vars().var(object.span);
                 Expr::Access(rvar, Box::new(object), *name)
             }
             parser::Expr::DotPipe(elems) => {
@@ -591,7 +592,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         init: &parser::CurlyInit<'s>,
         fields: &parser::Fields<'s, parser::Expr<'s>>,
     ) -> Expr<'s> {
-        let var = self.vars().record(span);
+        let var = self.vars().var(span);
 
         match init {
             parser::CurlyInit::Construct(ty) => {
@@ -727,7 +728,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 let sbind = bind.tr(field.span);
                 let next = self.record_field_path(xs, sbind, rebind, value);
                 let nspan = next.0.span;
-                let var = self.vars().record(field.span);
+                let var = self.vars().var(field.span);
                 // self.vars().add_field(var, nspan, next.0.value);
                 let and_then = Expr::Record(var, None, Some(sbind), vec![next]).tr(nspan);
                 let let_bind = self.field_into_let_bind(modify, *field, bind, and_then);
@@ -753,7 +754,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         to: key::Bind,
         assigned_value: Tr<hir::Expr<'s>>,
     ) -> Tr<Expr<'s>> {
-        let rvar = self.vars().record(field.span);
+        let rvar = self.vars().var(field.span);
         let letvalue = Expr::Access(
             rvar,
             Box::new(Expr::callable(modified.value).tr(modified.span)),

@@ -1,6 +1,8 @@
 use super::{range, Branching, DecTree, TreeTail, LIST_CONS, LIST_NIL};
 use crate::prelude::*;
-use lumina_typesystem::{Container, GenericKind, GenericMapper, Static, Transformer, Ty, Type};
+use lumina_typesystem::{
+    Container, GenericKind, GenericMapper, Lang, Static, Transformer, Ty, Type,
+};
 use std::collections::VecDeque;
 
 #[derive(new)]
@@ -57,57 +59,63 @@ impl<'a> Init<'a> {
                     DecTree::Tuple { elems: elems.len(), next: Box::new(next) }
                 }
                 Container::FnPointer | Container::Closure | Container::Pointer => opaque(),
-                Container::String(_) => DecTree::String {
-                    next: Branching { branches: vec![] },
-                    wildcard_next: Box::new(DecTree::End(TreeTail::Unreached(
-                        elems.to_vec().into(),
-                    ))),
-                },
-                Container::List(_) => {
-                    let inner = elems.last().expect("list type without type parameters");
-                    let branches = vec![
-                        (LIST_CONS, DecTree::lazy([inner.clone(), ty.clone()])),
-                        (LIST_NIL, DecTree::unreached()),
-                    ];
-                    DecTree::List { next: Branching { branches }, ty: ty.clone() }
-                }
-                Container::Defined(kind) => match kind.value {
-                    key::TypeKind::Record(record) => {
-                        let record = kind.module.m(record);
-                        let finst =
-                            GenericMapper::from_types(GenericKind::Entity, elems.iter().cloned());
-
-                        let fields = self.ftypes[record]
-                            .values()
-                            .map(|ty| (&finst).transform(&ty))
-                            .collect();
-
-                        let next = DecTree::End(TreeTail::Unreached(fields));
-
-                        let fields = self.ftypes[record].len();
-
-                        let params = elems.to_vec();
-                        DecTree::Record { record, params, fields, next: Box::new(next) }
+                Container::Defined(kind, lang) => match **lang {
+                    Lang::String => DecTree::String {
+                        next: Branching { branches: vec![] },
+                        wildcard_next: Box::new(DecTree::End(TreeTail::Unreached(
+                            elems.to_vec().into(),
+                        ))),
+                    },
+                    Lang::List => {
+                        let inner = elems.last().expect("list type without type parameters");
+                        let branches = vec![
+                            (LIST_CONS, DecTree::lazy([inner.clone(), ty.clone()])),
+                            (LIST_NIL, DecTree::unreached()),
+                        ];
+                        DecTree::List { next: Branching { branches }, ty: ty.clone() }
                     }
-                    key::TypeKind::Sum(sum) => {
-                        let sum = kind.module.m(sum);
-                        let finst =
-                            GenericMapper::from_types(GenericKind::Entity, elems.iter().cloned());
+                    Lang::None => match kind.value {
+                        key::TypeKind::Record(record) => {
+                            let record = kind.module.m(record);
+                            let finst = GenericMapper::from_types(
+                                GenericKind::Entity,
+                                elems.iter().cloned(),
+                            );
 
-                        let branches = self.vtypes[sum]
-                            .iter()
-                            .map(|(var, params)| {
-                                let elems =
-                                    params.iter().map(|ty| (&finst).transform(ty)).collect();
-                                let next = DecTree::End(TreeTail::Unreached(elems));
-                                (var, next)
-                            })
-                            .collect();
+                            let fields = self.ftypes[record]
+                                .values()
+                                .map(|ty| (&finst).transform(&ty))
+                                .collect();
 
-                        let params = elems.to_vec();
-                        DecTree::Sum { sum, params, next: Branching { branches } }
-                    }
-                    key::TypeKind::Trait(_) => opaque(),
+                            let next = DecTree::End(TreeTail::Unreached(fields));
+
+                            let fields = self.ftypes[record].len();
+
+                            let params = elems.to_vec();
+                            DecTree::Record { record, params, fields, next: Box::new(next) }
+                        }
+                        key::TypeKind::Sum(sum) => {
+                            let sum = kind.module.m(sum);
+                            let finst = GenericMapper::from_types(
+                                GenericKind::Entity,
+                                elems.iter().cloned(),
+                            );
+
+                            let branches = self.vtypes[sum]
+                                .iter()
+                                .map(|(var, params)| {
+                                    let elems =
+                                        params.iter().map(|ty| (&finst).transform(ty)).collect();
+                                    let next = DecTree::End(TreeTail::Unreached(elems));
+                                    (var, next)
+                                })
+                                .collect();
+
+                            let params = elems.to_vec();
+                            DecTree::Sum { sum, params, next: Branching { branches } }
+                        }
+                        key::TypeKind::Trait(_) => opaque(),
+                    },
                 },
             },
             Ty::Simple("self") | Type::Generic(_) => opaque(),

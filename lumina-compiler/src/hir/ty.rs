@@ -162,7 +162,11 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
         }
     }
 
-    pub fn typing_or_inferred<T>(&mut self, header: &FuncHeader<'s>) -> hir::Typing<Ty<T>>
+    pub fn typing_or_inferred<T>(
+        &mut self,
+        header: &FuncHeader<'s>,
+        lifted: bool,
+    ) -> hir::Typing<Ty<T>>
     where
         T: FromVar,
     {
@@ -173,7 +177,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                     .type_info
                     .inference_mut()
                     .expect("optional inference for static signature");
-                hir::Typing::inferred(&header.params, header.name.span, vars)
+                hir::Typing::inferred(&header.params, header.name.span, vars, lifted)
             }
         }
     }
@@ -265,7 +269,11 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                     return Ty::poison();
                 }
                 Some(vars) => {
-                    let ty = T::var(vars.var(span));
+                    let var = vars.var(span);
+                    if self.type_info.declare_generics {
+                        vars.enable_lift_to_generic(var);
+                    }
+                    let ty = T::var(var);
                     return self.forbid_params(span, ty, params);
                 }
             },

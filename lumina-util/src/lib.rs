@@ -15,3 +15,6 @@ pub use span::*;
 
 mod helpers;
 pub use helpers::ParamFmt;
+
+mod test_logger;
+pub use test_logger::test_logger;

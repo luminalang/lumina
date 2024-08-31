@@ -27,25 +27,23 @@ impl<'a, 's> Verify<'a, 's> {
                 returns.value
             }
             hir::Pattern::Record(var, ty, fields) => {
-                for (name, _, _) in fields.iter() {
-                    self.vars().add_field(*var, *name);
-                }
+                let fvars = fields
+                    .iter()
+                    .map(|(name, _, _)| self.vars().add_field(*var, *name))
+                    .collect::<Vec<_>>();
 
                 if let Some(ty) = ty {
-                    self.assign_ty_to_rvar(pat.span, *var, ty.as_ref());
+                    self.type_check_and_emit(IType::infer(*var).tr(pat.span).as_ref(), ty.as_ref());
                 }
 
-                for (varfield, (vname, bind, pat)) in self.vars().iter_var_fields(*var).zip(fields)
-                {
-                    let exp = IType::inffield(*var, varfield).tr(vname.span);
-                    let name = self.vars().name_of_field(*var, varfield);
-                    assert_eq!(name, *vname);
+                for ((name, bind, pat), fvar) in fields.iter().zip(fvars) {
                     let ty = self.type_check_pat(pat.as_ref());
-                    self.type_check_and_emit(ty.as_ref(), exp.as_ref());
-                    self.new_bind_as(*bind, exp);
+                    let fty = IType::infer(fvar).tr(name.span);
+                    self.type_check_and_emit(ty.as_ref(), fty.as_ref());
+                    self.new_bind_as(*bind, fty);
                 }
 
-                IType::infrecord(*var)
+                IType::infer(*var)
             }
             hir::Pattern::Tuple(elems) => {
                 let types = elems

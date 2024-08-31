@@ -1,7 +1,7 @@
 use super::*;
 use crate::mir::CallTypes;
 use insta::assert_snapshot;
-use lumina_typesystem::{Generic, GenericKind, GenericMapper, RecordVar, Static};
+use lumina_typesystem::{Generic, GenericKind, GenericMapper, Static, Var};
 
 macro_rules! snapshot_tree_and_missing {
     ($lower:ident, $tree:expr) => {{
@@ -41,7 +41,7 @@ fn u8() -> Tr<Type> {
 
 impl Lower {
     fn new() -> Self {
-        test_logger();
+        lumina_util::test_logger();
 
         fn map<K: EntityRef, T, const N: usize>(values: [T; N]) -> Map<K, T> {
             values.into_iter().collect()
@@ -106,7 +106,7 @@ impl<'a, 's> Merge<'s, Tail> for Lower {
         todo!();
     }
 
-    fn fin_record(&mut self, _: RecordVar) -> Option<(M<lumina_key::Record>, Vec<Type>)> {
+    fn fin_record(&mut self, _: Var) -> Option<(M<lumina_key::Record>, Vec<Type>)> {
         todo!();
     }
 

@@ -43,41 +43,41 @@ impl<'a, 's> Verify<'a, 's> {
                 let fieldvar = self.vars().add_field(*rvar, (**field).tr(field.span));
 
                 let objty = self.type_check_expr((**object).as_ref());
-                let exp = IType::infrecord(*rvar).tr(field.span);
+                let exp = IType::infer(*rvar).tr(field.span);
 
-                let ok = self.type_check_and_emit(objty.as_ref(), exp.as_ref());
-                if ok {
-                    IType::inffield(*rvar, fieldvar)
-                } else {
-                    IType::poison()
-                }
+                self.type_check_and_emit(objty.as_ref(), exp.as_ref());
+                IType::infer(fieldvar)
             }
             hir::Expr::Record(var, ty, modify, fields) => {
-                for (name, _) in fields.iter() {
-                    self.vars().add_field(*var, *name);
-                }
+                let fvars = fields
+                    .iter()
+                    .map(|(name, _)| self.vars().add_field(*var, *name))
+                    .collect::<Vec<_>>();
 
                 if let Some(ty) = ty {
                     assert!(modify.is_none());
-                    self.assign_ty_to_rvar(expr.span, *var, ty.as_ref());
+                    self.type_check_and_emit(
+                        IType::infer(*var).tr(expr.span).as_ref(),
+                        ty.as_ref(),
+                    );
                 };
+
+                // FOUND IT: The problem is that we're assigning this *before* creating the fields. So; they're never "fixed"
 
                 if let Some(bind) = modify.as_deref() {
                     let ty = self.type_of(*bind).cloned();
-                    let exp = IType::infrecord(*var).tr(expr.span);
+                    let exp = IType::infer(*var).tr(expr.span);
                     let (ty, exp) = (ty.as_ref(), exp.as_ref());
                     self.type_check_and_emit(ty, exp);
                 }
 
-                for (varfield, (vname, expr)) in self.vars().iter_var_fields(*var).zip(fields) {
-                    let exp = IType::inffield(*var, varfield).tr(vname.span);
-                    let name = self.vars().name_of_field(*var, varfield);
-                    assert_eq!(name, *vname);
+                for ((name, expr), fvar) in fields.iter().zip(fvars) {
                     let ty = self.type_check_expr(expr.as_ref());
-                    self.type_check_and_emit(ty.as_ref(), exp.as_ref());
+                    let fty = IType::infer(fvar).tr(name.span);
+                    self.type_check_and_emit(ty.as_ref(), fty.as_ref());
                 }
 
-                IType::infrecord(*var)
+                IType::infer(*var)
             }
             hir::Expr::Tuple(elems) => {
                 let types = elems

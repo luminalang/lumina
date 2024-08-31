@@ -1,7 +1,6 @@
 use super::func::InstInfo;
-use super::tcheck::emit_record_error;
 use super::tyfmt::TyFmtState;
-use super::{Current, LangItems, RSolver, ReadOnlyBytes};
+use super::{Current, LangItems, ReadOnlyBytes};
 use crate::prelude::*;
 use crate::Target;
 use ast::NFunc;
@@ -13,7 +12,8 @@ pub mod pat;
 
 use derive_new::new;
 use lumina_typesystem::{
-    Finalizer, Forall, GenericMapper, IType, Inference, RecordVar, Static, TEnv, Transformer, Type,
+    Constraint, Forall, GenericMapper, IType, Inference, Static, TEnv, Transformer, Type, Upgrade,
+    Var,
 };
 use lumina_util::Highlighting;
 use std::fmt;
@@ -71,129 +71,66 @@ pub enum Callable {
 
 #[derive(new)]
 pub struct Lower<'a, 's> {
-    env: &'a mut TEnv<'s>,
+    env: &'a TEnv<'s>,
 
     read_only_table: &'a mut ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
 
-    forall: &'a mut Forall<'s, Inference>,
-    lforalls: &'a mut Map<key::Lambda, Forall<'s, Inference>>,
     pub current: &'a mut Current,
-    pub implicits: bool,
 
     items: LangItems,
-    rsolver: RSolver<'a, 's>,
-    _vnames: &'a ModMap<key::Sum, Map<key::SumVariant, Tr<&'s str>>>,
+    fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
+    ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
     vtypes: &'a ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
 
     target: Target,
 
     #[new(default)]
-    pub errors: Vec<FinError<'s>>,
-
+    pub errors: Vec<FinError>,
     #[new(default)]
-    lambdas: Map<key::Lambda, Lambda>,
+    pub trait_object_cast_checks: Vec<(Tr<Type>, Constraint<Static>)>,
+    // #[new(default)]
+    // lambdas: Map<key::Lambda, Lambda>,
 }
 
-pub enum FinError<'s> {
-    TS(lumina_typesystem::FinError<'s>),
+pub enum FinError {
     UnreachablePattern(Span),
     MissingPatterns(Span, Vec<pat::MissingPattern>),
     InvalidCast(Tr<Type>, Type),
 }
 
 impl<'a, 's> Lower<'a, 's> {
-    fn finalizer<F, T>(&mut self, and_then: F) -> T
-    where
-        F: FnOnce(&mut Finalizer<'_, '_, 's>) -> T,
-    {
-        let module = self.current.fkey.module;
-        let system = self.rsolver.as_typesystem(module, self.env);
-        let mut fin = Finalizer::new(
-            system,
-            self.forall,
-            self.lforalls,
-            self.target.int(),
-            self.implicits,
-        );
-        let value = and_then(&mut fin);
-        self.errors.extend(fin.errors.into_iter().map(FinError::TS));
-        value
+    pub(super) fn finalizer(&mut self) -> Upgrade {
+        Upgrade(self.env)
     }
 
     fn fin_typing(&mut self, info: &InstInfo) -> (GenericMapper<Static>, CallTypes) {
         let inst = self.fin_inst(&info.inst);
-        self.finalizer(|fin| {
-            let ptypes = info.ptypes.iter().map(|ty| fin.transform(&**ty)).collect();
-            let returns = fin.transform(&info.ret);
-            let call = CallTypes::new(ptypes, returns);
-            (inst, call)
-        })
+        let mut fin = self.finalizer();
+        let ptypes = info.ptypes.iter().map(|ty| fin.transform(&**ty)).collect();
+        let returns = fin.transform(&info.ret);
+        let call = CallTypes::new(ptypes, returns);
+        (inst, call)
     }
 
     fn fin_inst(&mut self, info: &GenericMapper<Inference>) -> GenericMapper<Static> {
-        self.finalizer(|fin| info.map(|ty| fin.transform(ty)))
+        info.map(|ty| self.finalizer().transform(ty))
     }
 
-    pub fn lower_func_typing(&mut self, typing: &hir::Typing<IType>) -> ConcreteTyping {
-        self.current.lambda = None;
-        self.typing(None, typing)
-    }
-
-    pub fn lower_lambda_typings<'t>(
+    pub fn typing(
         &mut self,
-        lambdas: impl Iterator<Item = (key::Lambda, &'t hir::Typing<IType>)>,
-    ) {
-        lambdas.for_each(|(lkey, lambda)| {
-            self.current.lambda = Some(lkey);
-            let typing = self.typing(Some(lkey), lambda);
-            info!("lambda {lkey} typing finalised to: {typing}");
-            self.lambdas
-                .push_as(lkey, Lambda::new(typing, Expr::Poison))
-        });
-    }
-
-    pub fn lower_lambda_expressions(
-        mut self,
-        exprs: &Map<key::Lambda, Tr<hir::Expr<'s>>>,
-        params: &Map<key::Lambda, Vec<Tr<hir::Pattern<'s>>>>,
-    ) -> (Map<key::Lambda, Lambda>, Vec<FinError<'s>>) {
-        for lkey in exprs.keys() {
-            self.current.lambda = Some(lkey);
-
-            let typing = &self.lambdas[lkey].typing;
-            let ptypes = typing.params.clone();
-
-            self.lambdas[lkey].expr =
-                self.patterns_and_expr(&ptypes, &params[lkey], exprs[lkey].as_ref());
-
-            info!(
-                "lambda {lkey} expr finalised to:\n  {}",
-                &self.lambdas[lkey].expr
-            );
-        }
-
-        (self.lambdas, self.errors)
-    }
-
-    fn typing(
-        &mut self,
-        lambda: Option<key::Lambda>,
+        forall: &Forall<'s, Inference>,
         typing: &hir::Typing<IType>,
     ) -> ConcreteTyping {
-        assert_eq!(lambda, self.current.lambda);
-
-        self.finalizer(|fin| ConcreteTyping {
+        let mut fin = self.finalizer();
+        ConcreteTyping {
             params: typing
                 .params
                 .values()
                 .map(|ty| fin.transform(&*ty))
                 .collect(),
             returns: fin.transform(&typing.returns),
-            forall: {
-                let cons = fin.forall(lambda).1.clone();
-                cons.map(|_, ty| fin.transform(ty), Forall::<()>::name_by_key)
-            },
-        })
+            forall: forall.map(|_, ty| fin.transform(ty), Forall::<()>::name_by_key),
+        }
     }
 
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
@@ -287,7 +224,7 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
                 let tree = self.first(string, maybe, list, ty, self.patterns[i].as_ref());
 
                 let missing = pat::MissingGeneration::new(pat::Init::new(
-                    self.lower.rsolver.ftypes,
+                    self.lower.ftypes,
                     self.lower.vtypes,
                 ))
                 .run(&tree);
@@ -319,7 +256,7 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
 
     fn type_of_bind(&mut self, bind: key::Bind) -> Type {
         let ty = self.lower.current.binds[&bind].value.clone();
-        self.lower.finalizer(|fin| fin.transform(&ty))
+        self.lower.finalizer().transform(&ty)
     }
 
     fn str_to_ro(&mut self, str: &'s str) -> M<lumina_key::ReadOnly> {
@@ -340,16 +277,16 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
             .map(|instinfo| self.lower.fin_typing(&instinfo))
     }
 
-    fn fin_record(&mut self, rvar: RecordVar) -> Option<(M<key::Record>, Vec<Type>)> {
-        self.lower.finalizer(|fin| fin.record(rvar))
+    fn fin_record(&mut self, rvar: Var) -> Option<(M<key::Record>, Vec<Type>)> {
+        self.lower.transform_rvar(rvar)
     }
 
     fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
-        *self.lower.rsolver.fnames[record][field]
+        *self.lower.fnames[record][field]
     }
 
     fn to_init(&self) -> pat::Init {
-        pat::Init::new(self.lower.rsolver.ftypes, self.lower.vtypes)
+        pat::Init::new(self.lower.ftypes, self.lower.vtypes)
     }
 }
 
@@ -372,12 +309,12 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for MatchBranchLower<'l, 
     }
 
     fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
-        *self.lower.rsolver.fnames[record][field]
+        *self.lower.fnames[record][field]
     }
 
     fn type_of_bind(&mut self, bind: key::Bind) -> Type {
         let ty = self.lower.current.binds[&bind].value.clone();
-        self.lower.finalizer(|fin| fin.transform(&ty))
+        self.lower.finalizer().transform(&ty)
     }
 
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
@@ -391,8 +328,8 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for MatchBranchLower<'l, 
             .map(|instinfo| self.lower.fin_typing(&instinfo))
     }
 
-    fn fin_record(&mut self, rvar: RecordVar) -> Option<(M<key::Record>, Vec<Type>)> {
-        self.lower.finalizer(|fin| fin.record(rvar))
+    fn fin_record(&mut self, rvar: Var) -> Option<(M<key::Record>, Vec<Type>)> {
+        self.lower.transform_rvar(rvar)
     }
 
     fn extractor_params(&mut self, params: &[Tr<hir::Expr<'s>>]) -> Vec<mir::Expr> {
@@ -403,32 +340,17 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for MatchBranchLower<'l, 
     }
 
     fn to_init(&self) -> pat::Init {
-        pat::Init::new(self.lower.rsolver.ftypes, self.lower.vtypes)
+        pat::Init::new(self.lower.ftypes, self.lower.vtypes)
     }
 }
 
-pub fn emit_fin_error<'s, T>(
+pub fn emit_fin_error<'s>(
     sources: &ast::Sources,
     module: key::Module,
     tfmt: TyFmtState<'_, 's>,
-    records: &ModMap<key::Record, (Tr<&'s str>, T)>,
-    error: FinError<'s>,
+    error: FinError,
 ) {
     match error {
-        FinError::TS(lumina_typesystem::FinError::FieldNotFound(key, field)) => sources
-            .error("field not found")
-            .m(module)
-            .eline(
-                field.span,
-                format!(
-                    "type {} does not have a field named `{field}`",
-                    &records[key].0
-                ),
-            )
-            .emit(),
-        FinError::TS(lumina_typesystem::FinError::Record(rerror)) => {
-            emit_record_error(sources, module, records, rerror)
-        }
         FinError::UnreachablePattern(span) => sources
             .error("unreachable pattern")
             .m(module)
@@ -469,18 +391,6 @@ pub fn emit_fin_error<'s, T>(
                 )
                 .emit();
         }
-        FinError::TS(lumina_typesystem::FinError::NotRecord(span, ty, fields)) => sources
-            .error("type mismatch")
-            .m(module)
-            .eline(
-                span,
-                format!(
-                    "expected a record with the fields {{{}}}",
-                    fields.iter().format(", ")
-                ),
-            )
-            .text(format!("but got `{}`", tfmt.fmt(ty)))
-            .emit(),
     }
 }
 

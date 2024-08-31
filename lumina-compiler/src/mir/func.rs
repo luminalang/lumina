@@ -1,13 +1,13 @@
-use super::{lower, tyfmt::TyFmtState, Current, LangItems, RSolver, ReadOnlyBytes, Verify};
+use super::{lower, tyfmt::TyFmtState, Current, LangItems, ReadOnlyBytes, Verify};
 use crate::prelude::*;
 use crate::{ProjectInfo, Target};
 use ast::NFunc;
 use either::Either;
 use hir::HIR;
 use lumina_typesystem::{
-    Constraint, Container, DirectRecursion, Finalizer, Forall, Generic, GenericKind, GenericMapper,
-    IType, ImplIndex, Inference, IntSize, RecordAssignment, RecordVar, TEnv, Transformer, Ty, Type,
-    TypeSystem,
+    Compatibility, Constraint, ConstraintError, Container, DirectRecursion, Finalizer, Forall,
+    Generic, GenericKind, GenericMapper, IType, ImplIndex, Inference, Static, TEnv, Transformer,
+    Ty, Type, TypeSystem,
 };
 use lumina_util::Highlighting;
 use std::fmt;
@@ -58,14 +58,6 @@ impl FunctionStatus {
         }
     }
 }
-
-// #[derive(From, Debug, Clone, Copy, Display)]
-// pub enum Local {
-//     #[from]
-//     Param(key::Param),
-//     #[from]
-//     Binding(key::Bind),
-// }
 
 impl<'a, 's> Verify<'a, 's> {
     pub fn start_at(
@@ -124,9 +116,8 @@ impl<'a, 's> Verify<'a, 's> {
                 let current = Current::new(func, fdef.lambdas.keys());
 
                 let langs = LangItems::new(fdef.list, pinfo);
-                let rsolver = RSolver::new(fields, &hir.records, &hir.field_types, &hir.fnames);
                 let mut lower = Verify::new(
-                    &hir, iquery, tenvs, rsolver, langs, funcs, rotable, target, current, pforall,
+                    &hir, iquery, tenvs, langs, funcs, rotable, target, current, fields, pforall,
                     fdef,
                 );
 
@@ -134,12 +125,6 @@ impl<'a, 's> Verify<'a, 's> {
                 funcs[func] = FunctionStatus::Done(function);
             }
         }
-    }
-
-    pub fn type_system(&mut self) -> TypeSystem<'_, 's> {
-        let fkey = self.current.fkey;
-        self.rsolver
-            .as_typesystem(fkey.module, &mut self.tenvs[fkey])
     }
 
     // Returns `None` if already lowering
@@ -206,6 +191,8 @@ impl<'a, 's> Verify<'a, 's> {
         info!("typing is: {}", &self.fdef.typing);
         let _handle = _span.enter();
 
+        let module = self.current.fkey.module;
+
         trace!("type checking parameters");
         self.type_check_pat_params(&self.fdef.typing.params, &self.fdef.params);
 
@@ -234,146 +221,74 @@ impl<'a, 's> Verify<'a, 's> {
             self.type_check_and_emit(ret, expected);
         }
 
-        let mut forall = self.fdef.forall.borrow_mut();
-        let mut lforalls = self.fdef.lambdas.foralls.borrow_mut();
+        let forall = self.fdef.forall.borrow_mut();
+        let lforalls = self.fdef.lambdas.foralls.borrow_mut();
+
+        // Finalize all types by defaulting and resolving any remaining inference
+        let ts = self.hir.type_system(
+            &mut self.tenvs[fkey],
+            self.target,
+            &self.field_lookup[module],
+        );
+        Finalizer::new(ts, None).infer_all_unknown_types();
 
         // Finalization pass transforming HIR to MIR
         let mut finalization = lower::Lower::new(
-            &mut self.tenvs[fkey],
+            &self.tenvs[fkey],
             &mut self.read_only_table,
-            &mut forall,
-            &mut lforalls,
             &mut self.current,
-            true,
             self.items,
-            self.rsolver,
-            &self.hir.vnames,
+            &self.hir.fnames,
+            &self.hir.field_types,
             &self.hir.variant_types,
             self.target,
         );
+        finalization.current.lambda = None;
 
-        let typing = finalization.lower_func_typing(&self.fdef.typing);
+        let typing = finalization.typing(&forall, &self.fdef.typing);
         info!("typing finalised to: {typing}");
 
-        finalization.implicits = false;
-        finalization.lower_lambda_typings(self.fdef.lambdas.typings.iter());
-
-        finalization.current.lambda = None;
         let expr = finalization.patterns_and_expr(
             &typing.params,
             &self.fdef.params,
             self.fdef.expr.as_ref(),
         );
         info!("expr finalised to:\n  {expr}");
-        let (lambdas, errors) = finalization
-            .lower_lambda_expressions(&self.fdef.lambdas.bodies, &self.fdef.lambdas.params);
 
-        let dint_size = self.target.int();
-        let ts = self.type_system();
-        let mut fin = Finalizer::new(ts, &mut forall, &mut lforalls, dint_size, false);
-        let num_cons = fin.num_constraints();
-        let constraints = fin.constraints();
+        let lambdas: Map<key::Lambda, lower::Lambda> = {
+            let lambdas = &self.fdef.lambdas;
 
-        let finerrors = fin.errors.into_iter();
+            lambdas
+                .typings
+                .iter()
+                .map(|(lkey, typing)| {
+                    finalization.current.lambda = Some(lkey);
+
+                    let typing = finalization.typing(&lforalls[lkey], &typing);
+                    info!("{lkey} typing finalised to: {typing}");
+
+                    let expr = finalization.patterns_and_expr(
+                        &typing.params,
+                        &lambdas.params[lkey],
+                        lambdas.bodies[lkey].as_ref(),
+                    );
+                    info!("{lkey} expr finalised to:\n  {expr}");
+
+                    lower::Lambda::new(typing, expr)
+                })
+                .collect()
+        };
+
         drop(forall);
+        let trait_object_cast_checks = finalization.trait_object_cast_checks;
 
-        for error in errors.into_iter().chain(finerrors.map(lower::FinError::TS)) {
+        for error in finalization.errors.into_iter() {
             let tfmt = self.ty_formatter();
             let sources = &self.hir.sources;
-            lower::emit_fin_error(sources, self.module(), tfmt, &self.hir.records, error);
+            lower::emit_fin_error(sources, module, tfmt, error);
         }
 
-        for (span, min, ty) in num_cons {
-            let intsize = min
-                .map(|(i, num)| IntSize::minimum_for(i, num).max(dint_size))
-                .unwrap_or(dint_size);
-
-            let num_type = Type::Int(intsize);
-
-            match ty.value {
-                Type::Int(int) => {
-                    if let Some((neg, m)) = min {
-                        let within = if neg {
-                            int.min_value() as i128 >= m as i128
-                        } else {
-                            int.max_value() as u128 >= m
-                        };
-
-                        let err = |msg| {
-                            self.error("integer not within bounds")
-                                .eline(span, msg)
-                                .emit()
-                        };
-
-                        if !within {
-                            err(format!(
-                                "{}{m} does not fit in {int}",
-                                neg.then_some("-").unwrap_or(""),
-                            ))
-                        }
-
-                        if !int.signed && neg {
-                            err(format!("can not use negative numbers with {int}"))
-                        }
-                    }
-                }
-                Type::Simple("poison") => {}
-                _ => {
-                    let got = self.ty_formatter().fmt(&num_type);
-                    let exp = self.ty_formatter().fmt(&*ty);
-                    self.emit_type_mismatch(span, "", got, exp)
-                }
-            }
-        }
-
-        let pforall = self.pforall;
-
-        for (span, ty, con) in constraints {
-            let get_forall = &|gkind| match gkind {
-                GenericKind::Lambda(lkey) => &lambdas[lkey].typing.forall,
-                GenericKind::Entity => &typing.forall,
-                GenericKind::Parent => &pforall,
-            };
-
-            // HACK: We substitute `Self` in implementation methods so we don't need to handle them
-            // BUT we forgot that default trait methods exist of where we can't substitute. So; we
-            // now need to partially track `Self` regardless making the effort of substituting
-            // `Self` useless.
-            let in_trait = match &self.hir.funcs[fkey] {
-                hir::FuncDefKind::TraitDefaultMethod(key, _, _, _) => {
-                    let params = &self.hir.traits[*key].1;
-                    Some((*key, params))
-                }
-                _ => None,
-            };
-
-            let hit = lumina_typesystem::Compatibility::constraint(
-                self.iquery,
-                in_trait,
-                &|ikey| {
-                    let impltor = &self.hir.impltors[ikey];
-                    let iforall = &self.hir.impls[ikey];
-                    let (trait_, trait_params) = &self.hir.itraits[ikey];
-                    (*trait_, iforall, impltor, trait_params)
-                },
-                &get_forall,
-                &ty,
-                &con,
-            );
-
-            if !hit {
-                self.error("constraint not met")
-                    .eline(
-                        span,
-                        format!(
-                            "`{}` does not implement `{}`",
-                            self.ty_formatter().fmt(&ty),
-                            self.ty_formatter().fmt((con.trait_, con.params.as_slice()))
-                        ),
-                    )
-                    .emit();
-            }
-        }
+        self.check_all_constraints(&lambdas, &typing, trait_object_cast_checks);
 
         let lcaptures = self.fdef.lambdas.captures.clone();
 
@@ -381,6 +296,112 @@ impl<'a, 's> Verify<'a, 's> {
         function.no_mangle = self.fdef.no_mangle;
 
         function
+    }
+
+    fn check_all_constraints(
+        &mut self,
+        lambdas: &Map<key::Lambda, lower::Lambda>,
+        typing: &lower::ConcreteTyping,
+        casts: Vec<(Tr<Type>, Constraint<Static>)>,
+    ) {
+        let fkey = self.current.fkey;
+
+        // HACK: We substitute `Self` in implementation methods so we don't need to handle them
+        // BUT we forgot that default trait methods exist of where we can't substitute. So; we
+        // now need to partially track `Self` regardless making the effort of substituting
+        // `Self` useless.
+        let in_trait = match &self.hir.funcs[fkey] {
+            hir::FuncDefKind::TraitDefaultMethod(key, _, _, _) => {
+                let params = &self.hir.traits[*key].1;
+                Some((*key, params))
+            }
+            _ => None,
+        };
+        let pforall = self.pforall;
+        let lhs_forall = &|kind| match kind {
+            GenericKind::Lambda(lkey) => &lambdas[lkey].typing.forall,
+            GenericKind::Entity => &typing.forall,
+            GenericKind::Parent => pforall,
+        };
+        let get_impl_data = &|ikey: M<key::Impl>| {
+            let impltor = &*self.hir.impltors[ikey];
+            let iforall = &self.hir.impls[ikey];
+            let (trait_, trait_params) = &self.hir.itraits[ikey];
+            (*trait_, iforall, impltor, trait_params.as_slice())
+        };
+
+        for (ty, constraint) in casts {
+            Compatibility::constraint(
+                self.iquery,
+                in_trait,
+                get_impl_data,
+                lhs_forall,
+                &ty,
+                &constraint,
+            );
+        }
+
+        let env = &mut self.tenvs[self.current.fkey];
+        for conerr in self
+            .hir
+            .type_system(env, self.target, &self.field_lookup[fkey.module])
+            .check_all_constraints(self.iquery, in_trait, lhs_forall, get_impl_data)
+        {
+            match conerr {
+                ConstraintError::GotInt { span, expected, .. } => {
+                    let exp = self.ty_formatter().fmt(&expected);
+                    self.emit_type_mismatch(span, "", "integer", exp);
+                }
+                ConstraintError::IntConstantNegativeUnsigned(_, _) => todo!(),
+                ConstraintError::IntConstantTooLarge(_, _, _) => todo!(),
+                ConstraintError::Trait(ty, con) => {
+                    self.error("constraint not met")
+                        .eline(
+                            ty.span,
+                            format!(
+                                "`{}` does not implement `{}`",
+                                self.ty_formatter().fmt(&*ty),
+                                self.ty_formatter().fmt((con.trait_, con.params.as_slice()))
+                            ),
+                        )
+                        .emit();
+                }
+                ConstraintError::FieldType { exp, got, at } => {
+                    let tfmt = self.ty_formatter();
+                    self.emit_type_mismatch(at, "", tfmt.clone().fmt(&got), tfmt.fmt(exp));
+                }
+                ConstraintError::RecordNotFound(fields) => self
+                    .error("record not found")
+                    .eline(
+                        fields[0].span,
+                        format!(
+                            "no record in scope with the fields `{{{}}}`",
+                            fields.iter().format(", ")
+                        ),
+                    )
+                    .emit(),
+                ConstraintError::RecordAmbigous(span, records, fields) => self
+                    .error("record not found")
+                    .eline(
+                        span,
+                        format!(
+                            "known to have the fields {{{}}}",
+                            fields.iter().format(", ")
+                        ),
+                    )
+                    .text(format!(
+                        "which could infer to {}",
+                        records
+                            .iter()
+                            .map(|record| self
+                                .ty_formatter()
+                                .fmt((*record, &[] as &[Type]))
+                                .to_string())
+                            .format(" or ")
+                    ))
+                    .emit(),
+            }
+        }
     }
 
     #[track_caller]
@@ -464,68 +485,23 @@ impl<'a, 's> Verify<'a, 's> {
         InstInfo::new(key.module, inst, ptypes, returns.clone())
     }
 
+    pub fn type_system(&mut self) -> TypeSystem<'_, 's> {
+        let env = &mut self.tenvs[self.current.fkey];
+        let fields = &self.field_lookup[self.current.fkey.module];
+        self.hir.type_system(env, self.target, fields)
+    }
+
     pub fn module_of_type(&mut self, ty: Tr<&IType>) -> Option<key::Module> {
         match &ty.value {
             IType::Simple(_) => None,
-            IType::Container(
-                Container::List(key) | Container::Defined(key) | Container::String(key),
-                _,
-            ) => Some(key.module),
-            IType::Special(Inference::Var(var)) => {
-                let vinfo = self.vars().get(*var);
-                match vinfo.value {
-                    Some(ty) => {
-                        let ty = ty.cloned();
-                        self.module_of_type(ty.as_ref())
-                    }
-                    None => Some(self.module()),
-                }
-            }
-            IType::Special(Inference::Record(record)) => {
-                let env = &mut self.tenvs[self.current.fkey];
-                match env.get_record(*record) {
-                    RecordAssignment::Ok(key, _) => Some(key.module),
-                    RecordAssignment::Redirect(var) => {
-                        let ty = IType::infrecord(*var).tr(ty.span);
-                        self.module_of_type(ty.as_ref())
-                    }
-                    RecordAssignment::NotRecord(t) => {
-                        let t = t.clone().tr(ty.span);
-                        self.module_of_type(t.as_ref())
-                    }
-                    RecordAssignment::Unknown(_) => None,
-                    RecordAssignment::None => None,
-                }
-            }
-            IType::Special(Inference::Field(rvar, rfield)) => {
-                let fname = self.tenvs[self.current.fkey].name_of_field(*rvar, *rfield);
-                self.module_of_field_by_name(ty.span, *rvar, fname)
-            }
+            IType::Container(Container::Defined(key, _), _) => Some(key.module),
+            IType::Special(var) => self
+                .type_system()
+                .try_get_known_type(*var)
+                .and_then(|ty| self.module_of_type(ty.as_ref())),
             IType::Container(Container::Pointer, _) => self.hir.lookups.find_lib(&["std", "ptr"]),
             IType::Int(_) => self.hir.lookups.find_lib(&["std", "math"]),
             _ => None,
-        }
-    }
-
-    fn module_of_field_by_name(
-        &mut self,
-        span: Span,
-        rvar: RecordVar,
-        fname: Tr<&'s str>,
-    ) -> Option<key::Module> {
-        let env = &mut self.tenvs[self.current.fkey];
-
-        match env.get_record(rvar).clone() {
-            lumina_typesystem::RecordAssignment::Ok(key, params) => self
-                .type_system()
-                .inst_field_by_type_params(key, fname, &params)
-                .and_then(|field_ty| self.module_of_type((&field_ty).tr(span))),
-            lumina_typesystem::RecordAssignment::Redirect(var) => {
-                self.module_of_field_by_name(span, var, fname)
-            }
-            lumina_typesystem::RecordAssignment::NotRecord(_) => None,
-            lumina_typesystem::RecordAssignment::Unknown(_) => None,
-            lumina_typesystem::RecordAssignment::None => None,
         }
     }
 
@@ -555,7 +531,7 @@ impl<'a, 's> Verify<'a, 's> {
     }
 
     pub fn ty_as_callable(&mut self, span: Span, ty: Tr<IType>, params: usize) -> InstCall {
-        match self.type_system().call_as_function(ty.as_ref(), params) {
+        match self.type_system().call_as_function(span, &ty, params) {
             Some((kind, ptypes, returns)) => InstCall::LocalCall(span, ptypes, returns, kind),
             None if params == 0 => InstCall::Local(ty.value.tr(span)),
             None => panic!("ET: can not take parameters (or do we err on this later?)"),
@@ -813,13 +789,13 @@ impl<'a, 's> Verify<'a, 's> {
 
                 let (ptypes, returns) = (&finst).transform_typing(&typing.params, &typing.returns);
                 self.apply_tanot(tanot, &finst, Either::Left(func.map(NFunc::Key)));
-                let Some(Ty::Special(Inference::Var(self_var))) = finst.self_ else {
+                let Some(Ty::Special(self_var)) = finst.self_ else {
                     panic!("non-var assignment to `self` from instantiation");
                 };
 
                 let params = finst.to_types(GenericKind::Parent);
                 self.vars()
-                    .push_iconstraint(self_var, Constraint { span, trait_: *trait_, params });
+                    .add_trait_constraint(self_var, Constraint { span, trait_: *trait_, params });
 
                 let linfo = InstInfo::new(func.module, finst, ptypes, returns);
 
@@ -871,12 +847,12 @@ impl<'a, 's> Verify<'a, 's> {
                             _ => panic!("unexpected `self`"),
                         };
 
-                        let Ty::Special(Inference::Var(self_var)) = var else {
+                        let Ty::Special(self_var) = var else {
                             panic!("non-var assignment to `self` from instantiation");
                         };
 
                         self.tenvs[self.current.fkey]
-                            .push_iconstraint(*self_var, Constraint { span, trait_, params });
+                            .add_trait_constraint(*self_var, Constraint { span, trait_, params });
                     }
 
                     // HACK: we need the spans from the HIR as they weren't copied to the MIR.
@@ -1051,11 +1027,6 @@ impl<'a, 's> Verify<'a, 's> {
         }
 
         self_span
-    }
-
-    pub fn assign_ty_to_rvar(&mut self, span: Span, var: RecordVar, ty: Tr<&IType>) {
-        let result = self.type_system().ascribe_record(ty, span, var);
-        self.emit_type_errors((ty, IType::infrecord(var).tr(span).as_ref(), result));
     }
 }
 

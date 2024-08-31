@@ -2,14 +2,9 @@ use crate::hir;
 use crate::hir::HIR;
 use crate::mir::TEnv;
 use derive_new::new;
-use itertools::Itertools;
 use key::{Map, M};
 use lumina_key as key;
-use lumina_key::LinearFind;
-use lumina_typesystem::{
-    Container, GenericKind, GenericMapper, Inference, RecordAssignment, RecordVar, Static,
-    Transformer, Ty,
-};
+use lumina_typesystem::{Container, GenericKind, Inference, Static, Ty};
 use lumina_util::Highlighting;
 use std::fmt;
 use std::fmt::Display;
@@ -24,19 +19,10 @@ trait FmtSpecial<'a, 's>: fmt::Display {
 
 impl<'a, 's> FmtSpecial<'a, 's> for Inference {
     fn specialfmt(&self, state: TyFmtState<'a, 's>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Inference::Var(var) => {
-                let ty = state.env.get(*var);
-                match ty.value {
-                    Some(ty) => state.fmt(*ty).fmt(f),
-                    None => "_".fmt(f),
-                }
-            }
-            Inference::Record(rvar) => state.fmt(*rvar).fmt(f),
-            Inference::Field(rvar, field) => {
-                let name = state.env.name_of_field(*rvar, *field);
-                state.fmt((*rvar, *name)).fmt(f)
-            }
+        let ty = state.env.get(*self);
+        match ty {
+            Ok(ty) => state.fmt(&**ty).fmt(f),
+            Err(_) => "_".fmt(f),
         }
     }
 }
@@ -93,49 +79,10 @@ impl<'a, 's, T: TyFormatted<'a, 's>> TyFormatted<'a, 's> for hir::Typing<T> {
     }
 }
 
-impl<'a, 's> TyFormatted<'a, 's> for (RecordVar, &'s str) {
-    fn tyfmt(&self, state: TyFmtState<'a, 's>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (rvar, name) = (self.0, self.1);
-        match state.env.get_record(rvar) {
-            RecordAssignment::Ok(key, params) => {
-                match state.hir.fnames[*key].find(|n| **n == name) {
-                    Some(field) => {
-                        let mapper =
-                            GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
-                        let ty = (&mapper).transform(&state.hir.field_types[*key][field]);
-                        state.fmt(&ty).fmt(f)
-                    }
-                    None => "_".fmt(f),
-                }
-            }
-            RecordAssignment::Redirect(rvar) => state.fmt((*rvar, name)).fmt(f),
-            RecordAssignment::NotRecord(_)
-            | RecordAssignment::None
-            | RecordAssignment::Unknown(_) => "_".fmt(f),
-        }
-    }
-}
-
-impl<'a, 's> TyFormatted<'a, 's> for RecordVar {
-    fn tyfmt(&self, state: TyFmtState<'a, 's>, f: &mut fmt::Formatter) -> fmt::Result {
-        match state.env.get_record(*self) {
-            RecordAssignment::Ok(key, params) => {
-                let ty = Ty::defined(*key, params.clone());
-                state.fmt(&ty).fmt(f)
-            }
-            RecordAssignment::Redirect(rvar) => state.fmt(*rvar).fmt(f),
-            RecordAssignment::NotRecord(ty) => state.fmt(&ty).fmt(f),
-            RecordAssignment::None | RecordAssignment::Unknown(_) => {
-                write!(f, "{{{}}}", state.env.fields_of(*self).format(", "))
-            }
-        }
-    }
-}
-
 impl<'a, 's, T: FmtSpecial<'a, 's>> TyFormatted<'a, 's> for Ty<T> {
     fn tyfmt(&self, state: TyFmtState<'a, 's>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Ty::Container(Container::Defined(key), params) => {
+            Ty::Container(Container::Defined(key, _), params) => {
                 state.fmt((*key, params.as_slice())).fmt(f)
             }
             Ty::Container(con, params) => {

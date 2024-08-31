@@ -1,6 +1,5 @@
 use super::{
-    Constraint, Forall, Generic, GenericKind, IType, Inference, RecordAssignment, Span, Static,
-    TEnv, Ty, Var,
+    Constraint, Forall, Generic, GenericKind, IType, Inference, Span, Static, TEnv, Ty, Var,
 };
 use derive_new::new;
 use itertools::Itertools;
@@ -16,13 +15,14 @@ pub struct GenericMapper<T> {
     pub self_: Option<Ty<T>>,
 }
 
-/// Instantiates foreign static types
+/// Transform `Ty<Static>` into `Ty<Inference>` while substituting any generics into type vars.
 pub struct ForeignInst<'a, 's, T> {
     pub mapper: GenericMapper<T>,
     pub env: &'a mut TEnv<'s>,
 }
 
-/// Instantiates foreign functions that have no inferred their types statically
+/// Transform `Ty<Inference>` into `Ty<Inference>` while forcing eager type inference inside the tenv
+/// `to` and substituting any generics into type vars.
 pub struct CircularInst<'a, 's, T> {
     mapper: GenericMapper<T>,
     from: &'a mut TEnv<'s>,
@@ -112,7 +112,7 @@ impl<T: Clone> GenericMapper<T> {
 impl GenericMapper<Inference> {
     fn as_var(&self, generic: Generic) -> Var {
         match self.find(generic).unwrap() {
-            Ty::Special(Inference::Var(var)) => *var,
+            Ty::Special(var) => *var,
             _ => unreachable!(),
         }
     }
@@ -148,7 +148,7 @@ impl GenericMapper<Inference> {
 
             for con in inst.to_forall.generics[key].trait_constraints.clone() {
                 let con = inst.transform_constraint(&con);
-                inst.from.constraint_checks.push((var, con));
+                inst.from[var].trait_constraints.push(con);
             }
         }
 
@@ -178,7 +178,7 @@ impl<'a, 's> ForeignInst<'a, 's, Inference> {
             let var = self.mapper.as_var(generic);
             for con in &gdata.trait_constraints {
                 let con = DirectRecursion(&self.mapper).transform_constraint(con);
-                self.env.push_iconstraint(var, con);
+                self.env[var].trait_constraints.push(con);
             }
         }
         self
@@ -190,7 +190,7 @@ impl<'a, 's> ForeignInst<'a, 's, Inference> {
             let var = self.mapper.as_var(generic);
             for con in &gdata.trait_constraints {
                 let con = (&self.mapper).transform_constraint(con);
-                self.env.push_iconstraint(var, con);
+                self.env[var].trait_constraints.push(con);
             }
         }
         self
@@ -210,7 +210,9 @@ pub trait Transformer<T> {
     fn self_(&mut self) -> Ty<Self::Output> {
         Ty::Simple("self")
     }
-    fn generic(&mut self, generic: Generic) -> Ty<Self::Output>;
+    fn generic(&mut self, generic: Generic) -> Ty<Self::Output> {
+        Ty::Generic(generic)
+    }
 
     fn transform(&mut self, ty: &Ty<T>) -> Ty<Self::Output> {
         match ty {
@@ -264,14 +266,11 @@ pub trait Transformer<T> {
     }
 }
 
+/// Transform `Ty<Static>` into `Ty<Inference>`
 pub struct Downgrade;
 
 impl Transformer<Static> for Downgrade {
     type Output = Inference;
-
-    fn generic(&mut self, generic: Generic) -> Ty<Self::Output> {
-        Ty::Generic(generic)
-    }
 }
 
 impl<O: Clone> Transformer<Static> for &GenericMapper<O> {
@@ -286,6 +285,28 @@ impl<O: Clone> Transformer<Static> for &GenericMapper<O> {
     }
 }
 
+/// Transform `Ty<Inference>` into `Ty<Static>` by panicing on any pending infer types
+pub struct Upgrade<'a, 's>(pub &'a TEnv<'s>);
+
+impl<'a, 's> Transformer<Inference> for Upgrade<'a, 's> {
+    type Output = Static;
+
+    fn self_(&mut self) -> Ty<Self::Output> {
+        match self.0.self_.as_ref() {
+            Some(ty) => self.transform(ty),
+            None => Ty::Simple("self"),
+        }
+    }
+
+    fn special(&mut self, var: &Inference) -> Ty<Self::Output> {
+        let vdata = &self.0[*var];
+        let ty = vdata.assignment.as_ref().unwrap();
+        self.transform(&*ty)
+    }
+}
+
+/// Transform `Ty<Inference>` into `Ty<Inference>` leaving any type vars as-is while still
+/// substituting any generics into type vars.
 pub struct DirectRecursion<'a>(pub &'a GenericMapper<Inference>);
 
 impl<'a> Transformer<Inference> for DirectRecursion<'a> {
@@ -315,36 +336,12 @@ impl<'a> Transformer<Inference> for DirectRecursion<'a> {
 impl<'a, 's> Transformer<Inference> for CircularInst<'a, 's, Inference> {
     type Output = Inference;
 
-    fn special(&mut self, inf: &Inference) -> Ty<Self::Output> {
-        match inf {
-            Inference::Var(var) => {
-                let vdata = self.to.get(*var);
-                match vdata.value {
-                    Some(ty) => {
-                        let ty = ty.cloned();
-                        self.transform(&ty)
-                    }
-                    None => {
-                        self.failures.push(vdata.span);
-                        Ty::poison()
-                    }
-                }
-            }
-            Inference::Record(record) => match self.to.get_record(*record).clone() {
-                RecordAssignment::Ok(key, params) => IType::defined(key, params),
-                RecordAssignment::Redirect(rvar) => {
-                    let ty = IType::infrecord(rvar);
-                    self.transform(&ty)
-                }
-                RecordAssignment::NotRecord(ty) => self.transform(&ty),
-                RecordAssignment::Unknown(_) => Ty::poison(),
-                RecordAssignment::None => {
-                    self.failures.push(self.to.get_record_span(*record));
-                    Ty::poison()
-                }
-            },
-            Inference::Field(record, _) => {
-                self.failures.push(self.to.get_record_span(*record));
+    fn special(&mut self, var: &Inference) -> Ty<Self::Output> {
+        let vdata = &self.to[*var];
+        match vdata.assignment.clone() {
+            Some(ty) => self.transform(&ty),
+            None => {
+                self.failures.push(vdata.span);
                 Ty::poison()
             }
         }

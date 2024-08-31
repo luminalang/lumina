@@ -91,7 +91,7 @@ impl<'a, 's> Lower<'a, 's> {
                 }
                 hir::Callable::Binding(bind) => {
                     let ty = self.current.binds[bind].clone();
-                    let ty = self.finalizer(|fin| fin.transform(&ty));
+                    let ty = self.finalizer().transform(&ty);
                     match ty {
                         Type::Container(Container::FnPointer | Container::Closure, _) => {
                             let params = self.lower_exprs(params);
@@ -137,7 +137,7 @@ impl<'a, 's> Lower<'a, 's> {
                     "unreachable" => {
                         let (name, ty) = tanot.for_entity[0].clone();
                         assert_eq!(*name, "self");
-                        let ty = self.finalizer(|fin| fin.transform(&ty));
+                        let ty = self.finalizer().transform(&ty);
                         self.lower_builtin::<0>(params, |_| Expr::Unreachable(ty))
                     }
                     "transmute" => self.lower_builtin(params, |[inner]| inner),
@@ -147,13 +147,13 @@ impl<'a, 's> Lower<'a, 's> {
                     "reflect_type" => {
                         let (name, ty) = tanot.for_entity[0].clone();
                         assert_eq!(*name, "self");
-                        let ty = self.finalizer(|fin| fin.transform(&ty));
+                        let ty = self.finalizer().transform(&ty);
                         Expr::ReflectTypeOf(ty)
                     }
                     "size_of" => {
                         let (name, ty) = tanot.for_entity[0].clone();
                         assert_eq!(*name, "self");
-                        let ty = self.finalizer(|fin| fin.transform(&ty));
+                        let ty = self.finalizer().transform(&ty);
                         Expr::SizeOf(ty)
                     }
                     _ => panic!("unknown builtin: {name}"),
@@ -202,19 +202,20 @@ impl<'a, 's> Lower<'a, 's> {
                 to_call
             }
             hir::Expr::Access(rvar, object, name) => {
-                let Some((key, params)) = self.finalizer(|fin| fin.record(*rvar)) else {
+                let Some((key, params)) = self.transform_rvar(*rvar) else {
                     return Expr::Poison;
                 };
+
                 let object = self.lower_expr((**object).as_ref());
 
-                let Some(field) = self.rsolver.fnames[key].find(|n| n == name) else {
+                let Some(field) = self.fnames[key].find(|n| n == name) else {
                     return Expr::Poison;
                 };
 
                 Expr::Access(Box::new(object), key, params, field)
             }
             hir::Expr::Record(rvar, _, modified, fields) => {
-                let Some((key, params)) = self.finalizer(|fin| fin.record(*rvar)) else {
+                let Some((key, params)) = self.transform_rvar(*rvar) else {
                     return Expr::Poison;
                 };
 
@@ -223,7 +224,7 @@ impl<'a, 's> Lower<'a, 's> {
                     .filter_map(|(name, expr)| {
                         let expr = self.lower_expr(expr.as_ref());
 
-                        match self.rsolver.fnames[key].find(|n| n == name) {
+                        match self.fnames[key].find(|n| n == name) {
                             Some(field) => Some((field, expr)),
                             None => {
                                 // Should've already errored by type finalization
@@ -236,7 +237,7 @@ impl<'a, 's> Lower<'a, 's> {
 
                 let mut missing_fields = vec![];
 
-                for field in self.rsolver.fnames[key].keys() {
+                for field in self.fnames[key].keys() {
                     if unordered_fields.iter().all(|(f, _)| *f != field) {
                         match modified {
                             Some(bind) => {
@@ -264,12 +265,25 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Expr::Cast(expr, ty) => {
                 let mexpr = self.lower_expr((**expr).as_ref());
                 let ty_of_expr = self.current.casts_and_matches.pop_front().unwrap();
-                let (ty, ty_of_expr) =
-                    self.finalizer(|fin| (fin.transform(&ty), fin.transform(&ty_of_expr)));
+                let mut fin = self.finalizer();
+                let ty = fin.transform(&ty);
+                let ty_of_expr = fin.transform(&ty_of_expr);
                 self.lower_cast(mexpr, ty_of_expr.tr(expr.span), ty)
             }
             hir::Expr::Poison => Expr::Poison,
         }
+    }
+
+    pub fn transform_rvar(&mut self, rvar: Var) -> Option<(M<key::Record>, Vec<Type>)> {
+        let Ty::Container(Container::Defined(key, _), params) = self.finalizer().special(&rvar)
+        else {
+            return None;
+        };
+        let key::TypeKind::Record(rkey) = key.value else {
+            return None;
+        };
+        let key = key.module.m(rkey);
+        Some((key, params))
     }
 
     fn lower_builtin<const N: usize>(
@@ -294,7 +308,7 @@ impl<'a, 's> Lower<'a, 's> {
         match lit {
             hir::Literal::Bool(b) => Expr::Bool(*b),
             hir::Literal::Int(neg, n, nvar) => {
-                let Type::Int(intsize) = self.finalizer(|fin| fin.var(*nvar)) else {
+                let Type::Int(intsize) = self.finalizer().special(nvar) else {
                     return Expr::Poison;
                 };
                 let n = *n as i128;
@@ -329,13 +343,14 @@ impl<'a, 's> Lower<'a, 's> {
             (
                 _,
                 Type::Container(
-                    Container::Defined(M { value: key::TypeKind::Trait(value), module }),
+                    Container::Defined(M { value: key::TypeKind::Trait(value), module }, _),
                     params,
                 ),
             ) => {
                 let trait_ = M { value, module };
                 let con = Constraint { span: ty_of_expr.span, trait_, params: params.clone() };
-                self.env.push_constraint(ty_of_expr.clone(), con);
+                self.trait_object_cast_checks
+                    .push((ty_of_expr.clone(), con));
                 Expr::ObjectCast(expr, ty_of_expr.value, trait_, params)
             }
             (Type::Int(intsize), Type::Container(Container::Pointer, mut inner)) => {
@@ -359,7 +374,7 @@ impl<'a, 's> Lower<'a, 's> {
     fn lower_list(&mut self, elems: &[Tr<hir::Expr<'s>>], ivar: Var) -> Expr {
         let type_ = self.items.list_default;
 
-        let inner = self.finalizer(|fin| fin.var(ivar));
+        let inner = self.finalizer().special(&ivar);
         let list_type = Type::list(type_, vec![inner.clone()]);
 
         let listable = self.items.pinfo.listable;
@@ -398,7 +413,7 @@ impl<'a, 's> Lower<'a, 's> {
     ) -> Expr {
         let on = self.lower_expr(on);
         let ty = self.current.casts_and_matches.pop_front().unwrap();
-        let ty = self.finalizer(|fin| fin.transform(&ty));
+        let ty = self.finalizer().transform(&ty);
 
         let mut iter = branches.iter();
         let (initp, inite) = iter.next().unwrap();
@@ -437,8 +452,8 @@ impl<'a, 's> Lower<'a, 's> {
             tails.push_as(tailkey, expr);
         }
 
-        let missing = pat::MissingGeneration::new(pat::Init::new(self.rsolver.ftypes, self.vtypes))
-            .run(&tree);
+        let missing =
+            pat::MissingGeneration::new(pat::Init::new(self.ftypes, self.vtypes)).run(&tree);
 
         if !missing.is_empty() {
             self.errors.push(FinError::MissingPatterns(span, missing));

@@ -6,7 +6,7 @@ use super::{
 use crate::prelude::*;
 use hir::Pattern;
 use lumina_key::M as Mod;
-use lumina_typesystem::{Container, GenericMapper, RecordVar, Static, Type};
+use lumina_typesystem::{Container, GenericMapper, Static, Type, Var};
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::{file, line};
@@ -272,14 +272,17 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
         params: Vec<mir::Expr>,
     ) -> StrCheck {
         let start_at = key::Param(params.len() as u32);
+
+        let string = Type::string(self.string, vec![]);
+
         match &types.params[start_at] {
-            Type::Container(Container::String(_), _) => match &types.ret {
-                Type::Container(Container::Defined(key), elems)
+            ty if *ty == string => match &types.ret {
+                Type::Container(Container::Defined(key, _), elems)
                     if self.maybe.map(key::TypeKind::Sum) == *key =>
                 {
                     match &elems[..] {
                         [Type::Container(Container::Tuple, elems)] => match &elems[..] {
-                            [ty, Type::Container(Container::String(_), _)] => {
+                            [ty, str] if *str == string => {
                                 return StrCheck::TakeBySplit(callable, ty.clone(), params);
                             }
                             _ => {}
@@ -524,7 +527,7 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly>;
 
     fn fin_popped_inst(&mut self, span: Span) -> Option<(GenericMapper<Static>, CallTypes)>;
-    fn fin_record(&mut self, rvar: RecordVar) -> Option<(M<key::Record>, Vec<Type>)>;
+    fn fin_record(&mut self, rvar: Var) -> Option<(M<key::Record>, Vec<Type>)>;
 
     fn type_of_bind(&mut self, bind: key::Bind) -> Type;
 

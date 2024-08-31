@@ -1,44 +1,205 @@
+#![feature(get_many_mut)]
+
 use derive_new::new;
 use itertools::Itertools;
 use key::{Map, ModMap, M};
 use lumina_key as key;
-use lumina_util::{Highlighting, Span, Tr};
+use lumina_util::{Highlighting, Ignored, Span, Spanned, Tr};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::fmt;
+use tracing::trace;
 
 mod transform;
 pub use transform::{
-    CircularInst, DirectRecursion, Downgrade, ForeignInst, GenericMapper, Transformer,
+    CircularInst, DirectRecursion, Downgrade, ForeignInst, GenericMapper, Transformer, Upgrade,
 };
+
+#[cfg(test)]
+mod tests;
+
+mod fin;
+pub use fin::Finalizer;
 
 mod intsize;
 pub use intsize::IntSize;
-
-mod fin;
-pub use fin::{FinError, Finalizer};
 
 mod generic;
 pub use generic::{Constraint, Forall, Generic, GenericData, GenericKind, IMPLICT_GENERIC_NAMES};
 
 mod tenv;
-pub use tenv::{
-    IntConstraint, RecordAssignment, RecordError, RecordVar, RecordVarField, TEnv, Var, VarInfo,
-};
+pub use tenv::{IntConstraint, TEnv, Var};
 
 mod iquery;
 pub use iquery::{Compatibility, ConcreteType, ImplIndex};
+pub(crate) use iquery::{GetForall, GetImplData};
+
+mod check;
+pub use check::ConstraintError;
 
 #[derive(new)]
 pub struct TypeSystem<'a, 's> {
-    pub env: &'a mut TEnv<'s>,
-    pub records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
-    pub ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
-    pub fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
-    pub field_lookup: &'a HashMap<&'s str, Vec<M<key::Record>>>,
+    env: &'a mut TEnv<'s>,
+    default_int_size: u8,
+    fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
+    ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
+    records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
+    field_lookup: &'a HashMap<&'s str, Vec<M<key::Record>>>,
 }
 
-mod check;
-pub use check::CheckResult;
+impl<'a, 's> TypeSystem<'a, 's> {
+    fn find_record_by_fields(&self, rvar: Var) -> SmallVec<[M<key::Record>; 4]> {
+        let fields = &self.env[rvar].fields;
+
+        let mut possibilities = SmallVec::<[_; 4]>::new();
+
+        for (name, _var, _) in fields {
+            let records = self
+                .field_lookup
+                .get(**name)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
+            for &r in records {
+                match possibilities
+                    .iter_mut()
+                    .find_map(|(rec, count)| (*rec == r).then_some(count))
+                {
+                    Some(count) => *count += 1,
+                    None => possibilities.push((r, 1)),
+                }
+            }
+        }
+
+        let Some(largest) = possibilities.iter().map(|(_, c)| *c).max() else {
+            return SmallVec::new();
+        };
+
+        possibilities
+            .into_iter()
+            .filter_map(|(record, c)| (c == largest).then_some(record))
+            .collect()
+    }
+
+    fn try_get_rvar(&mut self, rvar: Var) -> Option<(M<key::Record>, &[IType])> {
+        match self.env[rvar].assignment.as_ref() {
+            Some(ty) => match &ty.value {
+                Ty::Container(Container::Defined(key, _), _) => {
+                    if let key::TypeKind::Record(record) = key.value {
+                        // Re-borrow to circumvent limitation of brwck
+                        let Ty::Container(_, params) =
+                            &self.env[rvar].assignment.as_ref().unwrap().value
+                        else {
+                            unreachable!();
+                        };
+                        Some((key.module.m(record), params))
+                    } else {
+                        None
+                    }
+                }
+                Ty::Special(var) => return self.try_get_rvar(*var),
+                _ => panic!("I don't think we're ever gonna assign a non-record to the record"),
+            },
+            None => self.try_infer_record_by_fields(rvar),
+        }
+    }
+
+    fn try_infer_record_by_fields(&mut self, rvar: Var) -> Option<(M<key::Record>, &[IType])> {
+        let record = match self.find_record_by_fields(rvar).as_slice() {
+            [record] => *record,
+            _ => return None,
+        };
+
+        let span = self.env[rvar].span;
+        let params = self.new_record_type_params(span, record);
+        self.assign_record_to_rvar(span, rvar, record, params);
+
+        let Ty::Container(Container::Defined(_, _), type_params) =
+            &self.env[rvar].assignment.as_ref().unwrap().value
+        else {
+            unreachable!();
+        };
+
+        Some((record, type_params))
+    }
+
+    fn new_record_type_params(&mut self, span: Span, record: M<key::Record>) -> Vec<IType> {
+        (0..self.records[record].1.generics.len())
+            .map(|_| self.env.var(span))
+            .map(IType::Special)
+            .collect::<Vec<_>>()
+    }
+
+    /// Assign a record to the rvar and check all the previously used fields with the now known
+    /// concrete field types.
+    pub fn assign_record_to_rvar(
+        &mut self,
+        span: Span,
+        rvar: Var,
+        record: M<key::Record>,
+        type_params: Vec<IType>,
+    ) {
+        let ty = Ty::defined(record, type_params.clone());
+        trace!("{rvar} => {ty}");
+        self.env[rvar].assignment = Some(ty.tr(span));
+
+        // Now that we know the type, we can go back and type check any of the fields we previously
+        // accepted as correct without knowing the real record type.
+        for i in 0..self.env[rvar].fields.len() {
+            let (fname, var, mismatch) = self.env[rvar].fields[i];
+            assert!(mismatch.is_none());
+
+            if let Some(ty) = self.inst_field(record, &type_params, *fname) {
+                // We can't use normal unify because then it'll use `field_of` as a shortcut
+                if let Some(previous) = self.env[var].assignment.clone() {
+                    let ok = self.unify(previous.span, &*previous, &ty);
+                    if !ok {
+                        self.env[rvar].fields[i].2 = Some(tenv::FieldMismatch);
+                        // Overwrite the incorrect var with the real type
+                        self.env.vars[var.0 as usize].assignment = Some(ty.tr(fname.span));
+                    }
+                } else {
+                    self.env.assign(var, ty.tr(fname.span));
+                }
+            }
+        }
+    }
+
+    pub fn inst_field<T: Clone>(
+        &self,
+        record: M<key::Record>,
+        params: &[Ty<T>],
+        fname: &str,
+    ) -> Option<Ty<T>> {
+        let field = self.fnames[record]
+            .iter()
+            .find_map(|(k, n)| (**n == fname).then_some(k))?;
+
+        let inst = GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
+
+        let fty = &self.ftypes[record][field];
+        Some((&inst).transform(fty))
+    }
+
+    // Retrieve a known field type if a record can/has been inferred
+    fn try_get_field(&mut self, fname: Tr<&'s str>, rvar: Var) -> Option<(M<key::Record>, IType)> {
+        let (record, type_params) = self.try_get_rvar(rvar)?;
+        let inst = GenericMapper::from_types(GenericKind::Entity, type_params.iter().cloned());
+
+        let field = self.fnames[record]
+            .iter()
+            .find_map(|(k, n)| (**n == *fname).then_some(k))?;
+
+        let fty = &self.ftypes[record][field];
+        Some((record, (&inst).transform(fty)))
+    }
+
+    fn try_get_field_if_is_field(&mut self, var: Var) -> Option<(M<key::Record>, IType)> {
+        self.env[var]
+            .field_of
+            .and_then(|(fname, rvar)| self.try_get_field(fname, rvar))
+    }
+}
 
 /// A generalised and customizable `Type` type with visitor API's
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -62,18 +223,21 @@ pub enum Container {
     Closure,
     Tuple,
     Pointer,
-    Defined(M<key::TypeKind>),
-    List(M<key::TypeKind>),
-    String(M<key::TypeKind>),
+    Defined(M<key::TypeKind>, Ignored<Lang>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lang {
+    String,
+    List,
+    None,
 }
 
 impl<T> Ty<T> {
     pub fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self> {
         match self {
             Ty::Container(
-                Container::Defined(M { module, value: key::TypeKind::Trait(key) })
-                | Container::List(M { module, value: key::TypeKind::Trait(key) })
-                | Container::String(M { module, value: key::TypeKind::Trait(key) }),
+                Container::Defined(M { module, value: key::TypeKind::Trait(key) }, _),
                 params,
             ) => Ok((module.m(key), params)),
             other => Err(other),
@@ -86,15 +250,15 @@ impl<T> Ty<T> {
 
     pub fn defined<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
         let key = key.map(K::into);
-        Self::Container(Container::Defined(key), params)
+        Self::Container(Container::Defined(key, Ignored::new(Lang::None)), params)
     }
     pub fn list<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
         let key = key.map(K::into);
-        Self::Container(Container::List(key), params)
+        Self::Container(Container::Defined(key, Ignored::new(Lang::List)), params)
     }
     pub fn string<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
         let key = key.map(K::into);
-        Self::Container(Container::String(key), params)
+        Self::Container(Container::Defined(key, Ignored::new(Lang::String)), params)
     }
 
     pub fn fn_pointer(mut params: Vec<Self>, ret: Self) -> Self {
@@ -111,49 +275,41 @@ impl<T> Ty<T> {
         Self::Container(Container::Pointer, params)
     }
 
-    pub fn u8() -> Self {
+    pub const fn u8() -> Self {
         Self::int(false, 8)
     }
     pub fn u8_pointer() -> Self {
         Self::pointer(Self::Int(IntSize::new(false, 8)))
     }
 
-    pub fn int(signed: bool, size: u8) -> Self {
+    pub const fn int(signed: bool, size: u8) -> Self {
         Self::Int(IntSize::new(signed, size))
     }
 
-    pub fn f64() -> Self {
+    pub const fn f64() -> Self {
         Self::Simple("f64")
     }
 
-    pub fn f32() -> Self {
+    pub const fn f32() -> Self {
         Self::Simple("f32")
     }
 
-    pub fn poison() -> Self {
+    pub const fn poison() -> Self {
         Self::Simple("poison")
     }
 
-    pub fn bool() -> Self {
+    pub const fn bool() -> Self {
         Self::Simple("bool")
     }
 
-    pub fn self_() -> Self {
+    pub const fn self_() -> Self {
         Self::Simple("self")
     }
 }
 
 impl Ty<Inference> {
     pub fn infer(var: Var) -> Self {
-        Self::Special(Inference::Var(var))
-    }
-
-    pub fn infrecord(rvar: RecordVar) -> Self {
-        Self::Special(Inference::Record(rvar))
-    }
-
-    pub fn inffield(rvar: RecordVar, field: RecordVarField) -> Self {
-        Self::Special(Inference::Field(rvar, field))
+        Self::Special(var)
     }
 }
 
@@ -169,12 +325,7 @@ impl fmt::Display for Static {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Inference {
-    Var(Var),
-    Record(RecordVar),
-    Field(RecordVar, RecordVarField),
-}
+pub type Inference = Var;
 
 impl Container {
     pub fn fmt<T>(
@@ -188,9 +339,13 @@ impl Container {
             Container::Closure => Self::fmt_func("fn", elems, format, f),
             Container::Tuple => Self::fmt_tuple(elems, format, f),
             Container::Pointer => write!(f, "*{}", format(&elems[0])),
-            Container::String(_) => write!(f, "string"),
-            Container::List(_) => write!(f, "[{}]", elems.iter().map(format).format(", ")),
-            Container::Defined(key) => Self::fmt_defined(key, elems, format, f, true),
+            Container::Defined(_, Ignored { inner: Lang::String }) => write!(f, "string"),
+            Container::Defined(_, Ignored { inner: Lang::List }) => {
+                write!(f, "[{}]", elems.iter().map(format).format(", "))
+            }
+            Container::Defined(key, Ignored { inner: Lang::None }) => {
+                Self::fmt_defined(key, elems, format, f, true)
+            }
         }
     }
 
@@ -258,16 +413,6 @@ impl<T: fmt::Display> fmt::Display for Ty<T> {
             Ty::Int(size) => write!(f, "{size}"),
             Ty::Simple(name) => name.fmt(f),
             Ty::Special(special) => special.fmt(f),
-        }
-    }
-}
-
-impl fmt::Display for Inference {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Inference::Var(var) => var.fmt(f),
-            Inference::Record(record) => record.fmt(f),
-            Inference::Field(record, field) => write!(f, "{record}.{field}"),
         }
     }
 }

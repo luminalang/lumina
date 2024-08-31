@@ -1,8 +1,7 @@
-use super::{Constraint, Forall, IType, Inference, Static, Type};
-use derive_new::new;
-use lumina_key as key;
-use lumina_key::{entity_impl, keys, LinearFind, Map, M};
+use super::{Constraint, Forall, IType, Inference, Static};
+use lumina_key::{entity_impl, keys};
 use lumina_util::{Span, Spanned, Tr};
+use std::ops::{Index, IndexMut};
 use tracing::trace;
 
 /// For bidirectional inference to work; we need indirection for types so that we can refer to the
@@ -11,69 +10,77 @@ use tracing::trace;
 /// The type environment contains all contexts that types direct to.
 pub struct TEnv<'s> {
     pub self_: Option<IType>,
-    pub(crate) records: Map<RecordVar, RecordVarInfo<'s>>,
-    pub(crate) vars: Map<Var, VarInfo>,
-    pub(crate) constraint_checks: Vec<(Var, Constraint<Inference>)>,
-    pub(crate) concrete_constraint_checks: Vec<(Tr<Type>, Constraint<Static>)>,
+    // TODO: we can't use `Map` here because `cranelift_entity` doesn't expose a way to truncate
+    // the inner vec.
+    //
+    // Long-term, we probably want to create our own arena crate regardless. That way, we can
+    // generalise our ModMap and key::Kind's in smarter ways.
+    pub(crate) vars: Vec<VarInfo<'s>>,
 }
 
-#[derive(Debug, Clone)]
-pub enum RecordError<'s> {
-    DoesNotHaveFields(Span, M<key::Record>, Vec<Tr<&'s str>>),
-    UnknownRecord(Span, Map<RecordVarField, Tr<&'s str>>),
-    Ambigious(Span, Map<RecordVarField, Tr<&'s str>>, Vec<M<key::Record>>),
-    NotARecord,
+impl<'s> Index<Var> for TEnv<'s> {
+    type Output = VarInfo<'s>;
+
+    fn index(&self, var: Var) -> &Self::Output {
+        &self.vars[var.0 as usize]
+    }
+}
+
+impl<'s> IndexMut<Var> for TEnv<'s> {
+    fn index_mut(&mut self, var: Var) -> &mut Self::Output {
+        &mut self.vars[var.0 as usize]
+    }
 }
 
 keys! {
-    Var . "var",
-    RecordVar . "rvar",
-    RecordVarField . "rfvar",
-    VarTraitConstraint . "vtrait"
+    Var . "var"
 }
 
-pub struct RecordVarInfo<'s> {
+pub struct VarInfo<'s> {
     pub(crate) span: Span,
-    pub(crate) assignment: RecordAssignment<'s>,
-    pub(crate) fields: Map<RecordVarField, Tr<&'s str>>,
-    pub(crate) verified: bool,
-}
-
-#[derive(Clone)]
-pub enum RecordAssignment<'s> {
-    Ok(M<key::Record>, Vec<IType>),
-
-    Redirect(RecordVar),      // It was assigned to another record
-    NotRecord(IType),         // The rvar ended up not being a record. This is a form of poison
-    Unknown(RecordError<'s>), // The inference was forced via resolve but failed
-    None,                     // The rvar has not yet been assigned to anything
-}
-
-#[derive(new)]
-pub struct VarInfo {
-    #[new(default)]
     pub(crate) assignment: Option<Tr<IType>>,
-    pub(crate) span: Span,
-    #[new(default)]
     pub(crate) int_constraint: Option<IntConstraint>,
+    pub(crate) trait_constraints: Vec<Constraint<Inference>>,
+    pub(crate) fields: Vec<(Tr<&'s str>, Var, Option<FieldMismatch>)>,
+    pub(crate) field_of: Option<(Tr<&'s str>, Var)>,
+
+    pub(crate) lift_to_generic: bool,
 }
 
-#[derive(new, Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
+pub(crate) struct FieldMismatch;
+
+#[derive(Clone, Copy)]
 pub struct IntConstraint {
-    pub min: Option<(bool, u128)>,
+    pub min: i128,
+    pub max: u64,
+}
+
+impl<'s> VarInfo<'s> {
+    pub fn new(span: Span) -> VarInfo<'s> {
+        VarInfo {
+            span,
+            assignment: None,
+            int_constraint: None,
+            trait_constraints: vec![],
+            fields: vec![],
+            field_of: None,
+
+            lift_to_generic: false,
+        }
+    }
 }
 
 impl<'s> TEnv<'s> {
     pub fn new() -> Self {
-        Self {
-            self_: None,
-            records: Map::new(),
-            vars: Map::new(),
-
-            constraint_checks: vec![],
-            concrete_constraint_checks: vec![],
-        }
+        Self { self_: None, vars: Vec::new() }
     }
+
+    // Clever, but not sure if we'll need it.
+    // fn is_defaulted(&self, var: Var) -> bool {
+    //     let vinfo = &self[var];
+    //     Some(vinfo.span) == vinfo.assignment.as_ref().map(|tr| tr.span)
+    // }
 
     pub fn unify_forall(&mut self, span: Span, forall: &Forall<'s, Static>) -> Vec<IType> {
         forall
@@ -88,87 +95,117 @@ impl<'s> TEnv<'s> {
             .collect()
     }
 
-    pub fn set_self(&mut self, ty: IType) {
-        self.self_ = Some(ty);
-    }
-
-    pub fn assign(&mut self, var: Var, ty: Tr<IType>) {
+    pub(crate) fn assign(&mut self, var: Var, ty: Tr<IType>) {
         trace!("{var} -> {ty}");
-        let previous = self.vars[var].assignment.replace(ty);
+        let previous = self[var].assignment.replace(ty);
         assert!(previous.is_none(), "double assignment")
     }
 
-    pub fn constraint_of(&self, var: Var) -> Option<IntConstraint> {
-        self.vars[var].int_constraint
+    pub fn assign_simple(&mut self, var: Var, ty: Tr<IType>) {
+        trace!("{var} -> {ty}");
+        let vdata = &mut self[var];
+        assert!(vdata.fields.is_empty() && vdata.field_of.is_none());
+        let previous = self[var].assignment.replace(ty);
+        assert!(previous.is_none(), "double assignment")
     }
 
-    pub fn fields_of(&self, rvar: RecordVar) -> impl Iterator<Item = Tr<&'s str>> + '_ {
-        self.records[rvar].fields.values().copied()
+    pub fn get(&self, var: Var) -> Result<&Tr<IType>, Span> {
+        let vdata = &self[var];
+        vdata.assignment.as_ref().ok_or(vdata.span)
     }
 
-    pub fn iter_var_fields(&self, rvar: RecordVar) -> impl Iterator<Item = RecordVarField> {
-        self.records[rvar].fields.keys()
-    }
+    pub fn add_field(&mut self, var: Var, name: Tr<&'s str>) -> Var {
+        debug_assert_eq!(
+            self[var].assignment, None,
+            "cannot add fields to already assigned rvar"
+        );
 
-    pub fn add_field(&mut self, rvar: RecordVar, name: Tr<&'s str>) -> RecordVarField {
-        self.records[rvar]
+        self[var]
             .fields
-            .find(|n| *n == name)
-            .unwrap_or_else(|| self.records[rvar].fields.push(name))
+            .iter()
+            .find_map(|(n, fieldvar, _)| (*n == name).then_some(*fieldvar))
+            .unwrap_or_else(|| {
+                let fieldvar = self.var(name.span);
+                self[var].fields.push((name, fieldvar, None));
+                self[fieldvar].field_of = Some((name, var));
+                fieldvar
+            })
     }
 
-    pub fn name_of_field(&self, rvar: RecordVar, field: RecordVarField) -> Tr<&'s str> {
-        self.records[rvar].fields[field]
+    pub fn add_trait_constraint(&mut self, var: Var, con: Constraint<Var>) {
+        self[var].trait_constraints.push(con);
     }
 
-    pub fn get(&self, var: Var) -> Tr<Option<Tr<&IType>>> {
-        let span = self.vars[var].span;
-        self.vars[var].assignment.as_ref().map(Tr::as_ref).tr(span)
-    }
-
-    pub fn get_record(&self, var: RecordVar) -> &RecordAssignment<'s> {
-        &self.records[var].assignment
-    }
-
-    pub fn get_record_span(&self, var: RecordVar) -> Span {
-        self.records[var].span
-    }
-
-    pub fn push_constraint(&mut self, ty: Tr<Type>, con: Constraint<Static>) {
-        self.concrete_constraint_checks.push((ty, con))
-    }
-
-    pub fn push_iconstraint(&mut self, ty: Var, con: Constraint<Inference>) {
-        self.constraint_checks.push((ty, con))
-    }
-
-    pub fn record(&mut self, span: Span) -> RecordVar {
-        self.records.push(RecordVarInfo {
-            fields: Map::new(),
-            assignment: RecordAssignment::None,
-            span,
-            verified: false,
-        })
+    pub fn next_key(&self) -> Var {
+        Var(self.vars.len() as u32)
     }
 
     pub fn var(&mut self, span: Span) -> Var {
-        trace!("spawning {}", self.vars.next_key());
-        self.vars.push(VarInfo::new(span))
-    }
-
-    pub fn int(&mut self, span: Span) -> Var {
-        let var = self.var(span);
-        self.vars[var].int_constraint = Some(IntConstraint::new(None));
+        trace!("spawning {}", self.next_key());
+        let var = self.next_key();
+        self.vars.push(VarInfo::new(span));
         var
     }
 
-    pub fn hint_min_int(&mut self, var: Var, signed: bool, n: u128) {
-        match &mut self.vars[var].int_constraint {
-            Some(IntConstraint { min: r @ None }) => *r = Some((signed, n)),
-            None => {
-                self.vars[var].int_constraint = Some(IntConstraint::new(Some((signed, n))));
+    pub fn enable_lift_to_generic(&mut self, var: Var) {
+        self[var].lift_to_generic = true;
+    }
+
+    pub fn merge_vars<const N: usize>(&mut self, span: Span, vars: [Var; N]) -> Var {
+        let mut int_constraint = None;
+        let mut trait_constraints = vec![];
+        let mut fields = vec![];
+        let mut field_of = None;
+        let mut lift_to_generic = false;
+
+        let nvar = self.next_key();
+        trace!("merging {vars:?} -> {nvar}");
+
+        for vinfo in self.vars.get_many_mut(vars.map(|n| n.0 as usize)).unwrap() {
+            assert!(vinfo.assignment.is_none());
+            vinfo.assignment = Some(IType::infer(nvar).tr(span));
+
+            lift_to_generic |= vinfo.lift_to_generic;
+
+            if field_of.is_none() {
+                if let Some(fvar) = vinfo.field_of {
+                    field_of = Some(fvar);
+                }
             }
-            _ => unreachable!(),
+
+            match (int_constraint.as_mut(), vinfo.int_constraint) {
+                (None, None) => {}
+                (None, Some(_)) => int_constraint = vinfo.int_constraint,
+                (Some(con), Some(vcon)) => {
+                    int_constraint = Some(IntConstraint {
+                        min: con.min.min(vcon.min),
+                        max: con.max.max(vcon.max),
+                    })
+                }
+                (Some(_), None) => {}
+            }
+            trait_constraints.extend(std::mem::take(&mut vinfo.trait_constraints));
+            fields.extend(std::mem::take(&mut vinfo.fields));
         }
+
+        self.vars.push(VarInfo {
+            span,
+            assignment: None,
+            int_constraint,
+            trait_constraints,
+            lift_to_generic,
+            fields,
+            field_of: None,
+        });
+
+        assert_eq!(nvar, Var(self.vars.len() as u32 - 1));
+
+        nvar
+    }
+
+    pub fn int(&mut self, span: Span, min: i128, max: u64) -> Var {
+        let var = self.var(span);
+        self[var].int_constraint = Some(IntConstraint { min, max });
+        var
     }
 }

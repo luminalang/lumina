@@ -289,7 +289,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let listmt = morph.apply(&ty);
         let list = morph.apply_weak(&ty);
         let (_, inner) = match &ty {
-            Type::Container(Container::Defined(kind) | Container::List(kind), params) => {
+            Type::Container(Container::Defined(kind, _), params) => {
                 let inner = params[0].clone();
                 assert_eq!(params.len(), 1);
                 (kind, inner)

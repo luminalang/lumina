@@ -100,10 +100,10 @@ impl ImplIndex {
 }
 
 // Getter for the forall of a kind
-type GetForall<'a, 't, 's> = &'a dyn Fn(GenericKind) -> &'t Forall<'s, Static>;
+pub(crate) type GetForall<'a, 't, 's> = &'a dyn Fn(GenericKind) -> &'t Forall<'s, Static>;
 
 // Getter for implementor and trait parameters of specific implementation
-type GetImplData<'a, 't, 's> =
+pub(crate) type GetImplData<'a, 't, 's> =
     &'a dyn Fn(M<key::Impl>) -> (M<key::Trait>, &'t Forall<'s, Static>, &'t Type, &'t [Type]);
 
 pub struct Compatibility<'a, 't, 's> {
@@ -235,8 +235,8 @@ impl<'a, 't, 's> Compatibility<'a, 't, 's> {
                 self.cmps(gparams, eparams)
             }
             (
-                Ty::Container(Container::List(gkey) | Container::Defined(gkey), gparams),
-                Ty::Container(Container::List(ekey) | Container::Defined(ekey), eparams),
+                Ty::Container(Container::Defined(gkey, _), gparams),
+                Ty::Container(Container::Defined(ekey, _), eparams),
             ) if gkey == ekey => self.cmps(gparams, eparams),
             (Ty::Special(_), _) | (_, Ty::Special(_)) => unreachable!(),
             (_, Type::Generic(generic)) => self.map(got, *generic),

@@ -311,7 +311,7 @@ fn lower_func<'a, 's>(
         ast::FuncBody::ImplMethod(body, imp) => {
             let self_ = Downgrade.transform(&impltors[*imp]);
             let mut env = TEnv::new();
-            env.set_self(self_);
+            env.self_ = Some(self_);
             let mut tinfo = tinfo.inference(env);
             tinfo.enter_type_or_impl_or_method(iforalls[*imp].clone(), GenericKind::Parent);
             tinfo.self_handler = SelfHandler::Direct;
@@ -585,13 +585,30 @@ impl<T> Typing<T> {
 }
 
 impl<'s, T: ty::FromVar> Typing<Ty<T>> {
-    pub fn inferred<U>(params: &[Tr<U>], ret_span: Span, vars: &mut TEnv<'s>) -> Self {
+    pub fn inferred<U>(
+        params: &[Tr<U>],
+        ret_span: Span,
+        vars: &mut TEnv<'s>,
+        lifted: bool,
+    ) -> Self {
         Self {
             params: params
                 .iter()
-                .map(|tr| T::var(vars.var(tr.span)).tr(tr.span))
+                .map(|tr| {
+                    let var = vars.var(tr.span);
+                    if lifted {
+                        vars.enable_lift_to_generic(var);
+                    }
+                    T::var(var).tr(tr.span)
+                })
                 .collect(),
-            returns: T::var(vars.var(ret_span)).tr(ret_span),
+            returns: {
+                let var = vars.var(ret_span);
+                if lifted {
+                    vars.enable_lift_to_generic(var);
+                }
+                T::var(var).tr(ret_span)
+            },
         }
     }
 
@@ -620,7 +637,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             |tinfo, key, cons| tinfo.iforalls.last_mut().unwrap().0[key].trait_constraints = cons,
         );
 
-        let mut typing = self.to_type_lower().typing_or_inferred(header);
+        let mut typing = self.to_type_lower().typing_or_inferred(header, true);
         info!("typing lowered to: {typing}");
 
         self.type_info.declare_generics = false;
@@ -712,7 +729,9 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
 
             self.type_info.enter_lambda(lkey, Forall::new(0));
 
-            let typing = self.to_type_lower().typing_or_inferred(&fdecl.header);
+            let typing = self
+                .to_type_lower()
+                .typing_or_inferred(&fdecl.header, false);
             info!("where-binding typing lowered to: {typing}");
 
             let forall = self.type_info.leave_function();

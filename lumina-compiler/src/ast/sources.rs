@@ -103,6 +103,7 @@ impl Sources {
     }
 }
 
+#[derive(Clone)]
 pub struct ErrorBuilder<'a> {
     sources: &'a Sources,
     module: Option<key::Module>,

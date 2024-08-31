@@ -2,23 +2,46 @@
 
 use super::tyfmt::TyFmtState;
 use super::Verify;
-use crate::ast;
-use crate::prelude::ModMap;
-use itertools::Itertools;
+use crate::{ast, hir, Target};
+use key::M;
 use lumina_key as key;
-use lumina_typesystem::{CheckResult, IType, TypeSystem};
-use lumina_util::{Span, Tr};
+use lumina_typesystem::{IType, TEnv, TypeSystem};
+use lumina_util::{Span, Spanned, Tr};
 use owo_colors::OwoColorize;
+use std::collections::HashMap;
 use std::fmt;
 use tracing::trace;
 use tracing::warn;
 
+impl<'s> hir::HIR<'s> {
+    pub(super) fn type_system<'a>(
+        &'a self,
+        env: &'a mut TEnv<'s>,
+        target: Target,
+        field_lookup: &'a HashMap<&'s str, Vec<M<key::Record>>>,
+    ) -> TypeSystem<'a, 's> {
+        TypeSystem::new(
+            env,
+            target.int_size(),
+            &self.fnames,
+            &self.field_types,
+            &self.records,
+            field_lookup,
+        )
+    }
+}
+
 impl<'a, 's> Verify<'a, 's> {
     pub fn type_check_and_emit(&mut self, got: Tr<&IType>, exp: Tr<&IType>) -> bool {
-        let mut system = self.type_system();
-        let result = system.type_check(got, exp);
-        let ok = matches!(result, lumina_typesystem::CheckResult::Ok);
-        self.emit_type_errors((got, exp, result));
+        let env = &mut self.tenvs[self.current.fkey];
+        let fields = &self.field_lookup[self.current.fkey.module];
+        let mut ts = self.hir.type_system(env, self.target, fields);
+
+        let ok = ts.unify(got.span, *got, *exp);
+        if !ok {
+            let tfmt = self.ty_formatter();
+            self.emit_type_mismatch(got.span, "", tfmt.clone().fmt(*got), tfmt.fmt(*exp));
+        }
         ok
     }
 
@@ -34,18 +57,19 @@ impl<'a, 's> Verify<'a, 's> {
             .iter()
             .zip(exp)
             .enumerate()
-            .map(|(i, (g, e))| {
-                let mut system = self.type_system();
-                let result = system.type_check(g.as_ref(), e.as_ref());
-                let ok = result.is_ok();
+            .filter_map(|(i, (g, e))| {
+                let env = &mut self.tenvs[self.current.fkey];
+                let fields = &self.field_lookup[self.current.fkey.module];
+                let mut ts = self.hir.type_system(env, self.target, fields);
+
+                let ok = ts.unify(g.span, &g, &e);
                 trace!(
                     "param {i} {} ∈ {}, ok: {ok}",
                     self.ty_formatter().fmt(&**g),
                     self.ty_formatter().fmt(&**e)
                 );
-                (g.as_ref(), e.as_ref(), result)
+                (!ok).then_some((g.as_ref(), e.as_ref()))
             })
-            .filter(|(_, _, result)| !result.is_ok())
             .collect::<Vec<_>>();
 
         match (errors.as_slice(), len_ok) {
@@ -77,32 +101,19 @@ impl<'a, 's> Verify<'a, 's> {
                 false
             }
             ([_], true) => {
-                self.emit_type_errors(errors.remove(0));
+                let (got, exp) = errors.remove(0);
+                let tfmt = self.ty_formatter();
+                self.emit_type_mismatch(got.span, "", tfmt.clone().fmt(*got), tfmt.fmt(*exp));
                 false
             }
             (_, _) => {
                 warn!("TODO: merge the errors");
-                for error in errors.into_iter() {
-                    self.emit_type_errors(error);
+                for (got, exp) in errors.into_iter() {
+                    let tfmt = self.ty_formatter();
+                    self.emit_type_mismatch(got.span, "", tfmt.clone().fmt(*got), tfmt.fmt(*exp));
                 }
                 false
             }
-        }
-    }
-
-    pub fn emit_type_errors(&self, (g, e, result): (Tr<&IType>, Tr<&IType>, CheckResult<'s>)) {
-        use lumina_typesystem::CheckResult as Error;
-
-        let tfmt = self.ty_formatter();
-
-        match result {
-            Error::Record(rerr) => {
-                emit_record_error(&self.hir.sources, self.module(), &self.hir.records, rerr)
-            }
-            Error::Mismatch { ctx, .. } => {
-                self.emit_type_mismatch(g.span, ctx, tfmt.clone().fmt(&*g), tfmt.fmt(&*e));
-            }
-            Error::Ok => {}
         }
     }
 
@@ -123,202 +134,84 @@ impl<'a, 's> Verify<'a, 's> {
     }
 }
 
-pub fn emit_record_error<'s, T>(
-    sources: &ast::Sources,
-    module: key::Module,
-    records: &ModMap<key::Record, (Tr<&'s str>, T)>,
-    err: lumina_typesystem::RecordError<'s>,
-) {
-    match err {
-        lumina_typesystem::RecordError::DoesNotHaveFields(_, _, _) => todo!(),
-        lumina_typesystem::RecordError::UnknownRecord(span, fields) => sources
-            .error("unknown record")
-            .m(module)
-            .eline(
-                span,
-                format!(
-                    "no record in scope with the fields {}",
-                    fields.values().format(", ")
-                ),
-            )
-            .emit(),
-        lumina_typesystem::RecordError::Ambigious(span, fields, possibilities) => {
-            match possibilities.as_slice() {
-                [left, right] => sources
-                    .error("ambigious record")
-                    .m(module)
-                    .eline(
-                        span,
-                        format!(
-                            "record could infer to either {} or {}",
-                            records[*left].0, records[*right].0,
-                        ),
-                    )
-                    .text(format!(
-                        "inferred to have the fields {{{}}}",
-                        fields.values().format(", ")
-                    ))
-                    .emit(),
-                many => {
-                    let mut err = sources
-                        .error("ambigious record")
-                        .m(module)
-                        .eline(span, "record could infer into any of");
-                    for key in many {
-                        let name = records[*key].0;
-                        err = err.text(format!("  {name}"));
-                    }
-                    err.emit()
-                }
-            }
-
-            sources
-                .error("type mismatch")
-                .m(module)
-                .eline(
-                    span,
-                    format!("a record with the fields {}", fields.values().format(", ")),
-                )
-                .emit();
-            todo!();
-        }
-        lumina_typesystem::RecordError::NotARecord => todo!(),
-    }
-}
-
-pub struct SameAsCheck<'s> {
+pub struct SameAsCheck {
     kind: &'static str,
-    types: Vec<Tr<IType>>,
-    // if we know there's a match between two branches, we assume the type of one of those branches
-    // is the correct one and check everything else against it.
-    prioritised: Option<usize>,
 
-    mismatches: Vec<(Tr<IType>, Tr<IType>, &'static str, usize)>,
-    rerrs: Vec<lumina_typesystem::RecordError<'s>>,
+    // A pair of types and how many types unified into each type
+    types: Vec<(Tr<IType>, usize)>,
 }
 
-impl<'s> SameAsCheck<'s> {
+impl SameAsCheck {
     pub fn new(kind: &'static str) -> Self {
-        SameAsCheck {
-            kind,
-            types: vec![],
-            prioritised: None,
-            mismatches: Vec::new(),
-            rerrs: vec![],
-        }
+        SameAsCheck { kind, types: vec![] }
     }
 
-    pub fn include<'a>(&mut self, mut ts: TypeSystem<'a, 's>, ty: Tr<IType>) {
-        match self.types.len() {
-            0 => {
-                trace!("initialising same_as checker with {ty}");
-                self.types.push(ty)
+    pub fn include<'a, 's>(&mut self, mut ts: TypeSystem<'a, 's>, ty: Tr<IType>) -> bool {
+        if self.types.is_empty() {
+            self.types.push((ty, 1));
+            return true;
+        }
+
+        for (prev, count) in self.types.iter_mut() {
+            let ok = ts.unify(ty.span, &ty, prev);
+            if ok {
+                *count += 1;
+                return true;
             }
-            _ => match self.prioritised {
-                Some(i) => {
-                    let exp = self.types[i].as_ref();
-
-                    trace!("checking {ty} against previous same_as {exp}");
-
-                    let result = ts.type_check(ty.as_ref(), exp);
-
-                    self.include_result(result);
-                    self.types.push(ty);
-                }
-                None => {
-                    let mut kept_result = None;
-
-                    trace!(
-                        "trying to find a match for {ty} in previous types {:#?}",
-                        &self.types
-                    );
-
-                    for (i, exp) in self.types.iter().enumerate() {
-                        let result = ts.type_check(ty.as_ref(), exp.as_ref());
-
-                        if result.is_ok() {
-                            self.prioritised = Some(i);
-                            // Mark all the previous types (which didn't match against `i`) as errors
-                            self.mismatches = vec![];
-                            for (i, got) in self.types.iter().enumerate().take(i) {
-                                self.mismatches.push((got.clone(), exp.clone(), "", i));
-                            }
-                            self.types.push(ty);
-                            return;
-                        } else if kept_result.is_none() {
-                            kept_result = Some(result);
-                        }
-                    }
-
-                    self.include_result(kept_result.unwrap());
-
-                    self.types.push(ty);
-                }
-            },
         }
+
+        self.types.push((ty, 1));
+        false
     }
 
-    fn include_result(&mut self, result: CheckResult<'s>) {
-        match result {
-            CheckResult::Record(rerr) => self.rerrs.push(rerr),
-            CheckResult::Mismatch { got, exp, ctx } => {
-                self.mismatches.push((got, exp, ctx, self.types.len()))
-            }
-            CheckResult::Ok => {}
-        }
-    }
-
-    pub fn finalize<'t>(
+    pub fn finalize<'t, 's>(
         &mut self,
         module: key::Module,
         tfmt: TyFmtState<'t, 's>,
         sources: &ast::Sources,
     ) -> Tr<IType> {
-        for rerr in self.rerrs.iter() {
-            todo!("{rerr:?}");
-        }
+        let err = sources.error("type mismatch").m(module);
 
-        let mut err = sources.error("type mismatch").m(module);
+        self.types.sort_by(|l, r| r.1.cmp(&l.1));
 
-        let prio = self.prioritised.unwrap_or(0);
-        let exp = &self.types[prio];
-
-        match self.mismatches.as_slice() {
-            [] => {}
-            [(_, _, ctx, i)] => {
-                let got = &self.types[*i];
-                err = err
-                    .eline(got.span, *ctx)
-                    .text(format!(
-                        "{}      {}",
-                        "got".purple(),
-                        tfmt.clone().fmt(&**got)
-                    ))
-                    .text(format!(
-                        "{} {}",
-                        "expected".purple(),
-                        tfmt.clone().fmt(&**exp)
-                    ))
-            }
-
-            many => {
-                err = many
-                    .iter()
-                    .fold(err, |err, (_, _, _, i)| {
-                        let got = &self.types[*i];
-                        err.eline(got.span, format!("{}", tfmt.clone().fmt(&**got)))
-                    })
-                    .text(match self.kind {
-                        "" => "all must be of the same type".into(),
-                        kind => format!("{kind} must be of the same type"),
-                    })
-            }
+        let elem = match self.kind {
+            "list" => "element",
+            "match expressions" => "branch",
+            "match patterns" => "pattern",
+            _ => "element",
         };
 
-        if !self.mismatches.is_empty() {
-            err.iline(exp.span, "expected type set here").emit();
-        }
+        match self.types.as_slice() {
+            [] => panic!("no types were checked"),
+            [_] => return self.types.remove(0).0,
+            [(x, xc), (y, yc)] if *xc == *yc => {
+                err.eline(
+                    x.span,
+                    format!("this {elem} is of type `{}`", tfmt.clone().fmt(&**x)),
+                )
+                .eline(
+                    y.span,
+                    format!("but this {elem} is of type `{}`", tfmt.fmt(&**y)),
+                )
+                .emit();
 
-        return self.types.remove(self.prioritised.unwrap_or(0));
+                return IType::poison().tr(x.span);
+            }
+            [(exp, expc), types @ ..] => {
+                for (got, _) in types {
+                    err.clone()
+                        .eline(got.span, self.kind)
+                        .text(format!("{}      {}", "got".purple(), got))
+                        .text(format!("{} {}", "expected".purple(), exp))
+                        .iline(
+                            exp.span,
+                            format!("type set by this and {expc} other {elem}(s)"),
+                        )
+                        .emit();
+                }
+
+                return IType::poison().tr(exp.span);
+            }
+        }
     }
 }

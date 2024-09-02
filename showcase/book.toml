@@ -1,0 +1,6 @@
+[book]
+authors = ["Simon Larsson"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Lumina Showcase"

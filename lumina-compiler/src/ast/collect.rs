@@ -217,11 +217,11 @@ impl<'s> Collector<'s> {
             self.entities.fbodies.push_as(fkey, body);
             self.entities.fattributes.push_as(fkey, attributes);
             if can_be_resolved {
-                let nfunc = NFunc::Key(fkey.value);
+                let nfunc = NFunc::Key(fkey.1);
                 self.lookups.declare(module, vis, *name, module, nfunc);
             }
 
-            Some(fkey.value)
+            Some(fkey.1)
         } else {
             None
         }
@@ -246,7 +246,7 @@ impl<'s> Collector<'s> {
         if is_targetted(&attributes.shared, &self.target) {
             let kind = match ty.body {
                 ty::DeclarationBody::Record(body) => {
-                    let key = self
+                    let record = self
                         .entities
                         .records
                         .push(module, TyHeader::new(attributes, ty.header));
@@ -259,13 +259,13 @@ impl<'s> Collector<'s> {
                         ftypes.push(ty.tr(span));
                     }
 
-                    self.entities.field_names.push_as(key, fnames);
-                    self.entities.field_types.push_as(key, ftypes);
+                    self.entities.field_names.push_as(record, fnames);
+                    self.entities.field_types.push_as(record, ftypes);
 
-                    key::TypeKind::Record(key.value)
+                    key::TypeKind::Record(record.1)
                 }
                 ty::DeclarationBody::Sum(body) => {
-                    let key = self
+                    let sum = self
                         .entities
                         .sums
                         .push(module, TyHeader::new(attributes, ty.header));
@@ -278,13 +278,13 @@ impl<'s> Collector<'s> {
                         vtypes.push(tys);
                     }
 
-                    self.entities.variant_names.push_as(key, vnames);
-                    self.entities.variant_types.push_as(key, vtypes);
+                    self.entities.variant_names.push_as(sum, vnames);
+                    self.entities.variant_types.push_as(sum, vtypes);
 
-                    key::TypeKind::Sum(key.value)
+                    key::TypeKind::Sum(sum.1)
                 }
                 ty::DeclarationBody::Trait(body) => {
-                    let key = self
+                    let trait_ = self
                         .entities
                         .traits
                         .push(module, TyHeader::new(attributes, ty.header));
@@ -293,23 +293,23 @@ impl<'s> Collector<'s> {
                         .associated_types
                         .push(module, body.associations);
 
-                    let to_body = |body| Some(FuncBody::TraitMethod(body, key));
+                    let to_body = |body| Some(FuncBody::TraitMethod(body, trait_));
 
                     let methods =
                         self.include_methods_as_functions(module, body.methods, true, to_body);
 
-                    self.entities.methods.push_as(key, methods);
+                    self.entities.methods.push_as(trait_, methods);
 
-                    key::TypeKind::Trait(key.value)
+                    key::TypeKind::Trait(trait_.1)
                 }
                 ty::DeclarationBody::None => {
-                    let key = self
+                    let record = self
                         .entities
                         .records
                         .push(module, TyHeader::new(attributes, ty.header));
-                    self.entities.field_types.push_as(key, Map::new());
-                    self.entities.field_names.push_as(key, Map::new());
-                    key::TypeKind::Record(key.value)
+                    self.entities.field_types.push_as(record, Map::new());
+                    self.entities.field_names.push_as(record, Map::new());
+                    key::TypeKind::Record(record.1)
                 }
             };
 
@@ -348,7 +348,7 @@ impl<'s> Collector<'s> {
             unimplemented!("impl block attributes");
         }
 
-        let ikey = module.m(self.entities.impls[module].next_key());
+        let ikey = self.entities.impls[module].next_key().inside(module);
 
         let to_body = |body: Option<_>| body.map(|body| FuncBody::ImplMethod(body, ikey));
 
@@ -377,31 +377,29 @@ impl<'s> Collector<'s> {
         let visibility = Visibility::from_public_flag(module, attributes.shared.public);
         self.entities.fattributes.push_as(fkey, attributes);
         self.entities.fbodies.push_as(fkey, body);
-        self.entities.vals.push_as(module.m(key), fkey);
+        self.entities.vals.push_as(key.inside(module), fkey);
         self.lookups
             .declare(module, visibility, name, module, NFunc::Val(key));
     }
 
     fn include_tydef_members(&mut self, module: key::Module, vis: Visibility, kind: key::TypeKind) {
         match kind {
-            key::TypeKind::Record(rkey) => self.entities.field_names[module.m(rkey)]
+            key::TypeKind::Record(rkey) => self.entities.field_names[rkey.inside(module)]
                 .iter()
                 .for_each(|(field, name)| {
                     self.lookups
                         .declare_accessor(module, vis, **name, rkey, field);
                 }),
-            key::TypeKind::Sum(sum) => {
-                self.entities.variant_names[module.m(sum)]
-                    .iter()
-                    .for_each(|(var, name)| {
-                        let nfunc = NFunc::SumVar(sum, var);
-                        self.lookups.declare(module, vis, **name, module, nfunc);
-                    })
-            }
-            key::TypeKind::Trait(trait_) => self.entities.methods[module.m(trait_)]
+            key::TypeKind::Sum(sum) => self.entities.variant_names[sum.inside(module)]
+                .iter()
+                .for_each(|(var, name)| {
+                    let nfunc = NFunc::SumVar(sum, var);
+                    self.lookups.declare(module, vis, **name, module, nfunc);
+                }),
+            key::TypeKind::Trait(trait_) => self.entities.methods[trait_.inside(module)]
                 .iter()
                 .for_each(|(method, fkey)| {
-                    let header = &self.entities.fheaders[module.m(*fkey)];
+                    let header = &self.entities.fheaders[fkey.inside(module)];
                     let name = *header.name;
                     let nfunc = NFunc::Method(trait_, method);
                     self.lookups.declare(module, vis, name, module, nfunc);
@@ -607,7 +605,7 @@ impl<'s> Collector<'s> {
 
         match ty.key {
             key::TypeKind::Record(rkey) => {
-                let fnames = &self.entities.field_names[ty.module.m(rkey)];
+                let fnames = &self.entities.field_names[rkey.inside(ty.module)];
                 match members {
                     r#use::Members::All(_) => fnames.iter().for_each(|(field, n)| {
                         self.lookups.declare_accessor(module, vis, **n, rkey, field)
@@ -628,7 +626,7 @@ impl<'s> Collector<'s> {
                 }
             }
             key::TypeKind::Sum(sum) => {
-                let vnames = &self.entities.variant_names[ty.module.m(sum)];
+                let vnames = &self.entities.variant_names[sum.inside(ty.module)];
                 match members {
                     r#use::Members::All(_) => vnames.iter().for_each(|(var, name)| {
                         let nfunc = NFunc::SumVar(sum, var);
@@ -651,18 +649,18 @@ impl<'s> Collector<'s> {
                 }
             }
             key::TypeKind::Trait(trait_) => {
-                let methods = &self.entities.methods[ty.module.m(trait_)];
+                let methods = &self.entities.methods[trait_.inside(ty.module)];
                 match members {
                     r#use::Members::All(_) => methods.iter().for_each(|(m, fkey)| {
-                        let header = &self.entities.fheaders[ty.module.m(*fkey)];
+                        let header = &self.entities.fheaders[fkey.inside(ty.module)];
                         let nfunc = NFunc::Method(trait_, m);
                         self.lookups
                             .declare(module, vis, *header.name, ty.module, nfunc);
                     }),
                     r#use::Members::Members(names) => names.iter().for_each(|name| {
-                        match methods
-                            .find(|fkey| self.entities.fheaders[ty.module.m(*fkey)].name == *name)
-                        {
+                        match methods.find(|fkey| {
+                            self.entities.fheaders[fkey.inside(ty.module)].name == *name
+                        }) {
                             None => Self::emit_member_not_found(sources, module, *name, "method"),
                             Some(m) => {
                                 let nfunc = NFunc::Method(trait_, m);

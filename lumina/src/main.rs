@@ -233,7 +233,7 @@ fn project_info<'s>(
                 ))
             })
             .and_then(|entity| {
-                f(entity.key).map(|k| entity.module.m(k)).ok_or_else(|| {
+                f(entity.key).map(|k| M(entity.module, k)).ok_or_else(|| {
                     lumina_util::Error::error("project error").with_text(format!(
                         "`{}` is the wrong kind of item",
                         names.iter().format(":")

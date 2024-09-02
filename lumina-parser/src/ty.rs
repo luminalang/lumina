@@ -35,7 +35,7 @@ impl<'a> DeclarationBody<'a> {
 
 #[derive(Debug)]
 pub struct SumBody<'a> {
-    pub variants: Map<key::SumVariant, (Span, &'a str, Vec<Tr<Type<'a>>>)>,
+    pub variants: Map<key::Variant, (Span, &'a str, Vec<Tr<Type<'a>>>)>,
 }
 
 #[derive(Debug)]
@@ -46,7 +46,7 @@ pub struct TraitBody<'a> {
 
 #[derive(Debug)]
 pub struct RecordBody<'a> {
-    pub fields: Map<key::RecordField, (Span, &'a str, Type<'a>)>,
+    pub fields: Map<key::Field, (Span, &'a str, Type<'a>)>,
 }
 
 #[derive(Debug, Clone)]

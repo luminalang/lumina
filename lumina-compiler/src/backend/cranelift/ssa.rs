@@ -216,7 +216,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             abi::Return::Param(_) => None,
             abi::Return::StructOutPtr(kind, _) => {
                 let size = self.types().size_of_defined(*kind);
-                let slotdata = StackSlotData::new(StackSlotKind::ExplicitSlot, size);
+                let slotdata = StackSlotData::new(StackSlotKind::ExplicitSlot, size, 0);
                 let slot = self.f.builder.create_sized_stack_slot(slotdata);
                 let ptr = self.ins().stack_addr(types::I64, slot, 0);
                 rvalues.push(ptr);
@@ -256,7 +256,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         *predecessors += 1;
 
         if *predecessors == self.f.func.blocks.predecessors(block) {
-            if self.f.block == lir::Block::from_u32(13) && block == lir::Block::from_u32(7) {
+            if self.f.block == lir::Block::from(13) && block == lir::Block::from(7) {
                 panic!("trap");
             };
             self.f.builder.seal_block(*clblock);
@@ -741,7 +741,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let with_check = match ty {
             MonoType::Monomorphised(mk) => {
                 let [int, bool_] = [0, 1]
-                    .map(key::RecordField)
+                    .map(key::Field)
                     .map(|field| self.types().type_of_field(*mk, field));
 
                 assert_eq!(bool_, MonoType::bool());

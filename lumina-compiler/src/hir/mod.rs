@@ -40,34 +40,34 @@ pub use ty::TypeAnnotation;
 use ty::{SelfHandler, TypeEnvInfo};
 
 pub struct HIR<'s> {
-    pub funcs: ModMap<key::Func, FuncDefKind<'s>>,
+    pub funcs: MMap<key::Func, FuncDefKind<'s>>,
 
-    pub records: ModMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
-    pub field_types: ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
+    pub records: MMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
+    pub field_types: MMap<key::Record, Map<key::Field, Tr<Type>>>,
 
-    pub sums: ModMap<key::Sum, (Tr<&'s str>, Forall<'s, Static>)>,
-    pub variant_types: ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
+    pub sums: MMap<key::Sum, (Tr<&'s str>, Forall<'s, Static>)>,
+    pub variant_types: MMap<key::Sum, Map<key::Variant, Vec<Tr<Type>>>>,
 
-    pub traits: ModMap<key::Trait, (Tr<&'s str>, Forall<'s, Static>)>,
-    pub assoc: ModMap<key::Trait, Map<key::AssociatedType, Option<Tr<Type>>>>,
+    pub traits: MMap<key::Trait, (Tr<&'s str>, Forall<'s, Static>)>,
+    pub assoc: MMap<key::Trait, Map<key::AssociatedType, Option<Tr<Type>>>>,
 
-    pub impls: ModMap<key::Impl, Forall<'s, Static>>,
-    pub impltors: ModMap<key::Impl, Tr<Type>>,
-    pub iassoc: ModMap<key::Impl, Vec<(Tr<&'s str>, Tr<Type>)>>,
-    pub itraits: ModMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
+    pub impls: MMap<key::Impl, Forall<'s, Static>>,
+    pub impltors: MMap<key::Impl, Tr<Type>>,
+    pub iassoc: MMap<key::Impl, Vec<(Tr<&'s str>, Tr<Type>)>>,
+    pub itraits: MMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
 
     pub langitems: Map<key::Module, LangItems<'s>>,
 
     // Certain parts of the AST will be kept for the next pass
-    pub fnames: ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
-    pub vnames: ModMap<key::Sum, Map<key::SumVariant, Tr<&'s str>>>,
-    pub func_names: ModMap<key::Func, Tr<&'s str>>,
-    pub val_initializers: ModMap<key::Val, M<key::Func>>,
+    pub fnames: MMap<key::Record, Map<key::Field, Tr<&'s str>>>,
+    pub vnames: MMap<key::Sum, Map<key::Variant, Tr<&'s str>>>,
+    pub func_names: MMap<key::Func, Tr<&'s str>>,
+    pub val_initializers: MMap<key::Val, M<key::Func>>,
     pub sources: ast::Sources,
     pub lookups: ast::Lookups<'s>, // Still needed because of type-dependent lookups
-    pub methods: ModMap<key::Trait, Map<key::Method, key::Func>>,
-    pub imethods: ModMap<key::Impl, Map<key::Method, key::Func>>,
-    pub assoc_names: ModMap<key::Trait, Map<key::AssociatedType, Tr<&'s str>>>,
+    pub methods: MMap<key::Trait, Map<key::Method, key::Func>>,
+    pub imethods: MMap<key::Impl, Map<key::Method, key::Func>>,
+    pub assoc_names: MMap<key::Trait, Map<key::AssociatedType, Tr<&'s str>>>,
 }
 
 type LangItems<'s> = HashMap<&'s str, M<key::TypeKind>>;
@@ -76,20 +76,20 @@ pub fn run<'a, 's>(
     info: ProjectInfo,
     target: Target,
     ast: AST<'s>,
-) -> (HIR<'s>, ModMap<key::Func, TEnv<'s>>, ImplIndex) {
+) -> (HIR<'s>, MMap<key::Func, TEnv<'s>>, ImplIndex) {
     let mut tenvs = ast.entities.fheaders.secondary();
 
-    let mut funcs = ast.entities.fheaders.secondary_inner_capacity();
-    let mut records = ast.entities.records.secondary_inner_capacity();
-    let mut field_types = ast.entities.field_types.secondary_inner_capacity();
-    let mut variant_types = ast.entities.variant_types.secondary_inner_capacity();
-    let mut sums = ast.entities.sums.secondary_inner_capacity();
-    let mut traits = ast.entities.traits.secondary_inner_capacity();
-    let mut assoc = ast.entities.associated_types.secondary_inner_capacity();
-    let mut impls = ast.entities.impls.secondary_inner_capacity();
-    let mut impltors = ast.entities.impls.secondary_inner_capacity();
-    let mut iassoc = ast.entities.associated_types.secondary_inner_capacity();
-    let mut itraits = ast.entities.impls.secondary_inner_capacity();
+    let mut funcs = ast.entities.fheaders.secondary();
+    let mut records = ast.entities.records.secondary();
+    let mut field_types = ast.entities.field_types.secondary();
+    let mut variant_types = ast.entities.variant_types.secondary();
+    let mut sums = ast.entities.sums.secondary();
+    let mut traits = ast.entities.traits.secondary();
+    let mut assoc = ast.entities.associated_types.secondary();
+    let mut impls = ast.entities.impls.secondary();
+    let mut impltors = ast.entities.impls.secondary();
+    let mut iassoc = ast.entities.associated_types.secondary();
+    let mut itraits = ast.entities.impls.secondary();
     let mut langitems = Map::with_capacity(ast.entities.langitems.len());
 
     let info = Info { ast: &ast, langitems: &HashMap::new(), pinfo: &info, target };
@@ -161,12 +161,12 @@ pub fn run<'a, 's>(
         }
     }
 
-    let func_names = ast.entities.fheaders.map(|(_, header)| header.name);
+    let func_names = ast.entities.fheaders.map(|_, header| header.name);
 
     let assoc_names = ast
         .entities
         .associated_types
-        .map(|(_, assoc)| assoc.values().map(|a| a.name.tr(a.span)).collect());
+        .map(|_, assoc| assoc.values().map(|a| a.name.tr(a.span)).collect());
 
     (
         HIR {
@@ -209,8 +209,8 @@ pub fn list_from_langs(
     from_langs("list", langs, mlangs).unwrap_or(pinfo.global_list_default)
 }
 
-pub type RecordFields = Map<key::RecordField, Tr<Type>>;
-pub type SumVariants = Map<key::SumVariant, Vec<Tr<Type>>>;
+pub type RecordFields = Map<key::Field, Tr<Type>>;
+pub type SumVariants = Map<key::Variant, Vec<Tr<Type>>>;
 
 fn lower_langitems<'a, 's>(
     ast: &'a AST<'s>,
@@ -232,7 +232,7 @@ fn lower_langitems<'a, 's>(
             parser::Type::Defined(apath, params) if params.is_empty() => {
                 match ast.lookups.resolve_type(module, apath.path.as_slice()) {
                     Ok(Mod { key: ast::Entity::Type(type_), module, .. }) => {
-                        Some((**name, module.m(type_)))
+                        Some((**name, M(module, type_)))
                     }
                     _ => err_bad_type(name.span),
                 }
@@ -260,12 +260,12 @@ pub struct FuncLower<'t, 'a, 's> {
 
 fn lower_func<'a, 's>(
     Info { ast, target, langitems, pinfo, .. }: Info<'a, 's>,
-    tforalls: &ModMap<key::Trait, (Tr<&'s str>, Forall<'s, Static>)>,
-    iforalls: &ModMap<key::Impl, Forall<'s, Static>>,
-    impltors: &ModMap<key::Impl, Tr<Type>>,
+    tforalls: &MMap<key::Trait, (Tr<&'s str>, Forall<'s, Static>)>,
+    iforalls: &MMap<key::Impl, Forall<'s, Static>>,
+    impltors: &MMap<key::Impl, Tr<Type>>,
     func: M<key::Func>,
 ) -> (FuncDefKind<'s>, TEnv<'s>) {
-    let module = func.module;
+    let module = func.0;
     let header = &ast.entities.fheaders[func];
     let attributes = &ast.entities.fattributes[func];
     let no_mangle = attributes.no_mangle;
@@ -364,7 +364,7 @@ type LoweredType<'s, K, V> = (Map<K, V>, Forall<'s, Static>);
 fn lower_sum<'a, 's>(
     Info { ast, langitems: lang, pinfo, target, .. }: Info<'a, 's>,
     sum: M<key::Sum>,
-) -> LoweredType<'s, key::SumVariant, Vec<Tr<Type>>> {
+) -> LoweredType<'s, key::Variant, Vec<Tr<Type>>> {
     let ty = &ast.entities.sums[sum];
 
     let _span = info_span!(
@@ -375,14 +375,14 @@ fn lower_sum<'a, 's>(
 
     let _handle = _span.enter();
 
-    let tlangs = lower_langitems(ast, sum.module, &ty.attributes.shared.lang_items);
+    let tlangs = lower_langitems(ast, sum.0, &ty.attributes.shared.lang_items);
 
     let list = list_from_langs(&tlangs, lang, pinfo);
     let string = pinfo.string.map(key::TypeKind::Record);
 
     let mut tinfo = tydef_type_env(sum, &ty.header.type_params, list, string);
 
-    let mut tlower = ty::TypeLower::new(sum.module, ast, target.int_size(), &mut tinfo);
+    let mut tlower = ty::TypeLower::new(sum.0, ast, target.int_size(), &mut tinfo);
 
     let variants = &ast.entities.variant_types[sum];
     (
@@ -394,7 +394,7 @@ fn lower_sum<'a, 's>(
 fn lower_record<'a, 's>(
     Info { ast, langitems: lang, pinfo, target, .. }: Info<'a, 's>,
     rec: M<key::Record>,
-) -> LoweredType<'s, key::RecordField, Tr<Type>> {
+) -> LoweredType<'s, key::Field, Tr<Type>> {
     let ty = &ast.entities.records[rec];
 
     let _span = info_span!(
@@ -404,14 +404,14 @@ fn lower_record<'a, 's>(
     );
     let _handle = _span.enter();
 
-    let tlangs = lower_langitems(ast, rec.module, &ty.attributes.shared.lang_items);
+    let tlangs = lower_langitems(ast, rec.0, &ty.attributes.shared.lang_items);
 
     let list = list_from_langs(&tlangs, lang, pinfo);
     let string = pinfo.string.map(key::TypeKind::Record);
 
     let mut tinfo = tydef_type_env(rec, &ty.header.type_params, list, string);
 
-    let mut tlower = ty::TypeLower::new(rec.module, ast, target.int_size(), &mut tinfo);
+    let mut tlower = ty::TypeLower::new(rec.0, ast, target.int_size(), &mut tinfo);
 
     let fields = &ast.entities.field_types[rec];
     (
@@ -430,7 +430,7 @@ fn lower_trait<'a, 's>(
     Map<key::AssociatedType, Option<Tr<Type>>>,
     Forall<'s, Static>,
 ) {
-    let module = trait_.module;
+    let module = trait_.0;
     let ty = &ast.entities.traits[trait_];
 
     let _span = info_span!(
@@ -563,7 +563,7 @@ impl<'s> Lambdas<'s> {
     }
 }
 
-#[derive(Clone, Constructor, Debug)]
+#[derive(Clone, new, Debug)]
 pub struct Typing<T> {
     pub params: Map<key::Param, Tr<T>>,
     pub returns: Tr<T>,
@@ -697,7 +697,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                     continue;
                 }
 
-                let [lcap, ccap] = func.lambdas.captures.get_many_mut([lambda, child]).unwrap();
+                let [lcap, ccap] = func.lambdas.captures.get_many_mut([lambda, child]);
                 for bind in ccap {
                     if !lcap.contains(bind) {
                         lcap.push(*bind);
@@ -789,7 +789,12 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 return Some((Callable::Binding(bind), ToAnnotate::None));
             }
 
-            if let Some(lkey) = self.where_binds.find(|decl| *decl.header.name == name) {
+            if let Some(i) = self
+                .where_binds
+                .iter()
+                .position(|decl| *decl.header.name == name)
+            {
+                let lkey = key::Lambda::from(i);
                 self.bindings.reference_lambda(lkey);
                 return Some((Callable::Lambda(lkey), ToAnnotate::Some(None)));
             }
@@ -802,7 +807,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 ast::Entity::Func(nfunc) => {
                     let type_ = match nfunc {
                         ast::NFunc::SumVar(key, _) => {
-                            Some(entity.module.m(key::TypeKind::Sum(key)))
+                            Some(M(entity.module, key::TypeKind::Sum(key)))
                         }
                         _ => None,
                     };
@@ -811,16 +816,16 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 }
                 ast::Entity::Member(type_, name) => {
                     let module = entity.module;
-                    let ty = self.ast.entities.header_of_ty(module.m(type_));
+                    let ty = self.ast.entities.header_of_ty(M(module, type_));
                     let tname = ty.header.name;
 
                     let nfunc = match type_ {
                         key::TypeKind::Trait(trait_) => {
-                            let methods = &self.ast.entities.methods[module.m(trait_)];
+                            let methods = &self.ast.entities.methods[trait_.inside(module)];
                             let fheaders = &self.ast.entities.fheaders;
 
                             let Some(method) =
-                                methods.find(|fkey| *fheaders[module.m(*fkey)].name == name)
+                                methods.find(|fkey| *fheaders[fkey.inside(module)].name == name)
                             else {
                                 self.ast
                                     .sources
@@ -831,7 +836,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                             ast::NFunc::Method(trait_, method)
                         }
                         key::TypeKind::Sum(sum) => {
-                            let variants = &self.ast.entities.variant_names[module.m(sum)];
+                            let variants = &self.ast.entities.variant_names[sum.inside(module)];
                             match variants.find(|n| **n == name) {
                                 None => {
                                     self.ast
@@ -842,10 +847,11 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                                 Some(var) => ast::NFunc::SumVar(sum, var),
                             }
                         }
-                        key::TypeKind::Record(key) => {
-                            let is_valid_field = self.ast.entities.field_names[module.m(key)]
-                                .values()
-                                .any(|n| **n == name);
+                        key::TypeKind::Record(record) => {
+                            let is_valid_field = self.ast.entities.field_names
+                                [record.inside(module)]
+                            .values()
+                            .any(|n| **n == name);
 
                             let message = if is_valid_field {
                                 format!("if you're trying to use the field named `{name}` from `{tname}`, then use `.{name}`")
@@ -860,7 +866,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                         }
                     };
 
-                    let to_anot = ToAnnotate::Some(Some(entity.module.m(type_)));
+                    let to_anot = ToAnnotate::Some(Some(M(entity.module, type_)));
                     Some((Callable::Func(entity.map(|_| nfunc)), to_anot))
                 }
                 _ => {
@@ -896,7 +902,7 @@ fn lower_impl<'a, 's>(
     Tr<Type>,
     Vec<(Tr<&'s str>, Tr<Ty<Static>>)>,
 ) {
-    let module = impl_.module;
+    let module = impl_.0;
     let imp = &ast.entities.impls[impl_];
 
     let _span = info_span!(

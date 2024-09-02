@@ -9,12 +9,12 @@ use std::sync::Arc;
 #[derive(new)]
 pub struct Context<'a> {
     pub isa: Arc<dyn isa::TargetIsa>,
-    pub val_to_globals: &'a ModMap<key::Val, DataId>,
+    pub val_to_globals: &'a MMap<key::Val, DataId>,
     pub lir: &'a lir::Output,
     pub objmodule: ObjectModule,
     pub funcmap: Map<lir::MonoFunc, FuncHeader>,
     pub externmap: HashMap<M<key::Func>, FuncHeader>,
-    pub rotable: ModMap<key::ReadOnly, DataId>,
+    pub rotable: MMap<key::ReadOnly, DataId>,
 }
 
 impl<'a> Context<'a> {
@@ -26,7 +26,7 @@ impl<'a> Context<'a> {
         self.lir.types.size_of_defined(mk)
     }
 
-    pub fn bits_of_field(&self, mk: MonoTypeKey, field: key::RecordField) -> u32 {
+    pub fn bits_of_field(&self, mk: MonoTypeKey, field: key::Field) -> u32 {
         let ty = self.lir.types.type_of_field(mk, field);
         self.bits_of_ty(&ty)
     }

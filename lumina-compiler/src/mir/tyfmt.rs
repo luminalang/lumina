@@ -50,10 +50,10 @@ impl<'a, 's, P: TyFormatted<'a, 's>, K: Into<key::TypeKind> + Clone> TyFormatted
     for (M<K>, &[P])
 {
     fn tyfmt(&self, state: TyFmtState<'a, 's>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self.0.value.clone().into() {
-            key::TypeKind::Record(ty) => state.hir.records[self.0.module.m(ty)].0,
-            key::TypeKind::Sum(ty) => state.hir.sums[self.0.module.m(ty)].0,
-            key::TypeKind::Trait(ty) => state.hir.traits[self.0.module.m(ty)].0,
+        let name = match self.0 .1.clone().into() {
+            key::TypeKind::Record(ty) => state.hir.records[ty.inside(self.0 .0)].0,
+            key::TypeKind::Sum(ty) => state.hir.sums[ty.inside(self.0 .0)].0,
+            key::TypeKind::Trait(ty) => state.hir.traits[ty.inside(self.0 .0)].0,
         };
 
         let paren = !state.surface;
@@ -89,7 +89,10 @@ impl<'a, 's, T: FmtSpecial<'a, 's>> TyFormatted<'a, 's> for Ty<T> {
                 con.fmt(params, |ty| state.clone().fmts(ty).to_string(), f)
             }
             Ty::Generic(generic) => {
-                let mut or_ugly = |forall: &Map<key::Generic, &str>, key| match forall.get(key) {
+                let mut or_ugly = |forall: &Map<key::Generic, &str>, key| match forall
+                    .has(key)
+                    .then(|| &forall[key])
+                {
                     None => write!(f, "ERR_MISSING_GENERIC:{generic}"),
                     Some(g) => g.fmt(f),
                 };

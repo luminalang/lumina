@@ -7,8 +7,8 @@ use std::collections::VecDeque;
 
 #[derive(new)]
 pub struct Init<'a> {
-    pub(super) ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
-    pub(super) vtypes: &'a ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
+    pub(super) ftypes: &'a MMap<key::Record, Map<key::Field, Tr<Type>>>,
+    pub(super) vtypes: &'a MMap<key::Sum, Map<key::Variant, Vec<Tr<Type>>>>,
 }
 
 impl<'a> Init<'a> {
@@ -59,7 +59,7 @@ impl<'a> Init<'a> {
                     DecTree::Tuple { elems: elems.len(), next: Box::new(next) }
                 }
                 Container::FnPointer | Container::Closure | Container::Pointer => opaque(),
-                Container::Defined(kind, lang) => match **lang {
+                &Container::Defined(M(module, kind), lang) => match *lang {
                     Lang::String => DecTree::String {
                         next: Branching { branches: vec![] },
                         wildcard_next: Box::new(DecTree::End(TreeTail::Unreached(
@@ -74,9 +74,9 @@ impl<'a> Init<'a> {
                         ];
                         DecTree::List { next: Branching { branches }, ty: ty.clone() }
                     }
-                    Lang::None => match kind.value {
+                    Lang::None => match kind {
                         key::TypeKind::Record(record) => {
-                            let record = kind.module.m(record);
+                            let record = record.inside(module);
                             let finst = GenericMapper::from_types(
                                 GenericKind::Entity,
                                 elems.iter().cloned(),
@@ -95,7 +95,7 @@ impl<'a> Init<'a> {
                             DecTree::Record { record, params, fields, next: Box::new(next) }
                         }
                         key::TypeKind::Sum(sum) => {
-                            let sum = kind.module.m(sum);
+                            let sum = sum.inside(module);
                             let finst = GenericMapper::from_types(
                                 GenericKind::Entity,
                                 elems.iter().cloned(),

@@ -2,7 +2,7 @@ use super::{FuncOrigin, MonoTyping, UNIT};
 use crate::prelude::*;
 use crate::VTABLE_FIELD;
 use derive_more::{Deref, DerefMut};
-use key::{entity_impl, keys};
+use lumina_collections::map_key_impl;
 use lumina_key as key;
 use lumina_typesystem::{
     Container, Forall, Generic, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty, Type,
@@ -13,10 +13,13 @@ use std::fmt;
 
 pub const TAG_SIZE: IntSize = IntSize::new(false, 32);
 
-keys! {
-    MonoTypeKey . "mtkey",
-    BitOffset . "offset"
-}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MonoTypeKey(pub u32);
+map_key_impl!(MonoTypeKey(u32), "mtkey");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BitOffset(pub u32);
+map_key_impl!(BitOffset(u32), "offset");
 
 impl From<IntSize> for BitOffset {
     fn from(value: IntSize) -> Self {
@@ -63,8 +66,8 @@ pub struct MonomorphisedTypes {
 pub struct MonomorphisedRecord {
     pub size: u32,
     pub repr: Repr,
-    pub fields: Map<key::RecordField, MonoType>,
-    pub autoboxed: HashSet<key::RecordField>,
+    pub fields: Map<key::Field, MonoType>,
+    pub autoboxed: HashSet<key::Field>,
 
     // Used to detect circular structure that need indirection
     pub original: Option<M<key::TypeKind>>,
@@ -184,13 +187,13 @@ impl Records {
             return None;
         }
 
-        let tag = &self[mk].fields[key::RecordField(0)];
+        let tag = &self[mk].fields[key::Field(0)];
         let tag_size = match tag {
             MonoType::Int(intsize) => intsize.bits() as u32,
             _ => return None,
         };
 
-        let data = &self[mk].fields[key::RecordField(1)];
+        let data = &self[mk].fields[key::Field(1)];
         match data {
             MonoType::SumDataCast { largest } => Some((tag_size, *largest)),
             _ => None,
@@ -199,7 +202,7 @@ impl Records {
 
     pub fn as_trait_object(&self, mk: MonoTypeKey) -> Option<M<key::Trait>> {
         match self[mk].original {
-            Some(M { value: key::TypeKind::Trait(tr), module }) => Some(M { value: tr, module }),
+            Some(M(module, key::TypeKind::Trait(tr))) => Some(tr.inside(module)),
             _ => None,
         }
     }
@@ -208,9 +211,9 @@ impl Records {
     pub fn as_closure_get_fnptr(&self, mk: MonoTypeKey) -> MonoType {
         assert_eq!(
             MonoType::u8_pointer(),
-            self.type_of_field(mk, key::RecordField(0))
+            self.type_of_field(mk, key::Field(0))
         );
-        self.type_of_field(mk, key::RecordField(1))
+        self.type_of_field(mk, key::Field(1))
     }
 
     fn field_is_recursive(&self, key: M<key::TypeKind>, ty: &MonoType) -> bool {
@@ -252,8 +255,8 @@ impl Records {
         // (unless it's a sum-type, those are always tag+dataptr for now)
         if size == u32::MAX {
             match self[key].original {
-                Some(M { value: key::TypeKind::Sum(_), .. }) => {
-                    let field = &self[key].fields[key::RecordField(1)];
+                Some(M(_, key::TypeKind::Sum(_))) => {
+                    let field = &self[key].fields[key::Field(1)];
                     TAG_SIZE.bits() as u32 + self.size_of_without_ptr_sum(field)
                 }
                 _ => self.size_of(&MonoType::u8_pointer()),
@@ -263,7 +266,7 @@ impl Records {
         }
     }
 
-    pub fn field_offset(&self, ty: MonoTypeKey, field: key::RecordField) -> BitOffset {
+    pub fn field_offset(&self, ty: MonoTypeKey, field: key::Field) -> BitOffset {
         let ty = &self[ty];
 
         if !ty.autoboxed.is_empty() {
@@ -275,7 +278,7 @@ impl Records {
                 let mut offset = BitOffset(0);
 
                 for f in 0..field.0 {
-                    let f = key::RecordField(f);
+                    let f = key::Field(f);
                     let ty = &ty.fields[f];
                     offset.0 += self.size_of(ty) as u32;
                 }
@@ -285,7 +288,7 @@ impl Records {
         }
     }
 
-    pub fn type_of_field(&self, ty: MonoTypeKey, field: key::RecordField) -> MonoType {
+    pub fn type_of_field(&self, ty: MonoTypeKey, field: key::Field) -> MonoType {
         self[ty].fields[field].clone()
     }
 
@@ -298,7 +301,7 @@ impl Records {
         table: MonoTypeKey,
         method: key::Method,
     ) -> (F, MonoType) {
-        match &self[table].fields[key::RecordField(method.0)] {
+        match &self[table].fields[key::Field(method.0)] {
             MonoType::FnPointer(ptypes, returns) => {
                 (ptypes.iter().cloned().collect(), (**returns).clone())
             }
@@ -306,8 +309,8 @@ impl Records {
         }
     }
 
-    pub fn has_field(&self, ty: MonoTypeKey, field: key::RecordField) -> bool {
-        self[ty].fields.get(field).is_some()
+    pub fn has_field(&self, ty: MonoTypeKey, field: key::Field) -> bool {
+        self[ty].fields.has(field)
     }
 }
 
@@ -350,7 +353,7 @@ impl MonomorphisedTypes {
         key
     }
 
-    pub fn fields(&self, ty: MonoTypeKey) -> impl Iterator<Item = key::RecordField> + 'static {
+    pub fn fields(&self, ty: MonoTypeKey) -> impl Iterator<Item = key::Field> + 'static {
         self.types[ty].fields.keys()
     }
 }
@@ -411,15 +414,15 @@ pub struct TypeMap {
 pub struct Monomorphization<'a> {
     pub mono: &'a mut MonomorphisedTypes,
 
-    field_types: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
-    variant_types: &'a ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
+    field_types: &'a MMap<key::Record, Map<key::Field, Tr<Type>>>,
+    variant_types: &'a MMap<key::Sum, Map<key::Variant, Vec<Tr<Type>>>>,
 
     // We need this data to correctly monomorphise trait objects.
     //
     // VTables for dynamic dispatch is generated lazily
-    methods: &'a ModMap<key::Trait, Map<key::Method, key::Func>>,
-    funcs: &'a ModMap<key::Func, mir::FunctionStatus>,
-    trait_objects: &'a ModMap<key::Trait, Option<Map<key::Method, key::Param>>>,
+    methods: &'a MMap<key::Trait, Map<key::Method, key::Func>>,
+    funcs: &'a MMap<key::Func, mir::FunctionStatus>,
+    trait_objects: &'a MMap<key::Trait, Option<Map<key::Method, key::Param>>>,
 
     pub tmap: &'a mut TypeMap,
 }
@@ -483,7 +486,7 @@ impl<'a> Monomorphization<'a> {
     fn construct<K: Into<key::TypeKind>>(
         &mut self,
         original: Option<M<K>>,
-        fields: Map<key::RecordField, MonoType>,
+        fields: Map<key::Field, MonoType>,
         repr: Repr,
     ) -> MonomorphisedRecord {
         let original = original.map(|k| k.map(Into::into));
@@ -514,13 +517,13 @@ impl<'a> Monomorphization<'a> {
     //
     // no there literally isn't. ok but let's make sure this works for trait objects first before
     // making the change generally.
-    pub fn defined(&mut self, key: M<key::TypeKind>, params: &[Type]) -> MonoTypeKey {
-        match key.value {
-            key::TypeKind::Record(k) => self.record(key.module.m(k), params),
-            key::TypeKind::Sum(k) => self.sum(key.module.m(k), params),
+    pub fn defined(&mut self, M(module, kind): M<key::TypeKind>, params: &[Type]) -> MonoTypeKey {
+        match kind {
+            key::TypeKind::Record(k) => self.record(k.inside(module), params),
+            key::TypeKind::Sum(k) => self.sum(k.inside(module), params),
             key::TypeKind::Trait(k) => {
                 let mparams = self.applys(params);
-                self.trait_object(key.module.m(k), mparams)
+                self.trait_object(k.inside(module), mparams)
             }
         }
     }
@@ -550,7 +553,7 @@ impl<'a> Monomorphization<'a> {
             let variants = variants
                 .values()
                 .map(|types| types.iter().map(|t| morph.apply(&**t)).collect())
-                .collect::<Map<key::SumVariant, Vec<MonoType>>>();
+                .collect::<Map<key::Variant, Vec<MonoType>>>();
 
             // The size of the enum is the size of it's largest field plus the tag
             let largest = variants
@@ -637,7 +640,7 @@ impl<'a> Monomorphization<'a> {
             tmap.extend_no_weak(GenericKind::Parent, key.1);
 
             let mut method_to_fnptr = |func| {
-                let typing = self.funcs[trait_.module.m(func)].as_done();
+                let typing = self.funcs[M(trait_.0, func)].as_done();
 
                 let mut tmap = tmap.clone();
                 let mut morph = fork!(self, &mut tmap);
@@ -711,20 +714,20 @@ impl<'a> Monomorphization<'a> {
                     let inner = self.apply(&params[0]);
                     MonoType::pointer(inner)
                 }
-                Container::Defined(key, _) => match key.value {
+                &Container::Defined(M(module, key), _) => match key {
                     key::TypeKind::Record(rkey) => {
-                        let mk = self.record(key.module.m(rkey), params);
+                        let mk = self.record(rkey.inside(module), params);
                         MonoType::Monomorphised(mk)
                     }
 
                     key::TypeKind::Sum(sum) => {
-                        let mk = self.sum(key.module.m(sum), params);
+                        let mk = self.sum(sum.inside(module), params);
                         MonoType::Monomorphised(mk)
                     }
 
                     key::TypeKind::Trait(trait_) => {
                         let params = self.applys(params);
-                        let mk = self.trait_object(key.module.m(trait_), params);
+                        let mk = self.trait_object(trait_.inside(module), params);
                         MonoType::Monomorphised(mk)
                     }
                 },

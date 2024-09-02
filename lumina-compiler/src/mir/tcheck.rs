@@ -34,7 +34,7 @@ impl<'s> hir::HIR<'s> {
 impl<'a, 's> Verify<'a, 's> {
     pub fn type_check_and_emit(&mut self, got: Tr<&IType>, exp: Tr<&IType>) -> bool {
         let env = &mut self.tenvs[self.current.fkey];
-        let fields = &self.field_lookup[self.current.fkey.module];
+        let fields = &self.field_lookup[self.current.fkey.0];
         let mut ts = self.hir.type_system(env, self.target, fields);
 
         let ok = ts.unify(got.span, *got, *exp);
@@ -59,7 +59,7 @@ impl<'a, 's> Verify<'a, 's> {
             .enumerate()
             .filter_map(|(i, (g, e))| {
                 let env = &mut self.tenvs[self.current.fkey];
-                let fields = &self.field_lookup[self.current.fkey.module];
+                let fields = &self.field_lookup[self.current.fkey.0];
                 let mut ts = self.hir.type_system(env, self.target, fields);
 
                 let ok = ts.unify(g.span, &g, &e);

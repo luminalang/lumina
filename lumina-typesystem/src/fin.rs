@@ -1,6 +1,6 @@
 use super::{
     Container, Forall, Generic, GenericKind, IType, Inference, IntConstraint, IntSize, Ty,
-    TypeSystem, Var,
+    TypeSystem,
 };
 use derive_new::new;
 use lumina_util::Spanned;
@@ -27,20 +27,18 @@ impl<'a, 's> Finalizer<'a, 's> {
         info!("inferring all {} vars", self.ts.env.vars.len());
 
         // Infer remaining records and ints
-        for i in 0..self.ts.env.vars.len() {
-            let var = Var(i as u32);
-
+        for var in self.ts.env.vars.keys() {
             // Finalize as a record
-            if !self.ts.env[var].fields.is_empty() {
-                let span = self.ts.env[var].span;
+            if !self.ts.env.vars[var].fields.is_empty() {
+                let span = self.ts.env.vars[var].span;
 
-                match self.ts.env[var].assignment.as_ref() {
+                match self.ts.env.vars[var].assignment.as_ref() {
                     Some(ty) => match &ty.value {
                         Ty::Container(Container::Defined(_, _), _) => {
                             #[cfg(debug_assertions)]
-                            for (_, fvar, _) in &self.ts.env[var].fields {
+                            for (_, fvar, _) in &self.ts.env.vars[var].fields {
                                 assert_ne!(
-                                    self.ts.env[*fvar].assignment, None,
+                                    self.ts.env.vars[*fvar].assignment, None,
                                     "{var} was assigned without updating fields"
                                 );
                             }
@@ -59,14 +57,14 @@ impl<'a, 's> Finalizer<'a, 's> {
                         _ambigious_or_empty => {
                             trace!("poisoning {var} because of record inference failing");
                             let ty = Ty::poison();
-                            self.ts.env[var].assignment = Some(ty.tr(span));
+                            self.ts.env.vars[var].assignment = Some(ty.tr(span));
                             continue;
                         }
                     },
                 }
             }
 
-            let vinfo = &mut self.ts.env[var];
+            let vinfo = &mut self.ts.env.vars[var];
 
             // Finalize as an int
             if let Some(intcon) = vinfo.int_constraint {
@@ -81,9 +79,7 @@ impl<'a, 's> Finalizer<'a, 's> {
         }
 
         // Default other vars
-        for (i, vinfo) in self.ts.env.vars.iter_mut().enumerate() {
-            let var = Var(i as u32);
-
+        for (var, vinfo) in self.ts.env.vars.iter_mut() {
             if vinfo.assignment.is_some() {
                 continue;
             }

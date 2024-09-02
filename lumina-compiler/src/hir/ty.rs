@@ -345,7 +345,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
         match self.ast.lookups.resolve_type(self.module, path) {
             Ok(entity) => match entity.key {
                 Entity::Type(tkey) => {
-                    let key = entity.module.m(tkey);
+                    let key = M(entity.module, tkey);
                     let mut tparams = self.tys(params);
                     let expected_type_params =
                         &self.ast.entities.header_of_ty(key).header.type_params;

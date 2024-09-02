@@ -2,7 +2,7 @@
 
 use derive_new::new;
 use itertools::Itertools;
-use key::{Map, ModMap, M};
+use key::{MMap, Map, M};
 use lumina_key as key;
 use lumina_util::{Highlighting, Ignored, Span, Spanned, Tr};
 use smallvec::SmallVec;
@@ -41,15 +41,15 @@ pub use check::ConstraintError;
 pub struct TypeSystem<'a, 's> {
     env: &'a mut TEnv<'s>,
     default_int_size: u8,
-    fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
-    ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
-    records: &'a ModMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
+    fnames: &'a MMap<key::Record, Map<key::Field, Tr<&'s str>>>,
+    ftypes: &'a MMap<key::Record, Map<key::Field, Tr<Type>>>,
+    records: &'a MMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
     field_lookup: &'a HashMap<&'s str, Vec<M<key::Record>>>,
 }
 
 impl<'a, 's> TypeSystem<'a, 's> {
     fn find_record_by_fields(&self, rvar: Var) -> SmallVec<[M<key::Record>; 4]> {
-        let fields = &self.env[rvar].fields;
+        let fields = &self.env.vars[rvar].fields;
 
         let mut possibilities = SmallVec::<[_; 4]>::new();
 
@@ -82,17 +82,17 @@ impl<'a, 's> TypeSystem<'a, 's> {
     }
 
     fn try_get_rvar(&mut self, rvar: Var) -> Option<(M<key::Record>, &[IType])> {
-        match self.env[rvar].assignment.as_ref() {
+        match self.env.vars[rvar].assignment.as_ref() {
             Some(ty) => match &ty.value {
-                Ty::Container(Container::Defined(key, _), _) => {
-                    if let key::TypeKind::Record(record) = key.value {
+                Ty::Container(Container::Defined(M(module, kind), _), _) => {
+                    if let key::TypeKind::Record(record) = kind {
                         // Re-borrow to circumvent limitation of brwck
                         let Ty::Container(_, params) =
-                            &self.env[rvar].assignment.as_ref().unwrap().value
+                            &self.env.vars[rvar].assignment.as_ref().unwrap().value
                         else {
                             unreachable!();
                         };
-                        Some((key.module.m(record), params))
+                        Some((record.inside(*module), params))
                     } else {
                         None
                     }
@@ -110,12 +110,12 @@ impl<'a, 's> TypeSystem<'a, 's> {
             _ => return None,
         };
 
-        let span = self.env[rvar].span;
+        let span = self.env.vars[rvar].span;
         let params = self.new_record_type_params(span, record);
         self.assign_record_to_rvar(span, rvar, record, params);
 
         let Ty::Container(Container::Defined(_, _), type_params) =
-            &self.env[rvar].assignment.as_ref().unwrap().value
+            &self.env.vars[rvar].assignment.as_ref().unwrap().value
         else {
             unreachable!();
         };
@@ -141,22 +141,22 @@ impl<'a, 's> TypeSystem<'a, 's> {
     ) {
         let ty = Ty::defined(record, type_params.clone());
         trace!("{rvar} => {ty}");
-        self.env[rvar].assignment = Some(ty.tr(span));
+        self.env.vars[rvar].assignment = Some(ty.tr(span));
 
         // Now that we know the type, we can go back and type check any of the fields we previously
         // accepted as correct without knowing the real record type.
-        for i in 0..self.env[rvar].fields.len() {
-            let (fname, var, mismatch) = self.env[rvar].fields[i];
+        for i in 0..self.env.vars[rvar].fields.len() {
+            let (fname, var, mismatch) = self.env.vars[rvar].fields[i];
             assert!(mismatch.is_none());
 
             if let Some(ty) = self.inst_field(record, &type_params, *fname) {
                 // We can't use normal unify because then it'll use `field_of` as a shortcut
-                if let Some(previous) = self.env[var].assignment.clone() {
+                if let Some(previous) = self.env.vars[var].assignment.clone() {
                     let ok = self.unify(previous.span, &*previous, &ty);
                     if !ok {
-                        self.env[rvar].fields[i].2 = Some(tenv::FieldMismatch);
+                        self.env.vars[rvar].fields[i].2 = Some(tenv::FieldMismatch);
                         // Overwrite the incorrect var with the real type
-                        self.env.vars[var.0 as usize].assignment = Some(ty.tr(fname.span));
+                        self.env.vars[var].assignment = Some(ty.tr(fname.span));
                     }
                 } else {
                     self.env.assign(var, ty.tr(fname.span));
@@ -195,7 +195,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
     }
 
     fn try_get_field_if_is_field(&mut self, var: Var) -> Option<(M<key::Record>, IType)> {
-        self.env[var]
+        self.env.vars[var]
             .field_of
             .and_then(|(fname, rvar)| self.try_get_field(fname, rvar))
     }
@@ -236,10 +236,9 @@ pub enum Lang {
 impl<T> Ty<T> {
     pub fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self> {
         match self {
-            Ty::Container(
-                Container::Defined(M { module, value: key::TypeKind::Trait(key) }, _),
-                params,
-            ) => Ok((module.m(key), params)),
+            Ty::Container(Container::Defined(M(module, key::TypeKind::Trait(key)), _), params) => {
+                Ok((key.inside(module), params))
+            }
             other => Err(other),
         }
     }

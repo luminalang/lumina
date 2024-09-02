@@ -73,14 +73,14 @@ pub enum Callable {
 pub struct Lower<'a, 's> {
     env: &'a TEnv<'s>,
 
-    read_only_table: &'a mut ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
+    read_only_table: &'a mut MMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
 
     pub current: &'a mut Current,
 
     items: LangItems,
-    fnames: &'a ModMap<key::Record, Map<key::RecordField, Tr<&'s str>>>,
-    ftypes: &'a ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
-    vtypes: &'a ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
+    fnames: &'a MMap<key::Record, Map<key::Field, Tr<&'s str>>>,
+    ftypes: &'a MMap<key::Record, Map<key::Field, Tr<Type>>>,
+    vtypes: &'a MMap<key::Sum, Map<key::Variant, Vec<Tr<Type>>>>,
 
     target: Target,
 
@@ -165,7 +165,7 @@ impl<'a, 's> Lower<'a, 's> {
         let ty = Type::u8();
 
         self.read_only_table.push(
-            self.current.fkey.module,
+            self.current.fkey.0,
             (mir::ReadOnlyBytes(buffer.into_boxed_slice()), ty),
         )
     }
@@ -241,7 +241,7 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
                 match self.lowered_tail.take() {
                     Some(tail) => {
                         tails.push(tail);
-                        let pred = [1].into_iter().collect();
+                        let pred = Map::from([1]);
                         self.lowered_tail = Some(Expr::Match(Box::new(on), tree, tails, pred));
                     }
                     None => {
@@ -281,7 +281,7 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
         self.lower.transform_rvar(rvar)
     }
 
-    fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
+    fn name_of_field(&self, record: M<key::Record>, field: key::Field) -> &'s str {
         *self.lower.fnames[record][field]
     }
 
@@ -308,7 +308,7 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for MatchBranchLower<'l, 
         self.tail_key
     }
 
-    fn name_of_field(&self, record: M<key::Record>, field: key::RecordField) -> &'s str {
+    fn name_of_field(&self, record: M<key::Record>, field: key::Field) -> &'s str {
         *self.lower.fnames[record][field]
     }
 
@@ -363,10 +363,9 @@ pub fn emit_fin_error<'s>(
                 .eline(span, "")
                 .text("missing patterns");
 
-            let name_of_var = |sum: M<key::Sum>, var: key::SumVariant| {
-                tfmt.hir.vnames[sum][var].value.to_string()
-            };
-            let name_of_field = |record: M<key::Record>, field: key::RecordField| {
+            let name_of_var =
+                |sum: M<key::Sum>, var: key::Variant| tfmt.hir.vnames[sum][var].value.to_string();
+            let name_of_field = |record: M<key::Record>, field: key::Field| {
                 tfmt.hir.fnames[record][field].value.to_string()
             };
 

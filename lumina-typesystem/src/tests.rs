@@ -1,6 +1,6 @@
 use super::{Finalizer, Forall, TEnv, Transformer, Ty, Type, TypeSystem, Upgrade};
+use key::MMap;
 use key::M;
-use key::{MapExt, ModMap};
 use lumina_key as key;
 use lumina_util::{Span, Spanned};
 use std::collections::HashMap;
@@ -35,12 +35,12 @@ fn fin<'a, 's>(ts: TypeSystem<'a, 's>) -> Finalizer<'a, 's> {
     Finalizer { ts, default_to_generic: None }
 }
 
-const VEC: M<key::Record> = M { value: key::Record(0), module: key::Module(0) };
+const VEC: M<key::Record> = M(key::Module(0), key::Record(0));
 
 fn system<'a, 's>(tenv: &'a mut TEnv<'s>) -> TypeSystem<'a, 's> {
-    let mut fnames = ModMap::new();
-    let mut ftypes = ModMap::new();
-    let mut records = ModMap::new();
+    let mut fnames = MMap::new();
+    let mut ftypes = MMap::new();
+    let mut records = MMap::new();
     let mut field_lookup = HashMap::new();
     let m = key::Module(0);
 
@@ -58,7 +58,7 @@ fn system<'a, 's>(tenv: &'a mut TEnv<'s>) -> TypeSystem<'a, 's> {
                 field_lookup
                     .entry(name)
                     .or_insert_with(Vec::new)
-                    .push(M { value: record, module: m })
+                    .push(M(m, record))
             });
         };
 

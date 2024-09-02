@@ -22,7 +22,7 @@ impl<'a, 's> Verify<'a, 's> {
                     .map(|p| self.type_check_pat(p.as_ref()))
                     .collect::<Vec<_>>();
                 let (finst, ptypes, returns) = self.type_of_variant(pat.span, *type_, *var);
-                let instinfo = InstInfo::new(type_.module, finst, ptypes, returns.clone());
+                let instinfo = InstInfo::new(type_.0, finst, ptypes, returns.clone());
                 self.type_check_and_emit_application(pat.span, &params, &instinfo.ptypes);
                 returns.value
             }

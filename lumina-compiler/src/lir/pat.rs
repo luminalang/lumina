@@ -263,18 +263,14 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
     fn is_just(&mut self, maybe: Value) -> (Value, Value) {
         let maybe_mk = self.f.type_of_value(maybe).as_key();
-        let [tag_ty, data_ty] = [key::RecordField(0), key::RecordField(1)]
+        let [tag_ty, data_ty] = [key::Field(0), key::Field(1)]
             .map(|field| self.f.lir.mono.types.type_of_field(maybe_mk, field));
 
         assert_eq!(tag_ty, MonoType::Int(mono::TAG_SIZE));
 
-        let tag = self
-            .ssa()
-            .field(maybe, maybe_mk, key::RecordField(0), tag_ty);
+        let tag = self.ssa().field(maybe, maybe_mk, key::Field(0), tag_ty);
 
-        let data = self
-            .ssa()
-            .field(maybe, maybe_mk, key::RecordField(1), data_ty);
+        let data = self.ssa().field(maybe, maybe_mk, key::Field(1), data_ty);
 
         let check = self.ssa().eq([tag, Value::maybe_just()], mono::TAG_SIZE);
         (check, data)
@@ -485,7 +481,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     let tuple = self.ssa().sum_field(data, BitOffset(0), tuple_ty.into());
 
                     let [x, xs] = [0, 1]
-                        .map(key::RecordField)
+                        .map(key::Field)
                         .map(|field| self.ssa().field(tuple, tuple_ty, field, string.into()));
 
                     self.map.push(x);
@@ -506,16 +502,11 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let on_mk = self.f.type_of_value(on).as_key();
 
         let tag_ty = MonoType::Int(mono::TAG_SIZE);
-        let copy_tag = self.ssa().field(on, on_mk, key::RecordField(0), tag_ty);
+        let copy_tag = self.ssa().field(on, on_mk, key::Field(0), tag_ty);
 
-        let data = self
-            .f
-            .lir
-            .mono
-            .types
-            .type_of_field(on_mk, key::RecordField(1));
+        let data = self.f.lir.mono.types.type_of_field(on_mk, key::Field(1));
 
-        let data_field = self.ssa().field(on, on_mk, key::RecordField(1), data);
+        let data_field = self.ssa().field(on, on_mk, key::Field(1), data);
 
         assert!(
             v.branches
@@ -582,4 +573,4 @@ struct ResetPoint {
     map: Vec<ssa::Value>,
 }
 
-type SumBranches = mir::Branching<key::SumVariant>;
+type SumBranches = mir::Branching<key::Variant>;

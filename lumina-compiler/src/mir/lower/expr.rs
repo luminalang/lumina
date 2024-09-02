@@ -14,8 +14,8 @@ pub enum Expr {
     PartiallyApplicate(Callable, Vec<Self>),
     Yield(Callable),
 
-    Access(Box<Self>, M<key::Record>, Vec<Type>, key::RecordField),
-    Record(M<key::Record>, Vec<Type>, Vec<(key::RecordField, Self)>),
+    Access(Box<Self>, M<key::Record>, Vec<Type>, key::Field),
+    Record(M<key::Record>, Vec<Type>, Vec<(key::Field, Self)>),
 
     Int(IntSize, i128),
     Bool(bool),
@@ -76,9 +76,10 @@ impl<'a, 's> Lower<'a, 's> {
         match &expr.value {
             hir::Expr::Call(call, tanot, params) => match call {
                 hir::Callable::Func(nfunc) => {
+                    let nfunc = M(nfunc.module, nfunc.key);
                     let params = self.lower_exprs(params);
                     self.fin_inst_or_poison(expr.span, |_, mapper| {
-                        let call = Callable::Func(nfunc.module.m(nfunc.key), mapper);
+                        let call = Callable::Func(nfunc, mapper);
                         Expr::Call(call, params)
                     })
                 }
@@ -163,7 +164,7 @@ impl<'a, 's> Lower<'a, 's> {
                 hir::Callable::Func(nfunc) => {
                     let params = self.lower_exprs(params);
                     self.fin_inst_or_poison(expr.span, |_, mapper| {
-                        let call = Callable::Func(nfunc.module.m(nfunc.key), mapper);
+                        let call = Callable::Func(M(nfunc.module, nfunc.key), mapper);
                         Expr::PartiallyApplicate(call, params)
                     })
                 }
@@ -233,7 +234,7 @@ impl<'a, 's> Lower<'a, 's> {
                             }
                         }
                     })
-                    .collect::<Vec<(key::RecordField, Expr)>>();
+                    .collect::<Vec<(key::Field, Expr)>>();
 
                 let mut missing_fields = vec![];
 
@@ -279,11 +280,10 @@ impl<'a, 's> Lower<'a, 's> {
         else {
             return None;
         };
-        let key::TypeKind::Record(rkey) = key.value else {
+        let M(module, key::TypeKind::Record(rkey)) = key else {
             return None;
         };
-        let key = key.module.m(rkey);
-        Some((key, params))
+        Some((rkey.inside(module), params))
     }
 
     fn lower_builtin<const N: usize>(
@@ -328,7 +328,7 @@ impl<'a, 's> Lower<'a, 's> {
                 let mapper =
                     GenericMapper::new(vec![], Some(Ty::string(self.items.pinfo.string, vec![])));
 
-                let call = Callable::Func(stringable.module.m(func), mapper);
+                let call = Callable::Func(M(stringable.0, func), mapper);
                 Expr::Call(call, vec![ptr, len])
             }
         }
@@ -343,11 +343,11 @@ impl<'a, 's> Lower<'a, 's> {
             (
                 _,
                 Type::Container(
-                    Container::Defined(M { value: key::TypeKind::Trait(value), module }, _),
+                    Container::Defined(M(module, key::TypeKind::Trait(value)), _),
                     params,
                 ),
             ) => {
-                let trait_ = M { value, module };
+                let trait_ = M(module, value);
                 let con = Constraint { span: ty_of_expr.span, trait_, params: params.clone() };
                 self.trait_object_cast_checks
                     .push((ty_of_expr.clone(), con));
@@ -378,7 +378,7 @@ impl<'a, 's> Lower<'a, 's> {
         let list_type = Type::list(type_, vec![inner.clone()]);
 
         let listable = self.items.pinfo.listable;
-        let method = |m| listable.module.m(NFunc::Method(listable.value, m));
+        let method = |m| listable.map(|trait_| NFunc::Method(trait_, m));
 
         let mut mapper =
             GenericMapper::from_types(GenericKind::Entity, std::iter::once(inner.clone()));

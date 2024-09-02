@@ -38,10 +38,10 @@ pub enum DecTree<Tail> {
     Sum {
         sum: M<key::Sum>,
         params: Vec<Type>,
-        next: Branching<key::SumVariant, Tail>,
+        next: Branching<key::Variant, Tail>,
     },
     List {
-        next: Branching<key::SumVariant, Tail>,
+        next: Branching<key::Variant, Tail>,
         ty: Type,
     },
     String {
@@ -94,8 +94,8 @@ pub enum TreeTail<Tail> {
     Reached(PointTable, VecDeque<Type>, Tail),
 }
 
-pub const LIST_CONS: key::SumVariant = key::SumVariant(0);
-pub const LIST_NIL: key::SumVariant = key::SumVariant(1);
+pub const LIST_CONS: key::Variant = key::Variant(0);
+pub const LIST_NIL: key::Variant = key::Variant(1);
 
 /// Maps binds (created by wildcards) to depth points of the decision tree
 #[derive(Debug, Clone, new, PartialEq)]
@@ -105,7 +105,7 @@ pub struct PointTable {
 
 pub trait BranchKey: std::fmt::Display {}
 
-impl BranchKey for key::SumVariant {}
+impl BranchKey for key::Variant {}
 impl BranchKey for bool {}
 impl BranchKey for StrChecks {}
 impl BranchKey for Range {}

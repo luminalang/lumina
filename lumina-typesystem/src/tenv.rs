@@ -1,7 +1,6 @@
 use super::{Constraint, Forall, IType, Inference, Static};
-use lumina_key::{entity_impl, keys};
+use lumina_collections::{map_key_impl, Map, M};
 use lumina_util::{Span, Spanned, Tr};
-use std::ops::{Index, IndexMut};
 use tracing::trace;
 
 /// For bidirectional inference to work; we need indirection for types so that we can refer to the
@@ -10,31 +9,12 @@ use tracing::trace;
 /// The type environment contains all contexts that types direct to.
 pub struct TEnv<'s> {
     pub self_: Option<IType>,
-    // TODO: we can't use `Map` here because `cranelift_entity` doesn't expose a way to truncate
-    // the inner vec.
-    //
-    // Long-term, we probably want to create our own arena crate regardless. That way, we can
-    // generalise our ModMap and key::Kind's in smarter ways.
-    pub(crate) vars: Vec<VarInfo<'s>>,
+    pub(crate) vars: Map<Var, VarInfo<'s>>,
 }
 
-impl<'s> Index<Var> for TEnv<'s> {
-    type Output = VarInfo<'s>;
-
-    fn index(&self, var: Var) -> &Self::Output {
-        &self.vars[var.0 as usize]
-    }
-}
-
-impl<'s> IndexMut<Var> for TEnv<'s> {
-    fn index_mut(&mut self, var: Var) -> &mut Self::Output {
-        &mut self.vars[var.0 as usize]
-    }
-}
-
-keys! {
-    Var . "var"
-}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Var(u32);
+map_key_impl!(Var(u32), "var");
 
 pub struct VarInfo<'s> {
     pub(crate) span: Span,
@@ -73,7 +53,7 @@ impl<'s> VarInfo<'s> {
 
 impl<'s> TEnv<'s> {
     pub fn new() -> Self {
-        Self { self_: None, vars: Vec::new() }
+        Self { self_: None, vars: Map::new() }
     }
 
     // Clever, but not sure if we'll need it.
@@ -97,43 +77,43 @@ impl<'s> TEnv<'s> {
 
     pub(crate) fn assign(&mut self, var: Var, ty: Tr<IType>) {
         trace!("{var} -> {ty}");
-        let previous = self[var].assignment.replace(ty);
+        let previous = self.vars[var].assignment.replace(ty);
         assert!(previous.is_none(), "double assignment")
     }
 
     pub fn assign_simple(&mut self, var: Var, ty: Tr<IType>) {
         trace!("{var} -> {ty}");
-        let vdata = &mut self[var];
+        let vdata = &mut self.vars[var];
         assert!(vdata.fields.is_empty() && vdata.field_of.is_none());
-        let previous = self[var].assignment.replace(ty);
+        let previous = self.vars[var].assignment.replace(ty);
         assert!(previous.is_none(), "double assignment")
     }
 
     pub fn get(&self, var: Var) -> Result<&Tr<IType>, Span> {
-        let vdata = &self[var];
+        let vdata = &self.vars[var];
         vdata.assignment.as_ref().ok_or(vdata.span)
     }
 
     pub fn add_field(&mut self, var: Var, name: Tr<&'s str>) -> Var {
         debug_assert_eq!(
-            self[var].assignment, None,
+            self.vars[var].assignment, None,
             "cannot add fields to already assigned rvar"
         );
 
-        self[var]
+        self.vars[var]
             .fields
             .iter()
             .find_map(|(n, fieldvar, _)| (*n == name).then_some(*fieldvar))
             .unwrap_or_else(|| {
                 let fieldvar = self.var(name.span);
-                self[var].fields.push((name, fieldvar, None));
-                self[fieldvar].field_of = Some((name, var));
+                self.vars[var].fields.push((name, fieldvar, None));
+                self.vars[fieldvar].field_of = Some((name, var));
                 fieldvar
             })
     }
 
     pub fn add_trait_constraint(&mut self, var: Var, con: Constraint<Var>) {
-        self[var].trait_constraints.push(con);
+        self.vars[var].trait_constraints.push(con);
     }
 
     pub fn next_key(&self) -> Var {
@@ -148,7 +128,7 @@ impl<'s> TEnv<'s> {
     }
 
     pub fn enable_lift_to_generic(&mut self, var: Var) {
-        self[var].lift_to_generic = true;
+        self.vars[var].lift_to_generic = true;
     }
 
     pub fn merge_vars<const N: usize>(&mut self, span: Span, vars: [Var; N]) -> Var {
@@ -161,7 +141,7 @@ impl<'s> TEnv<'s> {
         let nvar = self.next_key();
         trace!("merging {vars:?} -> {nvar}");
 
-        for vinfo in self.vars.get_many_mut(vars.map(|n| n.0 as usize)).unwrap() {
+        for vinfo in self.vars.get_many_mut(vars) {
             assert!(vinfo.assignment.is_none());
             vinfo.assignment = Some(IType::infer(nvar).tr(span));
 
@@ -205,7 +185,7 @@ impl<'s> TEnv<'s> {
 
     pub fn int(&mut self, span: Span, min: i128, max: u64) -> Var {
         let var = self.var(span);
-        self[var].int_constraint = Some(IntConstraint { min, max });
+        self.vars[var].int_constraint = Some(IntConstraint { min, max });
         var
     }
 }

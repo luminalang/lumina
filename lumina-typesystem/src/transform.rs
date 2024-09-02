@@ -148,7 +148,7 @@ impl GenericMapper<Inference> {
 
             for con in inst.to_forall.generics[key].trait_constraints.clone() {
                 let con = inst.transform_constraint(&con);
-                inst.from[var].trait_constraints.push(con);
+                inst.from.vars[var].trait_constraints.push(con);
             }
         }
 
@@ -178,7 +178,7 @@ impl<'a, 's> ForeignInst<'a, 's, Inference> {
             let var = self.mapper.as_var(generic);
             for con in &gdata.trait_constraints {
                 let con = DirectRecursion(&self.mapper).transform_constraint(con);
-                self.env[var].trait_constraints.push(con);
+                self.env.vars[var].trait_constraints.push(con);
             }
         }
         self
@@ -190,7 +190,7 @@ impl<'a, 's> ForeignInst<'a, 's, Inference> {
             let var = self.mapper.as_var(generic);
             for con in &gdata.trait_constraints {
                 let con = (&self.mapper).transform_constraint(con);
-                self.env[var].trait_constraints.push(con);
+                self.env.vars[var].trait_constraints.push(con);
             }
         }
         self
@@ -299,7 +299,7 @@ impl<'a, 's> Transformer<Inference> for Upgrade<'a, 's> {
     }
 
     fn special(&mut self, var: &Inference) -> Ty<Self::Output> {
-        let vdata = &self.0[*var];
+        let vdata = &self.0.vars[*var];
         let ty = vdata.assignment.as_ref().unwrap();
         self.transform(&*ty)
     }
@@ -337,7 +337,7 @@ impl<'a, 's> Transformer<Inference> for CircularInst<'a, 's, Inference> {
     type Output = Inference;
 
     fn special(&mut self, var: &Inference) -> Ty<Self::Output> {
-        let vdata = &self.to[*var];
+        let vdata = &self.to.vars[*var];
         match vdata.assignment.clone() {
             Some(ty) => self.transform(&ty),
             None => {

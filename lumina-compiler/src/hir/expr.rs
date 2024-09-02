@@ -240,7 +240,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         match self.ast.lookups.resolve_func(self.module, segments) {
             Ok(Mod { key: ast::Entity::Func(ast::NFunc::Key(key)), module, .. }) => {
                 let tanot = self.type_annotation(apath, None);
-                Expr::PassFnptr(module.m(key), tanot)
+                Expr::PassFnptr(key.inside(module), tanot)
             }
             Ok(_) => {
                 self.ast
@@ -294,9 +294,12 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
 
                             let type_annotation = self.type_annotation(apath, None);
 
-                            if let Some(lkey) =
-                                self.where_binds.find(|decl| *decl.header.name == name)
+                            if let Some(i) = self
+                                .where_binds
+                                .iter()
+                                .position(|decl| *decl.header.name == name)
                             {
+                                let lkey = key::Lambda::from(i);
                                 self.bindings.reference_lambda(lkey);
                                 let c = Callable::Lambda(lkey);
                                 return Expr::Call(c, type_annotation, params);
@@ -386,12 +389,12 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                     Entity::Func(func) => {
                         let precedence = match func {
                             NFunc::Key(fkey) => {
-                                self.ast.entities.fattributes[entity.module.m(fkey)].precedence
+                                self.ast.entities.fattributes[fkey.inside(entity.module)].precedence
                             }
                             NFunc::Method(trait_, method) => {
                                 let fkey =
-                                    self.ast.entities.methods[entity.module.m(trait_)][method];
-                                self.ast.entities.fattributes[entity.module.m(fkey)].precedence
+                                    self.ast.entities.methods[trait_.inside(entity.module)][method];
+                                self.ast.entities.fattributes[fkey.inside(entity.module)].precedence
                             }
                             NFunc::SumVar(_, _) => todo!(),
                             NFunc::Val(_) => todo!(),

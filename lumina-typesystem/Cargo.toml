@@ -9,6 +9,7 @@ edition = "2021"
 itertools = "*"
 lumina-util = { path = "../lumina-util" }
 lumina-key = { path = "../lumina-key" }
+lumina-collections = { path = "../lumina-collections" }
 derive_more = "*"
 derive-new = "0.6"
 tracing = "0.1.40"

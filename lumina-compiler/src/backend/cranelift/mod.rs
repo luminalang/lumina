@@ -41,7 +41,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
     .unwrap();
     let mut objmodule = ObjectModule::new(objbuilder);
 
-    let vals = lir.val_types.map(|(val, ty)| {
+    let vals = lir.val_types.map(|val, ty| {
         let size = lir.types.size_of(ty) as usize;
         let name = format!("{}___VAL", lir.functions[lir.val_initializers[&val]].symbol);
         let thread_local = false; // TODO: this is something we're gonna want
@@ -54,7 +54,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
         id
     });
 
-    let rotable = lir.read_only_table.map(|(ro, (bytes, _ty))| {
+    let rotable = lir.read_only_table.map(|ro, (bytes, _ty)| {
         let name = ro.to_string();
         let thread_local = false;
         let id = objmodule

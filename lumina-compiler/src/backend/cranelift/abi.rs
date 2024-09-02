@@ -70,7 +70,7 @@ impl lir::Records {
         &self,
         triple: &Triple,
         mk: MonoTypeKey,
-    ) -> Map<key::RecordField, StructField<Type>> {
+    ) -> Map<key::Field, StructField<Type>> {
         self[mk]
             .fields
             .iter()
@@ -119,7 +119,7 @@ pub enum StructField<T> {
     Direct(T),
     AutoBoxedRecursion(MonoTypeKey, T),
     FuncPointer(Box<Typing>, T),
-    Struct(Map<key::RecordField, StructField<T>>),
+    Struct(Map<key::Field, StructField<T>>),
     SumPayload { largest: u32, ptr: T },
     ZST,
 }
@@ -136,7 +136,7 @@ pub struct Typing {
 pub enum Entry<T> {
     Direct(T),
     FuncPointer(Box<Typing>, T),
-    Struct(MonoTypeKey, Map<key::RecordField, StructField<T>>),
+    Struct(MonoTypeKey, Map<key::Field, StructField<T>>),
     SumPayload { largest: u32, ptr: T },
     ZST,
 }
@@ -146,7 +146,7 @@ pub type Param = Entry<Type>;
 #[derive(Clone, Debug)]
 pub enum Return {
     Param(Entry<Type>),
-    StructOutPtr(MonoTypeKey, Map<key::RecordField, StructField<Type>>),
+    StructOutPtr(MonoTypeKey, Map<key::Field, StructField<Type>>),
 }
 
 impl<T: Clone + Copy> Entry<T> {

@@ -12,7 +12,7 @@ pub enum Pattern<'s> {
     Any,
     Int([parser::pat::Bound; 2], Var),
     Bind(key::Bind, Box<Self>),
-    Constructor(M<key::Sum>, key::SumVariant, Vec<Tr<Self>>),
+    Constructor(M<key::Sum>, key::Variant, Vec<Tr<Self>>),
     Record(
         Var,
         Option<Tr<IType>>,
@@ -281,7 +281,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             path => match self.ast.lookups.resolve_func(self.module, path) {
                 Ok(Mod { key: Entity::Func(NFunc::SumVar(type_, var)), module, .. }) => {
                     let params = self.pats(params);
-                    Pattern::Constructor(module.m(type_), var, params)
+                    Pattern::Constructor(type_.inside(module), var, params)
                 }
 
                 _ if is_valid_wildcard() => {
@@ -412,7 +412,7 @@ impl<'s> From<std::ops::Range<u128>> for Pattern<'s> {
                 parser::pat::Bound::Pos(value.start),
                 parser::pat::Bound::Pos(value.end),
             ],
-            Var::from_u32(0),
+            Var::from(0),
         )
     }
 }

@@ -9,7 +9,7 @@ pub enum MissingPattern {
     Wildcard,
     Const(&'static str),
     Tuple(VecDeque<Self>),
-    Sum(M<key::Sum>, key::SumVariant, VecDeque<Self>),
+    Sum(M<key::Sum>, key::Variant, VecDeque<Self>),
     Record(M<key::Record>, VecDeque<Self>),
 
     Ints(Range),
@@ -30,7 +30,7 @@ where
 }
 
 fn unfold_list(
-    var: key::SumVariant,
+    var: key::Variant,
     mut params: VecDeque<MissingPattern>,
 ) -> VecDeque<MissingPattern> {
     match var {
@@ -217,8 +217,8 @@ impl<'a> MissingGeneration<'a> {
 impl MissingPattern {
     pub fn fmt<'a>(
         &'a self,
-        name_of_var: &'a dyn Fn(M<key::Sum>, key::SumVariant) -> String,
-        name_of_field: &'a dyn Fn(M<key::Record>, key::RecordField) -> String,
+        name_of_var: &'a dyn Fn(M<key::Sum>, key::Variant) -> String,
+        name_of_field: &'a dyn Fn(M<key::Record>, key::Field) -> String,
     ) -> MissingFormatter<'_> {
         MissingFormatter { pat: self, parenthesis: false, name_of_var, name_of_field }
     }
@@ -227,8 +227,8 @@ impl MissingPattern {
 pub struct MissingFormatter<'a> {
     pat: &'a MissingPattern,
     parenthesis: bool,
-    name_of_var: &'a dyn Fn(M<key::Sum>, key::SumVariant) -> String,
-    name_of_field: &'a dyn Fn(M<key::Record>, key::RecordField) -> String,
+    name_of_var: &'a dyn Fn(M<key::Sum>, key::Variant) -> String,
+    name_of_field: &'a dyn Fn(M<key::Record>, key::Field) -> String,
 }
 
 impl<'a> MissingFormatter<'a> {
@@ -283,7 +283,7 @@ impl<'a> fmt::Display for MissingFormatter<'a> {
                     .iter()
                     .enumerate()
                     .format_with(", ", |(i, pat), f| {
-                        let field = key::RecordField(i as u32);
+                        let field = key::Field(i as u32);
                         let name = (self.name_of_field)(*record, field);
                         f(&format_args!("{name} = {}", self.fork(pat, false)))
                     })

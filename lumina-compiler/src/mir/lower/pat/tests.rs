@@ -1,6 +1,7 @@
 use super::*;
 use crate::mir::CallTypes;
 use insta::assert_snapshot;
+use lumina_collections::MapKey;
 use lumina_typesystem::{Generic, GenericKind, GenericMapper, Static, Var};
 
 macro_rules! snapshot_tree_and_missing {
@@ -21,18 +22,18 @@ macro_rules! snapshot_tree_and_missing {
 struct Lower {
     tail: Tail,
 
-    ftypes: ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
-    vtypes: ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
+    ftypes: MMap<key::Record, Map<key::Field, Tr<Type>>>,
+    vtypes: MMap<key::Sum, Map<key::Variant, Vec<Tr<Type>>>>,
 }
 
 const MAYBE: key::Sum = key::Sum(0);
 const LIST: key::Sum = key::Sum(1);
-const JUST: key::SumVariant = key::SumVariant(0);
-const NONE: key::SumVariant = key::SumVariant(1);
+const JUST: key::Variant = key::Variant(0);
+const NONE: key::Variant = key::Variant(1);
 const STRING: key::Record = key::Record(0);
 
 fn m<T>(v: T) -> M<T> {
-    key::Module(0).m(v)
+    M(key::Module(0), v)
 }
 
 fn u8() -> Tr<Type> {
@@ -43,8 +44,8 @@ impl Lower {
     fn new() -> Self {
         lumina_util::test_logger();
 
-        fn map<K: EntityRef, T, const N: usize>(values: [T; N]) -> Map<K, T> {
-            values.into_iter().collect()
+        fn map<K: MapKey, T, const N: usize>(values: [T; N]) -> Map<K, T> {
+            Map::from(values)
         }
 
         let variants = map([map([
@@ -55,11 +56,11 @@ impl Lower {
         ])]);
         let records = map([]);
 
-        let mut ftypes = ModMap::new();
+        let mut ftypes = MMap::new();
         ftypes.add_module(0);
         ftypes[key::Module(0)] = records;
 
-        let mut vtypes = ModMap::new();
+        let mut vtypes = MMap::new();
         vtypes.add_module(0);
         vtypes[key::Module(0)] = variants;
 
@@ -67,17 +68,17 @@ impl Lower {
     }
 }
 
-fn name_of_var(sum: M<key::Sum>, var: key::SumVariant) -> String {
-    assert_eq!(sum.module, key::Module(0));
+fn name_of_var(M(module, sum): M<key::Sum>, var: key::Variant) -> String {
+    assert_eq!(module, key::Module(0));
 
-    match (sum.value, var) {
+    match (sum, var) {
         (MAYBE, NONE) => "None",
         (MAYBE, JUST) => "Just",
         _ => panic!("unknown sum variant: {sum}:{var}"),
     }
     .to_string()
 }
-fn name_of_field(record: M<key::Record>, field: key::RecordField) -> String {
+fn name_of_field(record: M<key::Record>, field: key::Field) -> String {
     match (record, field) {
         _ => panic!("unknown record field: {record}.{field}"),
     }
@@ -90,7 +91,7 @@ impl<'a, 's> Merge<'s, Tail> for Lower {
         self.tail
     }
 
-    fn name_of_field(&self, _: M<key::Record>, _: key::RecordField) -> &'s str {
+    fn name_of_field(&self, _: M<key::Record>, _: key::Field) -> &'s str {
         todo!();
     }
 
@@ -164,15 +165,15 @@ fn none<'s>() -> Tr<hir::Pattern<'s>> {
 }
 
 fn cons<'s>(x: Tr<hir::Pattern<'s>>, xs: Tr<hir::Pattern<'s>>) -> Tr<hir::Pattern<'s>> {
-    hir::Pattern::Cons(Box::new([x, xs]), lumina_typesystem::Var(0)).tr(Span::null())
+    hir::Pattern::Cons(Box::new([x, xs]), lumina_typesystem::Var::from(0)).tr(Span::null())
 }
 fn nil<'s>() -> Tr<hir::Pattern<'s>> {
-    hir::Pattern::Nil(lumina_typesystem::Var(0)).tr(Span::null())
+    hir::Pattern::Nil(lumina_typesystem::Var::from(0)).tr(Span::null())
 }
 
 fn var<'s, const N: usize>(
     key: key::Sum,
-    var: key::SumVariant,
+    var: key::Variant,
     params: [Tr<hir::Pattern<'s>>; N],
 ) -> Tr<hir::Pattern<'s>> {
     hir::Pattern::Constructor(m(key), var, params.to_vec()).tr(Span::null())
@@ -205,7 +206,7 @@ fn r<'s>(range: std::ops::Range<u8>) -> Tr<hir::Pattern<'s>> {
         Bound::Pos(range.end as u128)
     };
 
-    hir::Pattern::Int([start, end], lumina_typesystem::Var(0)).tr(Span::null())
+    hir::Pattern::Int([start, end], lumina_typesystem::Var::from(0)).tr(Span::null())
 }
 
 fn maybe(ty: Tr<Type>) -> Tr<Type> {

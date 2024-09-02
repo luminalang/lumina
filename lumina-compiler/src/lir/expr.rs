@@ -54,11 +54,8 @@ impl<'a> FuncLower<'a> {
                 Callable::Local(value) => value,
             },
             mir::Expr::ValToRef(val) => match &**val {
-                mir::Expr::Call(
-                    mir::Callable::Func(M { value: ast::NFunc::Val(key), module }, _),
-                    _,
-                ) => {
-                    let key = module.m(*key);
+                mir::Expr::Call(mir::Callable::Func(M(module, ast::NFunc::Val(key)), _), _) => {
+                    let key = key.inside(*module);
                     let ty = self.lir.vals[key].clone();
                     self.ssa().val_to_ref(key, ty)
                 }
@@ -86,7 +83,7 @@ impl<'a> FuncLower<'a> {
                     .collect::<Vec<Value>>();
 
                 let sorted = (0..fields.len() as u32)
-                    .map(key::RecordField)
+                    .map(key::Field)
                     .map(|field| values[fields.iter().position(|(f, _)| *f == field).unwrap()])
                     .collect();
 

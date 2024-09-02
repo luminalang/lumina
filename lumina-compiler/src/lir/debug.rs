@@ -7,7 +7,7 @@ use ssa::Entry;
 pub struct Debugger<'a> {
     lir: &'a LIR,
     mir: &'a mir::MIR,
-    #[new(value = "MonoFunc::from_u32(0)")]
+    #[new(value = "MonoFunc::from(0)")]
     mfunc: MonoFunc,
 }
 

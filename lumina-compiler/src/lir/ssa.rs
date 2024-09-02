@@ -5,7 +5,8 @@ use super::{
 use crate::{MAYBE_JUST, MAYBE_NONE};
 use derive_more::From;
 use itertools::Itertools;
-use key::{entity_impl, keys, Map, M};
+use key::{Map, M};
+use lumina_collections::map_key_impl;
 use lumina_key as key;
 use lumina_typesystem::IntSize;
 use lumina_util::{Highlighting, ParamFmt};
@@ -13,10 +14,13 @@ use owo_colors::OwoColorize;
 use std::fmt;
 use tracing::{info, trace};
 
-keys! {
-    Block . "block",
-    V . "v"
-}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Block(pub u32);
+map_key_impl!(Block(u32), "block");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct V(pub u32);
+map_key_impl!(V(u32), "v");
 
 impl std::ops::Add for V {
     type Output = Self;
@@ -316,13 +320,7 @@ impl Blocks {
         self.assign(entry, ty)
     }
 
-    pub fn field(
-        &mut self,
-        of: Value,
-        key: MonoTypeKey,
-        field: key::RecordField,
-        ty: MonoType,
-    ) -> Value {
+    pub fn field(&mut self, of: Value, key: MonoTypeKey, field: key::Field, ty: MonoType) -> Value {
         let entry = Entry::Field { of, key, field };
         self.assign(entry, ty)
     }
@@ -509,7 +507,7 @@ pub enum Entry {
     Field {
         of: Value,
         key: MonoTypeKey,
-        field: key::RecordField,
+        field: key::Field,
     },
     SumField {
         of: Value,

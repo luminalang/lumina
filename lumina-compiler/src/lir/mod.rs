@@ -7,7 +7,7 @@
 use crate::prelude::*;
 use crate::{ProjectInfo, Target};
 use either::Either;
-use key::{entity_impl, keys};
+use lumina_collections::map_key_impl;
 use lumina_typesystem::{Generic, GenericKind, GenericMapper, ImplIndex, IntSize, Static, Type};
 use lumina_util::Highlighting;
 use std::fmt;
@@ -44,19 +44,21 @@ mod dyn_dispatch;
 mod expr;
 mod pat;
 
-keys! { MonoFunc . "mfunc" }
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MonoFunc(u32);
+map_key_impl!(MonoFunc(u32), "mfunc");
 
 pub struct Output {
     pub functions: Map<MonoFunc, Function>,
     pub extern_funcs: HashMap<M<key::Func>, ExternFunction>,
     pub val_initializers: HashMap<M<key::Val>, MonoFunc>,
-    pub val_types: ModMap<key::Val, MonoType>,
+    pub val_types: MMap<key::Val, MonoType>,
 
-    pub read_only_table: ModMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
+    pub read_only_table: MMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
 
     pub types: Records,
 
-    pub func_names: ModMap<key::Func, String>,
+    pub func_names: MMap<key::Func, String>,
     pub module_names: Map<key::Module, String>,
 
     pub main: MonoFunc,
@@ -80,11 +82,11 @@ struct LIR {
     #[new(default)]
     memo_closures: HashMap<(MonoFunc, Vec<MonoType>), MonoFunc>,
 
-    read_only_table: ModMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
+    read_only_table: MMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
 
     target: Target,
 
-    vals: ModMap<key::Val, MonoType>,
+    vals: MMap<key::Val, MonoType>,
     #[new(default)]
     val_initialisers: HashMap<M<key::Val>, MonoFunc>,
 
@@ -168,7 +170,7 @@ struct MonoTyping {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum FuncOrigin {
-    SumConstructorWrapper(M<key::Sum>, key::SumVariant),
+    SumConstructorWrapper(M<key::Sum>, key::Variant),
     Defined(M<key::Func>),
     Method(M<key::Impl>, key::Method),
     Lambda(Box<FuncOrigin>, key::Lambda),
@@ -180,7 +182,7 @@ impl FuncOrigin {
             FuncOrigin::SumConstructorWrapper(sum, var) => mir.variant_names[*sum][*var].clone(),
             FuncOrigin::Defined(key) => mir.func_names[*key].clone(),
             FuncOrigin::Method(impl_, method) => {
-                mir.func_names[impl_.module.m(mir.imethods[*impl_][*method]).unwrap()].clone()
+                mir.func_names[mir.imethods[*impl_][*method].unwrap().inside(impl_.0)].clone()
             }
             FuncOrigin::Lambda(parent, lkey) => format!("{}:{lkey}", parent.name(mir)),
         }
@@ -194,7 +196,7 @@ enum Callable {
     Val(M<key::Val>),
     Sum {
         tmap: TypeMap,
-        var: key::SumVariant,
+        var: key::Variant,
         payload_size: u32,
         ty: MonoTypeKey,
     },
@@ -253,7 +255,7 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
 
     let returns = monomorphization.apply(&mainfunc.typing.returns);
 
-    let vals = mir.val_initializers.map(|(_, func)| {
+    let vals = mir.val_initializers.map(|_, func| {
         let typing = &mir.funcs[*func].as_done().typing;
         assert!(
             typing.params.is_empty(),
@@ -268,7 +270,7 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
 
     // Move ReadOnly from MIR to LIR so that we can define more of them
     // without borrowing the rest of MIR mutably. This isn't a great workaround.
-    let mut read_only_table = mir.read_only_table.secondary_inner_capacity();
+    let mut read_only_table = mir.read_only_table.secondary();
     for module in mir.read_only_table.modules() {
         let this = &mut mir.read_only_table[module];
         for (key, (bytes, ty)) in std::mem::take(this).into_iter() {
@@ -468,9 +470,9 @@ impl LIR {
 impl FuncOrigin {
     fn module(&self) -> key::Module {
         match self {
-            FuncOrigin::SumConstructorWrapper(sum, _) => sum.module,
-            FuncOrigin::Defined(key) => key.module,
-            FuncOrigin::Method(key, _) => key.module,
+            FuncOrigin::Method(M(module, _), _)
+            | FuncOrigin::SumConstructorWrapper(M(module, _), _)
+            | FuncOrigin::Defined(M(module, _)) => *module,
             FuncOrigin::Lambda(orig, _) => orig.module(),
         }
     }
@@ -576,13 +578,13 @@ impl<'a> FuncLower<'a> {
         &mut self,
         ty: MonoTypeKey,
         mut tmap: TypeMap,
-        var: key::SumVariant,
+        var: key::Variant,
     ) -> MonoFunc {
         let data = &self.lir.mono.types[ty];
-        let Some(M { value: key::TypeKind::Sum(key), module }) = data.original else {
+        let Some(M(module, key::TypeKind::Sum(key))) = data.original else {
             panic!();
         };
-        let sum = module.m(key);
+        let sum = key.inside(module);
 
         let origin = FuncOrigin::SumConstructorWrapper(sum, var);
 
@@ -714,7 +716,7 @@ impl<'a> FuncLower<'a> {
 
         let splitted = self.ssa().call(split_at, vec![str, at], str_tuple.into());
 
-        [key::RecordField(0), key::RecordField(1)]
+        [key::Field(0), key::Field(1)]
             .map(|f| self.ssa().field(splitted, str_tuple, f, string.into()))
     }
 
@@ -728,7 +730,7 @@ impl<'a> FuncLower<'a> {
             .ssa()
             .call(stringable.split_while, vec![str, f], str_tuple.into());
 
-        [key::RecordField(0), key::RecordField(1)]
+        [key::Field(0), key::Field(1)]
             .map(|f| self.ssa().field(splitted, str_tuple, f, string.into()))
     }
 
@@ -744,7 +746,7 @@ impl<'a> FuncLower<'a> {
             .ssa()
             .call(stringable.split_first, vec![str], tuple.into());
 
-        let [x, xs] = [key::RecordField(0), key::RecordField(1)];
+        let [x, xs] = [key::Field(0), key::Field(1)];
 
         [
             self.ssa().field(splitted, tuple, x, MonoType::byte()),
@@ -843,7 +845,7 @@ impl<'a> FuncLower<'a> {
             FuncOrigin::Method(imp, m) => {
                 let origin = FuncOrigin::Lambda(Box::new(origin.clone()), lambda);
                 let fkey = self.mir.imethods[*imp][*m].unwrap();
-                let func = self.mir.funcs[imp.module.m(*fkey)].as_done();
+                let func = self.mir.funcs[fkey.inside(imp.0)].as_done();
                 let captures = &func.lcaptures[lambda];
                 (origin, captures)
             }
@@ -854,9 +856,9 @@ impl<'a> FuncLower<'a> {
 
     fn lower_callable(&mut self, callable: &mir::Callable) -> Callable {
         match callable {
-            mir::Callable::Func(nfunc, mapper) => match nfunc.value {
+            mir::Callable::Func(M(module, key), mapper) => match key {
                 ast::NFunc::Key(key) => {
-                    let key = nfunc.module.m(key);
+                    let key = key.inside(*module);
                     match &self.mir.funcs[key] {
                         mir::FunctionStatus::Extern { .. } => Callable::Extern(key),
                         _ => {
@@ -867,12 +869,9 @@ impl<'a> FuncLower<'a> {
                         }
                     }
                 }
-                ast::NFunc::Val(val) => {
-                    let key = nfunc.module.m(val);
-                    Callable::Val(key)
-                }
+                ast::NFunc::Val(val) => Callable::Val(val.inside(*module)),
                 ast::NFunc::Method(key, method) => {
-                    let trait_ = nfunc.module.m(key);
+                    let trait_ = key.inside(*module);
 
                     let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
 
@@ -889,14 +888,14 @@ impl<'a> FuncLower<'a> {
                     let (ikey, itmap) =
                         self.find_implementation(trait_, &trtp, weak_impltor, impltor);
 
-                    let forigin = FuncOrigin::Method(ikey, method);
+                    let forigin = FuncOrigin::Method(ikey, *method);
 
                     let mfunc = self.call_to_mfunc(forigin, itmap);
 
                     Callable::Static(mfunc)
                 }
-                ast::NFunc::SumVar(sum, var) => {
-                    let sum = nfunc.map(|_| sum);
+                &ast::NFunc::SumVar(sum, var) => {
+                    let sum = sum.inside(*module);
 
                     let mut tmap = self.morphise_inst(mapper);
                     let type_params = tmap.weak.to_types(GenericKind::Entity);

@@ -1,150 +1,84 @@
-pub use cranelift_entity::{entity_impl, EntityRef, PrimaryMap as Map};
-use std::fmt;
-use std::ops::{Deref, DerefMut};
+use lumina_collections::{kind_key, map_key_impl};
+pub use lumina_collections::{MMap, Map};
+pub use lumina_collections::{Module, M};
 
-mod extra;
-mod modmap;
-pub use extra::{IterMapCollect, LinearFind, MapExt};
-pub use modmap::ModMap;
-
-pub const VTABLE_DATA: u32 = 0;
-pub const VTABLE_TABLE: u32 = 1;
-
-#[macro_export]
-macro_rules! keys {
-    ($($name:ident . $fmt:literal),*) => {
-        $(#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        pub struct $name(pub u32);
-        entity_impl!($name, $fmt);
-        )*
-    };
-    ($($name:ident |$this:ident, $f:ident| $do:expr),*) => {
-        $(#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        pub struct $name(pub u32);
-        entity_impl!($name);
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                (|$this: &$name, $f: &mut fmt::Formatter| $do)(self, f)
-            }
-        }
-
-        impl fmt::Debug for $name {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                write!(f, "{self}")
-            }
-        }
-        )*
-    };
+kind_key! {
+    pub enum TypeKind {
+        Record(Record),
+        Sum(Sum),
+        Trait(Trait),
+    }
 }
 
-#[macro_export]
-macro_rules! key_wrapper {
-    ($name:ident, [$($child:ident),*]) => {
-        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-        pub enum $name {
-            $($child(crate::$child)),*
-        }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Record(pub u32);
+map_key_impl!(Record(u32), "record");
 
-        $(
-            impl From<crate::$child> for $name {
-                fn from(key: crate::$child) -> $name {
-                    Self::$child(key)
-                }
-            }
-        )*
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Sum(pub u32);
+map_key_impl!(Sum(u32), "sum");
 
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                match self {
-                    $(
-                    Self::$child(a) => a.fmt(f)
-                     ),*
-                }
-            }
-        }
-    };
-}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AssociatedType(pub u32);
+map_key_impl!(AssociatedType(u32), "assoc");
 
-key_wrapper!(TypeKind, [Record, Sum, Trait]);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Func(u32);
+map_key_impl!(Func(u32), "func");
 
-keys! {
-    Record . "record",
-    Sum . "sum",
-    AssociatedType . "assoc",
-    Func . "func",
-    Impl . "impl",
-    Param . "param",
-    SumVariant . "variant",
-    Static . "val",
-    RecordField . "field",
-    ReadOnly . "ro",
-    Val . "val",
-    Bind . "v",
-    Capture . "c",
-    DecisionTreeTail . "tail",
-    Method . "method"
-}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Impl(u32);
+map_key_impl!(Impl(u32), "impl");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Param(pub u32);
+map_key_impl!(Param(u32), "param");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Val(u32);
+map_key_impl!(Val(u32), "val");
+
+/// A Sum variant
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Variant(pub u32);
+map_key_impl!(Variant(u32), "variant");
+
+/// A Record field
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Field(pub u32);
+map_key_impl!(Field(u32), "val");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ReadOnly(u32);
+map_key_impl!(ReadOnly(u32), "ro");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Bind(pub u32);
+map_key_impl!(Bind(u32), "b");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Capture(u32);
+map_key_impl!(Capture(u32), "c");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DecisionTreeTail(pub u32);
+map_key_impl!(DecisionTreeTail(u32), "tail");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Method(pub u32);
+map_key_impl!(Method(u32), "method");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Trait(u32);
+map_key_impl!(Trait(u32), "trait");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Generic(pub u32);
+map_key_impl!(Generic(u32), |this, f| ((this.0 as u8 + b'a') as char)
+    .fmt(f));
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Lambda(pub u32);
+map_key_impl!(Lambda(u32), |this, f| write!(f, "λ·{}", this.0));
 
 pub const PRELUDE: Module = Module(0);
-
-pub const CLOSURE: Trait = Trait(0);
-// pub const SIZED: Trait = Trait(1);
-// pub const ALLOCATOR: Trait = Trait(2);
-
-pub const ALLOC: Method = Method(0);
-pub const DEALLOC: Method = Method(1);
-
-pub const LAYOUT: Record = Record(0);
-pub const STRING: Record = Record(1);
-
-// const NUM: Trait = Trait(2);
-
-keys! {
-    Generic |this, f| ((this.0 as u8 + b'a') as char).fmt(f),
-    Lambda |this, f| write!(f, "λ·{}", this.0),
-    Module |this, f| write!(f, "▵·{}", this.0),
-    Project |this, f| write!(f, "▵·{}", this.0),
-    Trait |this, f| match *this {
-        _ => write!(f, "trait{}", this.0),
-    }
-}
-
-/// A module key attached to a value
-#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
-pub struct M<T> {
-    pub value: T,
-    pub module: Module,
-}
-
-impl Module {
-    pub fn m<T>(self, value: T) -> M<T> {
-        M { value, module: self }
-    }
-}
-
-impl<T> M<T> {
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> M<U> {
-        M { value: f(self.value), module: self.module }
-    }
-}
-
-impl<T> Deref for M<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-impl<T> DerefMut for M<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.value
-    }
-}
-
-impl<T: fmt::Display> fmt::Display for M<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.module, self.value)
-    }
-}

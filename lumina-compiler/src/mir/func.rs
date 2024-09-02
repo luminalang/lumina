@@ -65,10 +65,10 @@ impl<'a, 's> Verify<'a, 's> {
         target: Target,
         hir: &'a HIR<'s>,
         fields: &'a Map<key::Module, HashMap<&'s str, Vec<M<key::Record>>>>,
-        tenvs: &mut ModMap<key::Func, TEnv<'s>>,
+        tenvs: &mut MMap<key::Func, TEnv<'s>>,
         iquery: &ImplIndex,
-        funcs: &'a mut ModMap<key::Func, FunctionStatus>,
-        rotable: &'a mut ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
+        funcs: &'a mut MMap<key::Func, FunctionStatus>,
+        rotable: &'a mut MMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
         func: M<key::Func>,
     ) {
         match &funcs[func] {
@@ -184,14 +184,14 @@ impl<'a, 's> Verify<'a, 's> {
     }
 
     fn lower_func(&mut self) -> lower::Function {
-        let module = self.hir.sources.name_of_module(self.current.fkey.module);
+        let module = self.hir.sources.name_of_module(self.current.fkey.0);
         let entity = *self.hir.func_names[self.current.fkey];
 
         let _span = info_span!("lowering function", module, entity);
         info!("typing is: {}", &self.fdef.typing);
         let _handle = _span.enter();
 
-        let module = self.current.fkey.module;
+        let module = self.current.fkey.0;
 
         trace!("type checking parameters");
         self.type_check_pat_params(&self.fdef.typing.params, &self.fdef.params);
@@ -344,7 +344,7 @@ impl<'a, 's> Verify<'a, 's> {
         let env = &mut self.tenvs[self.current.fkey];
         for conerr in self
             .hir
-            .type_system(env, self.target, &self.field_lookup[fkey.module])
+            .type_system(env, self.target, &self.field_lookup[fkey.0])
             .check_all_constraints(self.iquery, in_trait, lhs_forall, get_impl_data)
         {
             match conerr {
@@ -422,10 +422,10 @@ impl<'a, 's> Verify<'a, 's> {
     // or perhaps buffer them on a per-function basis to then attach context on the callback for
     // less verbosity?
     pub fn error(&self, name: &'static str) -> ast::ErrorBuilder<'a> {
-        self.hir.sources.error(name).m(self.current.fkey.module)
+        self.hir.sources.error(name).m(self.current.fkey.0)
     }
     pub fn warning(&self, name: &'static str) -> ast::ErrorBuilder<'a> {
-        self.hir.sources.warning(name).m(self.current.fkey.module)
+        self.hir.sources.warning(name).m(self.current.fkey.0)
     }
 
     pub fn ty_formatter(&'a self) -> TyFmtState<'a, 's> {
@@ -435,7 +435,7 @@ impl<'a, 's> Verify<'a, 's> {
     }
 
     pub fn module(&self) -> key::Module {
-        self.current.fkey.module
+        self.current.fkey.0
     }
 
     pub fn lambda(&self) -> Option<key::Lambda> {
@@ -475,26 +475,26 @@ impl<'a, 's> Verify<'a, 's> {
             self.hir
                 .sources
                 .error("inference failure")
-                .m(key.module)
+                .m(key.0)
                 .eline(fspan, "")
-                .m(self.current.fkey.module)
+                .m(self.current.fkey.0)
                 .iline(span, "caused by this recursive call")
                 .emit();
         }
 
-        InstInfo::new(key.module, inst, ptypes, returns.clone())
+        InstInfo::new(key.0, inst, ptypes, returns.clone())
     }
 
     pub fn type_system(&mut self) -> TypeSystem<'_, 's> {
         let env = &mut self.tenvs[self.current.fkey];
-        let fields = &self.field_lookup[self.current.fkey.module];
+        let fields = &self.field_lookup[self.current.fkey.0];
         self.hir.type_system(env, self.target, fields)
     }
 
     pub fn module_of_type(&mut self, ty: Tr<&IType>) -> Option<key::Module> {
         match &ty.value {
             IType::Simple(_) => None,
-            IType::Container(Container::Defined(key, _), _) => Some(key.module),
+            IType::Container(Container::Defined(key, _), _) => Some(key.0),
             IType::Special(var) => self
                 .type_system()
                 .try_get_known_type(*var)
@@ -509,7 +509,7 @@ impl<'a, 's> Verify<'a, 's> {
         &mut self,
         span: Span,
         sum: M<key::Sum>,
-        var: key::SumVariant,
+        var: key::Variant,
     ) -> (GenericMapper<Inference>, Vec<Tr<IType>>, Tr<IType>) {
         let forall = &self.hir.sums[sum].1;
         let vars = self.vars();
@@ -627,8 +627,8 @@ impl<'a, 's> Verify<'a, 's> {
                         ast::Entity::Func(nfunc) => {
                             self.current
                                 .type_dependent_lookup
-                                .push_back(entity.module.m(nfunc));
-                            self.type_of_nfunc(span, entity.module.m(nfunc), tanot)
+                                .push_back(M(entity.module, nfunc));
+                            self.type_of_nfunc(span, M(entity.module, nfunc), tanot)
                         }
                         ast::Entity::Member(_, _) => todo!(),
                         ast::Entity::Module(_) => todo!(),
@@ -712,7 +712,7 @@ impl<'a, 's> Verify<'a, 's> {
                 }
             },
             hir::Callable::Func(mnfunc) => {
-                self.type_of_nfunc(span, mnfunc.module.m(mnfunc.key), tanot)
+                self.type_of_nfunc(span, M(mnfunc.module, mnfunc.key), tanot)
             }
             hir::Callable::Binding(bind) => {
                 let ty = self.current.binds[bind].clone();
@@ -747,23 +747,23 @@ impl<'a, 's> Verify<'a, 's> {
     pub fn type_of_nfunc(
         &mut self,
         span: Span,
-        M { module, value }: M<NFunc>,
+        M(module, key): M<NFunc>,
         tanot: &hir::TypeAnnotation<'s>,
     ) -> InstCall {
-        let (mut finst, ptypes, returns) = match value {
-            ast::NFunc::Key(func) => return self.type_of_func(span, module.m(func), tanot),
+        let (mut finst, ptypes, returns) = match key {
+            ast::NFunc::Key(func) => return self.type_of_func(span, func.inside(module), tanot),
             ast::NFunc::Method(trait_, method) => {
-                let func = self.hir.methods[module.m(trait_)][method];
-                return self.type_of_func(span, module.m(func), tanot);
+                let func = self.hir.methods[trait_.inside(module)][method];
+                return self.type_of_func(span, func.inside(module), tanot);
             }
             ast::NFunc::Val(val) => {
-                let func = self.hir.val_initializers[module.m(val)];
+                let func = self.hir.val_initializers[val.inside(module)];
                 return self.type_of_func(span, func, tanot);
             }
-            ast::NFunc::SumVar(sum, var) => self.type_of_variant(span, module.m(sum), var),
+            ast::NFunc::SumVar(sum, var) => self.type_of_variant(span, sum.inside(module), var),
         };
 
-        self.apply_tanot(tanot, &mut finst, Either::Left(module.m(value)));
+        self.apply_tanot(tanot, &mut finst, Either::Left(M(module, key)));
         let linfo = InstInfo::new(module, finst, ptypes, returns);
 
         InstCall::Instantiated(linfo)
@@ -797,7 +797,7 @@ impl<'a, 's> Verify<'a, 's> {
                 self.vars()
                     .add_trait_constraint(self_var, Constraint { span, trait_: *trait_, params });
 
-                let linfo = InstInfo::new(func.module, finst, ptypes, returns);
+                let linfo = InstInfo::new(func.0, finst, ptypes, returns);
 
                 InstCall::Instantiated(linfo)
             }
@@ -895,7 +895,7 @@ impl<'a, 's> Verify<'a, 's> {
                     let returns = (&finst).transform_spanned(ret);
 
                     self.apply_tanot(tanot, &finst, Either::Left(func.map(NFunc::Key)));
-                    let linfo = InstInfo::new(func.module, finst, ptypes, returns);
+                    let linfo = InstInfo::new(func.0, finst, ptypes, returns);
 
                     InstCall::Instantiated(linfo)
                 }
@@ -914,14 +914,14 @@ impl<'a, 's> Verify<'a, 's> {
         use Either::*;
 
         let ty_lookup = match func {
-            Left(nfunc) => match nfunc.value {
+            Left(M(module, nfunc)) => match nfunc {
                 NFunc::Val(_) => None,
-                NFunc::Key(func) => match &self.hir.funcs[nfunc.module.m(func)] {
+                NFunc::Key(func) => match &self.hir.funcs[func.inside(module)] {
                     hir::FuncDefKind::TraitHeader(key, _, _) => Some(&self.hir.traits[*key].1),
                     _ => None,
                 },
-                NFunc::Method(tkey, _) => Some(&self.hir.traits[nfunc.module.m(tkey)].1),
-                NFunc::SumVar(tkey, _) => Some(&self.hir.sums[nfunc.module.m(tkey)].1),
+                NFunc::Method(tkey, _) => Some(&self.hir.traits[tkey.inside(module)].1),
+                NFunc::SumVar(tkey, _) => Some(&self.hir.sums[tkey.inside(module)].1),
             },
             Right(_) => None,
         };
@@ -965,7 +965,7 @@ impl<'a, 's> Verify<'a, 's> {
         }
 
         match func {
-            Left(M { value: NFunc::SumVar(..) | NFunc::Val(_), .. }) | Right(_)
+            Left(M(_, NFunc::SumVar(..) | NFunc::Val(_))) | Right(_)
                 if !tanot.for_entity.is_empty() =>
             {
                 panic!("ET: can not annotate")
@@ -975,8 +975,8 @@ impl<'a, 's> Verify<'a, 's> {
 
         for (name, ty) in tanot.for_entity.iter() {
             let generic = match func {
-                Left(M { module, value }) => match value {
-                    NFunc::Key(func) => match &self.hir.funcs[module.m(func)] {
+                Left(M(module, nfunc)) => match nfunc {
+                    NFunc::Key(func) => match &self.hir.funcs[func.inside(module)] {
                         hir::FuncDefKind::ImplMethod(_, fdef) | hir::FuncDefKind::Defined(fdef) => {
                             fdef.forall.borrow().find(**name)
                         }
@@ -988,8 +988,11 @@ impl<'a, 's> Verify<'a, 's> {
                         }
                     },
                     NFunc::Method(trait_, method) => {
-                        let func = self.hir.methods[module.m(trait_)][method];
-                        let forall = &self.hir.funcs[module.m(func)].as_defined().forall.borrow();
+                        let func = self.hir.methods[trait_.inside(module)][method];
+                        let forall = &self.hir.funcs[func.inside(module)]
+                            .as_defined()
+                            .forall
+                            .borrow();
                         forall.find(**name)
                     }
                     NFunc::SumVar(_, _) => todo!(),

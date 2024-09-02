@@ -72,7 +72,12 @@ impl<'s> Lookups<'s> {
                 namespace
                     .accessors
                     .iter()
-                    .map(|(name, pos)| (*name, pos.iter().map(|r| r.module.m(r.key.0)).collect()))
+                    .map(|(name, pos)| {
+                        (
+                            *name,
+                            pos.iter().map(|r| r.key.0.inside(r.module)).collect(),
+                        )
+                    })
                     .collect()
             })
             .collect()
@@ -128,7 +133,7 @@ impl<'s> Lookups<'s> {
         visibility: Visibility,
         name: &'s str,
         type_: key::Record,
-        field: key::RecordField,
+        field: key::Field,
     ) {
         let m = Mod { visibility, module, key: (type_, field) };
         self.modules[module]
@@ -324,7 +329,7 @@ impl<'s> Lookups<'s> {
         &self,
         module: key::Module,
         name: &'s str,
-    ) -> &[Mod<(key::Record, key::RecordField)>] {
+    ) -> &[Mod<(key::Record, key::Field)>] {
         self.modules[module]
             .accessors
             .get(name)
@@ -447,7 +452,7 @@ pub struct Namespaces<'s> {
 
     kind: ModuleKind,
 
-    accessors: HashMap<&'s str, Vec<Mod<(key::Record, key::RecordField)>>>,
+    accessors: HashMap<&'s str, Vec<Mod<(key::Record, key::Field)>>>,
 }
 
 #[derive(Debug)]
@@ -506,7 +511,7 @@ impl<'s> Namespaces<'s> {
 pub enum NFunc {
     Key(key::Func),
     Method(key::Trait, key::Method),
-    SumVar(key::Sum, key::SumVariant),
+    SumVar(key::Sum, key::Variant),
     Val(key::Val),
 }
 

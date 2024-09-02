@@ -213,7 +213,7 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                         match &extractor.call {
                             hir::Callable::Func(nfunc) => {
                                 let (mapping, calltypes) = self.merge.fin_popped_inst(span)?;
-                                let call = Callable::Func(nfunc.module.m(nfunc.key), mapping);
+                                let call = Callable::Func(M(nfunc.module, nfunc.key), mapping);
                                 self.extractor_by_typing(call, calltypes, params)
                             }
                             hir::Callable::Lambda(lambda) => {
@@ -312,7 +312,7 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
         fields: &'h [(Tr<&'s str>, key::Bind, Tr<hir::Pattern<'s>>)],
     ) -> IsReachable {
         for i in (0..rfields as u32).rev() {
-            let field = key::RecordField(i);
+            let field = key::Field(i);
             let name = self.merge.name_of_field(record, field);
 
             static POISON: Tr<hir::Pattern<'static>> = Tr::new(Span::null(), hir::Pattern::Poison);
@@ -522,7 +522,7 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
     // fn record_from_rvar(&mut self, rvar: RecordVar) -> Option<(M<key::Record>, Vec<Type>)>;
     fn to_init(&self) -> Init<'_>;
 
-    fn name_of_field(&self, record: Mod<key::Record>, field: key::RecordField) -> &'s str;
+    fn name_of_field(&self, record: Mod<key::Record>, field: key::Field) -> &'s str;
 
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly>;
 

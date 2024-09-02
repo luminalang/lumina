@@ -33,11 +33,10 @@ impl<'a, 's> TypeSystem<'a, 's> {
 
         if !compatible {
             for var in u.assignments {
-                self.env[var].assignment = None;
+                self.env.vars[var].assignment = None;
             }
 
-            self.env.vars.truncate(u.len_before_unifcation);
-            self.env.vars.len();
+            self.env.vars.truncate(Var::from(u.len_before_unifcation));
         }
 
         compatible
@@ -96,11 +95,11 @@ impl<'a, 's> TypeSystem<'a, 's> {
                 return self.unify_into_var(u, flip, var, &fty);
             }
 
-            if let Some(assigned) = self.env[var].assignment.as_ref().cloned() {
+            if let Some(assigned) = self.env.vars[var].assignment.as_ref().cloned() {
                 return self.unify_into_var(u, !flip, *ovar, &assigned);
             }
 
-            if let Some(assigned) = self.env[*ovar].assignment.as_ref().cloned() {
+            if let Some(assigned) = self.env.vars[*ovar].assignment.as_ref().cloned() {
                 return self.unify_into_var(u, flip, var, &assigned);
             }
 
@@ -108,17 +107,17 @@ impl<'a, 's> TypeSystem<'a, 's> {
             return true;
         }
 
-        if let Some(assigned) = self.env[var].assignment.as_ref().cloned() {
+        if let Some(assigned) = self.env.vars[var].assignment.as_ref().cloned() {
             return self.unifyf(u, flip, &assigned, ty);
         }
 
-        if !self.env[var].fields.is_empty() {
+        if !self.env.vars[var].fields.is_empty() {
             match ty {
                 Ty::Container(
-                    Container::Defined(M { value: key::TypeKind::Record(rkey), module }, _),
+                    Container::Defined(M(module, key::TypeKind::Record(rkey)), _),
                     params,
                 ) => {
-                    let record = module.m(*rkey);
+                    let record = rkey.inside(*module);
                     u.assignments.push(var);
                     self.assign_record_to_rvar(u.span, var, record, params.to_vec());
                     return true;
@@ -137,22 +136,22 @@ impl<'a, 's> TypeSystem<'a, 's> {
     /// This method will eagerly infer a default int from int constraints
     pub fn try_get_known_type(&mut self, var: Var) -> Option<Tr<IType>> {
         if let Some((_, field)) = self.try_get_field_if_is_field(var) {
-            let span = self.env[var].span;
+            let span = self.env.vars[var].span;
             return Some(field.tr(span));
         }
 
-        if let Some(ty) = self.env[var].assignment.clone() {
+        if let Some(ty) = self.env.vars[var].assignment.clone() {
             return Some(ty);
         }
 
-        if !self.env[var].fields.is_empty() {
+        if !self.env.vars[var].fields.is_empty() {
             if self.try_get_rvar(var).is_some() {
-                return self.env[var].assignment.clone();
+                return self.env.vars[var].assignment.clone();
             }
         }
 
-        if let Some(intcon) = self.env[var].int_constraint {
-            let span = self.env[var].span;
+        if let Some(intcon) = self.env.vars[var].int_constraint {
+            let span = self.env.vars[var].span;
             let size = intcon.to_default_type(self.default_int_size);
             let ty = Ty::Int(size).tr(span);
             self.env.assign(var, ty.clone());
@@ -178,7 +177,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
                     return self.call_as_function(span, &fty, params);
                 }
 
-                match self.env[*var].assignment.clone() {
+                match self.env.vars[*var].assignment.clone() {
                     Some(ty) => self.call_as_function(span, &ty, params),
                     None if params == 0 => None,
                     None => {
@@ -189,7 +188,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
 
                         let ret = Ty::Special(self.env.var(span));
 
-                        self.env[*var].assignment =
+                        self.env.vars[*var].assignment =
                             Some(Ty::closure(params.clone(), ret.clone()).tr(span));
 
                         Some((Container::Closure, params, ret))
@@ -230,10 +229,7 @@ impl<'e, 's> TypeSystem<'e, 's> {
         self.env
             .vars
             .iter()
-            .enumerate()
-            .flat_map(|(i, vdata)| {
-                let var = Var(i as u32);
-
+            .flat_map(|(var, vdata)| {
                 let mut errors = vec![];
 
                 // Finaliser should've already defaulted all pending inference
@@ -251,10 +247,10 @@ impl<'e, 's> TypeSystem<'e, 's> {
                 // Check record field constraints
                 match &ty {
                     Ty::Container(
-                        Container::Defined(M { value: key::TypeKind::Record(record), module }, _),
+                        Container::Defined(M(module, key::TypeKind::Record(record)), _),
                         params,
                     ) => {
-                        let key = module.m(*record);
+                        let key = record.inside(*module);
                         self.check_field_constraints(var, key, params, &mut errors);
                     }
                     Ty::Simple("poison") if !vdata.fields.is_empty() => {
@@ -331,9 +327,9 @@ impl<'e, 's> TypeSystem<'e, 's> {
         params: &[Type],
         errors: &mut Vec<ConstraintError>,
     ) {
-        for &(fname, fvar, mismatch) in &self.env[var].fields {
+        for &(fname, fvar, mismatch) in &self.env.vars[var].fields {
             if let Some(FieldMismatch) = mismatch {
-                let Tr { span, value } = self.env[fvar].assignment.as_ref().unwrap();
+                let Tr { span, value } = self.env.vars[fvar].assignment.as_ref().unwrap();
                 let exp = Upgrade(self.env).transform(value);
                 let got = self.inst_field(record, &params, *fname).unwrap();
                 errors.push(ConstraintError::FieldType { exp, got, at: *span });

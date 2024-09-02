@@ -110,7 +110,7 @@ impl<'a> FuncLower<'a> {
         };
 
         let construct = |this: &mut Self, ssa: &mut Blocks| {
-            use key::RecordField as field;
+            use key::Field as field;
 
             let ptr = ssa.transmute(V(0).value(), MonoType::pointer(capture_tuple.into()));
             let data = ssa.deref(ptr, capture_tuple.into());
@@ -237,7 +237,7 @@ impl<'a> FuncLower<'a> {
                     self.lir.push_function(symbol, ssa, vtable_type.into())
                 };
 
-                let val = self.lir.vals.push(trait_.module, vtable_type.into());
+                let val = self.lir.vals.push(trait_.0, vtable_type.into());
                 self.lir
                     .val_initialisers
                     .insert(val, vtable_val_initializer);

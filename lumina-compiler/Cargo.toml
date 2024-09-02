@@ -10,6 +10,7 @@ edition = "2021"
 lumina-util = { path = "../lumina-util" }
 lumina-parser = { path = "../lumina-parser" }
 lumina-typesystem = { path = "../lumina-typesystem" }
+lumina-collections = { path = "../lumina-collections" }
 target-lexicon = "*"
 lumina-key = { path = "../lumina-key" }
 derive-new = "0.6"
@@ -19,7 +20,7 @@ owo-colors = { version = "4.0.*", features = ["supports-colors"] }
 itertools = "0.10.*"
 smallvec = "1.10.*"
 take_mut = "*"
-derive_more = "*"
+derive_more = { version = "1.0.*", features = ["from", "display", "index", "index_mut", "deref", "deref_mut"] }
 insta = "*"
 tracing = "0.1.40"
 cranelift = "*"

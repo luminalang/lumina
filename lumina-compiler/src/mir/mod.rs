@@ -32,41 +32,41 @@ pub type Branching<K> = pat::Branching<K, key::DecisionTreeTail>;
 type SelfPositions = Map<key::Method, key::Param>;
 
 pub struct MIR {
-    pub funcs: ModMap<key::Func, FunctionStatus>,
-    pub read_only_table: ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
+    pub funcs: MMap<key::Func, FunctionStatus>,
+    pub read_only_table: MMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
 
     // Certain parts of the HIR will be kept for the next pass
-    pub methods: ModMap<key::Trait, Map<key::Method, key::Func>>,
-    pub imethods: ModMap<key::Impl, Map<key::Method, Option<M<key::Func>>>>,
-    pub field_types: ModMap<key::Record, Map<key::RecordField, Tr<Type>>>,
-    pub variant_types: ModMap<key::Sum, Map<key::SumVariant, Vec<Tr<Type>>>>,
-    pub impls: ModMap<key::Impl, Forall<'static, Static>>,
-    pub impltors: ModMap<key::Impl, Tr<Type>>,
-    pub itraits: ModMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
-    pub val_initializers: ModMap<key::Val, M<key::Func>>,
-    pub trait_objects: ModMap<key::Trait, Option<SelfPositions>>,
+    pub methods: MMap<key::Trait, Map<key::Method, key::Func>>,
+    pub imethods: MMap<key::Impl, Map<key::Method, Option<M<key::Func>>>>,
+    pub field_types: MMap<key::Record, Map<key::Field, Tr<Type>>>,
+    pub variant_types: MMap<key::Sum, Map<key::Variant, Vec<Tr<Type>>>>,
+    pub impls: MMap<key::Impl, Forall<'static, Static>>,
+    pub impltors: MMap<key::Impl, Tr<Type>>,
+    pub itraits: MMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
+    pub val_initializers: MMap<key::Val, M<key::Func>>,
+    pub trait_objects: MMap<key::Trait, Option<SelfPositions>>,
 
     pub module_names: Map<key::Module, String>,
-    pub func_names: ModMap<key::Func, String>,
-    pub record_names: ModMap<key::Record, String>,
-    pub sum_names: ModMap<key::Sum, String>,
-    pub trait_names: ModMap<key::Trait, String>,
-    pub field_names: ModMap<key::Record, Map<key::RecordField, String>>,
-    pub variant_names: ModMap<key::Sum, Map<key::SumVariant, String>>,
+    pub func_names: MMap<key::Func, String>,
+    pub record_names: MMap<key::Record, String>,
+    pub sum_names: MMap<key::Sum, String>,
+    pub trait_names: MMap<key::Trait, String>,
+    pub field_names: MMap<key::Record, Map<key::Field, String>>,
+    pub variant_names: MMap<key::Sum, Map<key::Variant, String>>,
 }
 
 impl MIR {
     pub fn name_of_type<K: Into<key::TypeKind> + Copy>(&self, key: M<K>) -> &str {
-        match key.map(K::into).value {
-            key::TypeKind::Sum(k) => &self.sum_names[key.module.m(k)],
-            key::TypeKind::Record(k) => &self.record_names[key.module.m(k)],
-            key::TypeKind::Trait(k) => &self.trait_names[key.module.m(k)],
+        match key.map(K::into).1 {
+            key::TypeKind::Sum(k) => &self.sum_names[k.inside(key.0)],
+            key::TypeKind::Record(k) => &self.record_names[k.inside(key.0)],
+            key::TypeKind::Trait(k) => &self.trait_names[k.inside(key.0)],
         }
     }
 
     pub fn name_of_method(&self, key: M<key::Trait>, method: key::Method) -> &str {
         let fkey = self.methods[key][method];
-        &self.func_names[key.module.m(fkey)]
+        &self.func_names[fkey.inside(key.0)]
     }
 }
 
@@ -76,10 +76,10 @@ pub fn run<'a, 'h, 's>(
     pinfo: ProjectInfo,
     target: Target,
     hir: hir::HIR<'s>,
-    mut tenvs: ModMap<key::Func, TEnv<'s>>,
+    mut tenvs: MMap<key::Func, TEnv<'s>>,
     iquery: &mut ImplIndex,
 ) -> (MIR, bool) {
-    let mut funcs = hir.funcs.secondary_with(|(_, _)| FunctionStatus::Pending);
+    let mut funcs = hir.funcs.secondary_with(|_, _| FunctionStatus::Pending);
     let mut rotable = hir.sources.modules().collect();
 
     let fields = hir.lookups.to_field_lookup();
@@ -91,7 +91,7 @@ pub fn run<'a, 'h, 's>(
         if !assoc.is_empty() {
             unimplemented!("associated types");
         }
-        imethods.push(impl_.module, methods);
+        imethods.push(impl_.0, methods);
     }
 
     // Check and lower the functions
@@ -109,14 +109,16 @@ pub fn run<'a, 'h, 's>(
         );
     }
 
-    let trait_objects = hir.methods.map(|(tr, methods)| {
+    let trait_objects = hir.methods.map(|tr, methods| {
         methods
             .values()
-            .map(|func| match &funcs[tr.module.m(*func)] {
+            .map(|func| match &funcs[func.inside(tr.0)] {
                 FunctionStatus::Done(func) => func
                     .typing
                     .params
-                    .find(|ty| matches!(ty, Type::Simple("self"))),
+                    .iter()
+                    .position(|ty| matches!(ty, Type::Simple("self")))
+                    .map(key::Param::from),
                 _ => None,
             })
             .collect()
@@ -126,7 +128,7 @@ pub fn run<'a, 'h, 's>(
     let mut impls = hir.impls.secondary();
     hir.impls.iter().for_each(|imp| {
         let foralls = hir.impls[imp].rename_to_keys();
-        impls[imp.module].push(foralls);
+        impls[imp.0].push(foralls);
     });
 
     let has_failed = hir.sources.has_failed();
@@ -141,16 +143,16 @@ pub fn run<'a, 'h, 's>(
                 .modules()
                 .map(|m| hir.sources.name_of_module(m))
                 .collect(),
-            func_names: hir.func_names.map(|(_, name)| name.value.to_string()),
-            record_names: hir.records.map(|(name, _)| name.value.to_string()),
-            sum_names: hir.sums.map(|(name, _)| name.value.to_string()),
-            trait_names: hir.traits.map(|(name, _)| name.value.to_string()),
+            func_names: hir.func_names.map(|_, name| name.value.to_string()),
+            record_names: hir.records.map(|M(_, name), _| name.to_string()),
+            sum_names: hir.sums.map(|M(_, name), _| name.to_string()),
+            trait_names: hir.traits.map(|M(_, name), _| name.to_string()),
             field_names: hir
                 .fnames
-                .map(|(_, fields)| fields.values().map(|name| name.to_string()).collect()),
+                .map(|_, fields| fields.values().map(|name| name.to_string()).collect()),
             variant_names: hir
                 .vnames
-                .map(|(_, variants)| variants.values().map(|name| name.to_string()).collect()),
+                .map(|_, variants| variants.values().map(|name| name.to_string()).collect()),
 
             trait_objects,
             impls,
@@ -171,12 +173,12 @@ pub struct Verify<'a, 's> {
     hir: &'a hir::HIR<'s>,
     iquery: &'a ImplIndex,
 
-    tenvs: &'a mut ModMap<key::Func, TEnv<'s>>,
+    tenvs: &'a mut MMap<key::Func, TEnv<'s>>,
 
     items: LangItems,
 
-    funcs: &'a mut ModMap<key::Func, FunctionStatus>,
-    read_only_table: &'a mut ModMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
+    funcs: &'a mut MMap<key::Func, FunctionStatus>,
+    read_only_table: &'a mut MMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
 
     target: Target,
 
@@ -254,17 +256,17 @@ struct LangItems {
 
 fn verify_impl_headers<'s>(
     hir: &hir::HIR<'s>,
-    tenvs: &mut ModMap<key::Func, TEnv<'s>>,
+    tenvs: &mut MMap<key::Func, TEnv<'s>>,
     impl_: M<key::Impl>,
 ) -> (
     Map<key::AssociatedType, Tr<Type>>,
     Map<key::Method, Option<M<key::Func>>>,
 ) {
-    let imod = impl_.module;
+    let imod = impl_.0;
     let mname = hir.sources.name_of_module(imod);
 
     let (trkey, trparams) = &hir.itraits[impl_];
-    let tmod = trkey.module;
+    let tmod = trkey.0;
 
     let (trname, _) = &hir.traits[*trkey];
     let trmethodmap = &hir.methods[*trkey];
@@ -288,11 +290,11 @@ fn verify_impl_headers<'s>(
     let mut unknown_methods: Vec<M<key::Func>> = vec![];
 
     for method in imethodmap.values() {
-        let fkey = imod.m(*method);
+        let fkey = method.inside(imod);
         let name = *hir.func_names[fkey];
         if trmethodmap
             .values()
-            .all(|trmethod| name != *hir.func_names[tmod.m(*trmethod)])
+            .all(|trmethod| name != *hir.func_names[trmethod.inside(tmod)])
         {
             unknown_methods.push(fkey);
         }
@@ -304,7 +306,7 @@ fn verify_impl_headers<'s>(
     let resolved_methods = trmethodmap
         .iter()
         .map(|(method, tfkey)| {
-            let tfkey = tmod.m(*tfkey);
+            let tfkey = tfkey.inside(tmod);
             let mname = &hir.func_names[tfkey];
 
             let (tmforall, trmtyping) = match &hir.funcs[tfkey] {
@@ -320,7 +322,7 @@ fn verify_impl_headers<'s>(
                 hir::Typing { params, returns }
             };
 
-            match imethodmap.find(|func| hir.func_names[imod.m(*func)] == *mname) {
+            match imethodmap.find(|func| hir.func_names[func.inside(imod)] == *mname) {
                 None => {
                     match &hir.funcs[tfkey] {
                         hir::FuncDefKind::Defined(_) => unreachable!(),
@@ -334,7 +336,7 @@ fn verify_impl_headers<'s>(
                     }
                 }
                 Some(matching) => {
-                    let ifkey = imod.m(imethodmap[matching]);
+                    let ifkey = imethodmap[matching].inside(imod);
                     let idef = hir.funcs[ifkey].as_defined();
 
                     let result = ImplComparison {
@@ -402,7 +404,7 @@ fn verify_impl_headers<'s>(
 
         for (i, (method, forall, typing)) in missing_methods.iter().enumerate() {
             let env = TEnv::new();
-            let fname = hir.func_names[tmod.m(trmethodmap[*method])];
+            let fname = hir.func_names[trmethodmap[*method].inside(tmod)];
             let forall = forall.names().collect();
             let fstring =
                 tyfmt::TyFmtState::new(hir, &env, forall, iforall.clone()).function(fname, &typing);

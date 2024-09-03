@@ -1,0 +1,44 @@
+when
+  a can ToString
+  b can ToString
+impl ToString for (a, b)
+  fn show (a, b) as (a, b) -> string =
+    "(" <++> show a <++> ", " <++> show b <++> ")"
+
+when
+  a can ToString
+  b can ToString
+  c can ToString
+impl ToString for (a, b, c)
+  fn show (a, b, c) as (a, b, c) -> string =
+    "(" <++> show a <++> ", " <++> show b <++> ", " <++> show c <++> ")"
+
+when
+  a can ToString
+  b can ToString
+  c can ToString
+  d can ToString
+impl ToString for (a, b, c, d)
+  fn show (a, b, c, d) as (a, b, c, d) -> string =
+    "(" <++> show a <++> ", " <++> show b <++> ", " <++> show c <++> ", " <++> show d <++> ")"
+
+when
+  a can ToString
+  b can ToString
+  c can ToString
+  d can ToString
+  e can ToString
+impl ToString for (a, b, c, d, e)
+  fn show (a, b, c, d, e) as (a, b, c, d, e) -> string =
+    "(" <++> show a <++> ", " <++> show b <++> ", " <++> show c <++> ", " <++> show d <++> ", " <++> show e <++> ")"
+
+when
+  a can ToString
+  b can ToString
+  c can ToString
+  d can ToString
+  e can ToString
+  f can ToString
+impl ToString for (a, b, c, d, e, f)
+  fn show (a, b, c, d, e, f) as (a, b, c, d, e, f) -> string =
+    "(" <++> show a <++> ", " <++> show b <++> ", " <++> show c <++> ", " <++> show d <++> ", " <++> show e <++> ", " <++> show f <++> ")"

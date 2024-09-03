@@ -10,6 +10,9 @@ use std:list:vec [Vec]
 use std:gc
 use std:env [process_arguments]
 
+// we need these so that their implementations are always included
+use std:tuple
+
 @![langItem(list as List)]
 
 trait Closure p r

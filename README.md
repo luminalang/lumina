@@ -1,33 +1,52 @@
 ![Example source code for the Lumina programming language.](misc/lumina-example.png)
 
-# Running
+## The Lumina Programming Language
 
-Currently there's two native targets with basic support for Linux only. 
+Lumina is an eager-by-default natively compiled functional programming language with the core goals of readibility, practicality, compiler-driven development and simplicity. 
 
-`lumina build --target x86_64-linux-musl -o a.out sandbox/snippets`
-`./a.out`
+It aims to be a high-level general-purpose language, but also support systems-level functionality such as raw pointer arithmetics to allow for high-level abstractions to be built on top of low-level high performance Lumina code. 
 
-# Logging
+## Documentation
+
+A work-in-progress guide is available at https://docs.luminalang.com/
+
+Examples are available in the `examples/` folder
+
+## Supported Targets
+
+* `x86_64-linux-glibc`
+* `x86_64-linux-musl`
+
+(many more planned)
+
+## Compiler Developer Documentation
 
 This project is using `tracing_tree` combined with `env_logger`. To track a specific entity throughout the compilation pipeline, use: 
 `RUST_LOG="[{entity=myFunction}]=trace"`
 
-To get an overview look of what the compilers doing then use `RUST_LOG=info`
+To get an overview look of what the compiler is doing; use `RUST_LOG=info`
 
-## Status
+### Compiler Overview
 
-Most language features, basic and advanced, lower to LIR and can compile natively with Cranelift. The main blocker right now is the lack of a finished garbage collector.
-All allocations currently leak unless manually freed with `do libc:free ptr then ...`. 
+![Overview of the compiler architecture](misc/lumina-compiler-overview.png)
+
+### Status
+
+Most language features, basic and advanced, lower to LIR and can compile natively with Cranelift. 
+Since there is no finished garbage collector, all allocations currently leak unless manually freed with `do libc:free ptr then ...`. 
 
 C-representation of declared data is currently not supported. To call FFI functions you need to write in primitives manually according to the C-abi.
 Lumina's own ABI is currently a transparent representation of the data given. So; the C ABI can be followed manully on top. 
 
-### Known remaining major tasks for public release
+The standard library is severely lacking and doesn't have much outside of basic int, list, string, stdout, and file io. 
+All of this is written in a non-platform-agnostic way and needs to be changed to properly utilise `@[platform "..."]` rules. 
 
- - [ ] Garbage Collector (We now do allocation through the GC. But; we don't actually collect. For that we need a stronger runtime)
- - [x] Make `pub` actually have an effect. Our resolver has a system for visibility but we aren't using it. 
+### Known remaining high-priority tasks
+
+ - [ ] Garbage Collector (Linking to `mmtk` works, but I'm not sure what we'll end up doing)
+ - [x] Make `pub` actually have an effect.
  - [ ] Basic guide/showcase
- - [ ] Replace all remaining `todo!("ET: ");`s with proper error messages
+ - [x] Replace all remaining `todo!("ET: ");`s with proper error messages
  - [x] Give the compiler the ability to detect and use system linkers
  - [x] Vectorised linked lists or finger trees as default list desugaring
  - [x] Fix the type checker sometimes confusing the expected type with the given type and vice-versa
@@ -40,7 +59,7 @@ Lumina's own ABI is currently a transparent representation of the data given. So
  - [ ] Floats
  - [ ] Reflection API with const-time folding post-monomorphization (plan is to use this instead of macros)
 
-### Known remaining major tasks for after public release
+### Known remaining lower-priority tasks
 
  - [ ] Associated types
  - [ ] Trait-overloaded key-value syntactic sugar for hashmaps
@@ -53,9 +72,6 @@ Lumina's own ABI is currently a transparent representation of the data given. So
  - [ ] Code formatter
  - [ ] Syntax files for various text editors
  - [ ] trait specialisation
-
-### Known remaining minor tasks for after public release
-
  - [ ] Inline smaller sum-type data payloads for increased performance
  - [ ] Natively aligned data for improved performance
  - [ ] Stable public function symbols

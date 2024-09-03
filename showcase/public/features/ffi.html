@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Functions - Lumina Showcase</title>
+        <title>Calling C functions via FFI - Lumina Showcase</title>
 
 
         <!-- Custom HTML head -->
@@ -88,7 +88,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">The Lumina Programming Language</a></li><li class="chapter-item expanded affix "><li class="part-title">Getting Started</li><li class="chapter-item expanded "><a href="../getting-started/installation.html"><strong aria-hidden="true">1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="../getting-started/compiling-and-running.html"><strong aria-hidden="true">2.</strong> Compiling & Running Programs</a></li><li class="chapter-item expanded "><a href="../getting-started/create-project.html"><strong aria-hidden="true">3.</strong> Creating a Lumina Project</a></li><li class="chapter-item expanded affix "><li class="part-title">Features</li><li class="chapter-item expanded "><a href="../features/functions.html" class="active"><strong aria-hidden="true">4.</strong> Functions</a></li><li class="chapter-item expanded "><a href="../features/types.html"><strong aria-hidden="true">5.</strong> Types</a></li><li class="chapter-item expanded "><a href="../features/let-and-do.html"><strong aria-hidden="true">6.</strong> let & do</a></li><li class="chapter-item expanded "><a href="../features/matching.html"><strong aria-hidden="true">7.</strong> Pattern Matching & Conditionals</a></li><li class="chapter-item expanded "><a href="../features/partial.html"><strong aria-hidden="true">8.</strong> Closures & Partial Application</a></li><li class="chapter-item expanded "><a href="../features/list-and-strings.html"><strong aria-hidden="true">9.</strong> Lists & Strings</a></li><li class="chapter-item expanded "><a href="../features/val.html"><strong aria-hidden="true">10.</strong> Declaring Global Values</a></li><li class="chapter-item expanded "><a href="../features/modules.html"><strong aria-hidden="true">11.</strong> Module System</a></li><li class="chapter-item expanded "><a href="../features/generics-and-traits.html"><strong aria-hidden="true">12.</strong> Generics & Traits</a></li><li class="chapter-item expanded "><a href="../features/pipes.html"><strong aria-hidden="true">13.</strong> Pipes (dot notation)</a></li><li class="chapter-item expanded "><a href="../features/attributes.html"><strong aria-hidden="true">14.</strong> Attributes</a></li><li class="chapter-item expanded affix "><li class="part-title">Advanced Features</li><li class="chapter-item expanded "><a href="../features/pointers.html"><strong aria-hidden="true">15.</strong> Pointer Arithmetics</a></li><li class="chapter-item expanded "><a href="../features/ffi.html"><strong aria-hidden="true">16.</strong> Calling C functions via FFI</a></li><li class="chapter-item expanded "><a href="../features/nested-records.html"><strong aria-hidden="true">17.</strong> Updating Nested Records</a></li><li class="chapter-item expanded affix "><li class="part-title">Standard Library</li><li class="chapter-item expanded "><a href="../std/targets.html"><strong aria-hidden="true">18.</strong> Available Targets</a></li><li class="chapter-item expanded "><a href="../std/io.html"><strong aria-hidden="true">19.</strong> IO and the file system</a></li><li class="chapter-item expanded "><a href="../std/lists.html"><strong aria-hidden="true">20.</strong> List and its Sub-types</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../index.html">The Lumina Programming Language</a></li><li class="chapter-item expanded affix "><li class="part-title">Getting Started</li><li class="chapter-item expanded "><a href="../getting-started/installation.html"><strong aria-hidden="true">1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="../getting-started/compiling-and-running.html"><strong aria-hidden="true">2.</strong> Compiling & Running Programs</a></li><li class="chapter-item expanded "><a href="../getting-started/create-project.html"><strong aria-hidden="true">3.</strong> Creating a Lumina Project</a></li><li class="chapter-item expanded affix "><li class="part-title">Features</li><li class="chapter-item expanded "><a href="../features/functions.html"><strong aria-hidden="true">4.</strong> Functions</a></li><li class="chapter-item expanded "><a href="../features/types.html"><strong aria-hidden="true">5.</strong> Types</a></li><li class="chapter-item expanded "><a href="../features/let-and-do.html"><strong aria-hidden="true">6.</strong> let & do</a></li><li class="chapter-item expanded "><a href="../features/matching.html"><strong aria-hidden="true">7.</strong> Pattern Matching & Conditionals</a></li><li class="chapter-item expanded "><a href="../features/partial.html"><strong aria-hidden="true">8.</strong> Closures & Partial Application</a></li><li class="chapter-item expanded "><a href="../features/list-and-strings.html"><strong aria-hidden="true">9.</strong> Lists & Strings</a></li><li class="chapter-item expanded "><a href="../features/val.html"><strong aria-hidden="true">10.</strong> Declaring Global Values</a></li><li class="chapter-item expanded "><a href="../features/modules.html"><strong aria-hidden="true">11.</strong> Module System</a></li><li class="chapter-item expanded "><a href="../features/generics-and-traits.html"><strong aria-hidden="true">12.</strong> Generics & Traits</a></li><li class="chapter-item expanded "><a href="../features/pipes.html"><strong aria-hidden="true">13.</strong> Pipes (dot notation)</a></li><li class="chapter-item expanded "><a href="../features/attributes.html"><strong aria-hidden="true">14.</strong> Attributes</a></li><li class="chapter-item expanded affix "><li class="part-title">Advanced Features</li><li class="chapter-item expanded "><a href="../features/pointers.html"><strong aria-hidden="true">15.</strong> Pointer Arithmetics</a></li><li class="chapter-item expanded "><a href="../features/ffi.html" class="active"><strong aria-hidden="true">16.</strong> Calling C functions via FFI</a></li><li class="chapter-item expanded "><a href="../features/nested-records.html"><strong aria-hidden="true">17.</strong> Updating Nested Records</a></li><li class="chapter-item expanded affix "><li class="part-title">Standard Library</li><li class="chapter-item expanded "><a href="../std/targets.html"><strong aria-hidden="true">18.</strong> Available Targets</a></li><li class="chapter-item expanded "><a href="../std/io.html"><strong aria-hidden="true">19.</strong> IO and the file system</a></li><li class="chapter-item expanded "><a href="../std/lists.html"><strong aria-hidden="true">20.</strong> List and its Sub-types</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -173,64 +173,17 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="functions"><a class="header" href="#functions">Functions</a></h1>
-<h2 id="declaring-functions"><a class="header" href="#declaring-functions">Declaring Functions</a></h2>
-<p>Functions are defined using the <code>fn</code> keyword.</p>
-<pre><code class="language-lm">fn add x y as int, int -&gt; int =
-  x + y
-</code></pre>
-<p><sup><sub>     A function which takes two parameters, x and y of type int, then adds them together to return a single int</sub></sup></p>
-<p>The type annotation is optional.</p>
-<pre><code class="language-lm">fn add x y = x + y
-</code></pre>
-<p>Although remember that type annotations often help as a form of documentation.</p>
-<h2 id="calling-functions"><a class="header" href="#calling-functions">Calling Functions</a></h2>
-<p>White-space is used to separate the arguments to a function</p>
-<pre><code class="language-lm">fn main =
-  add 1 2
-</code></pre>
-<p>Parenthesis can also be used to 'group' expressions.</p>
-<pre><code class="language-lm">fn main =
-  std:io:println (add (add 1 2) (add 3 4))
-</code></pre>
-<p><sup><sub>     A function adding numbers then printing them to the terminal</sub></sup></p>
-<h2 id="pattern-parameters"><a class="header" href="#pattern-parameters">Pattern Parameters</a></h2>
-<p>The parameters in a function declaration may be any infallible pattern, not just plain identifiers.</p>
-<pre><code class="language-lm">fn add_pairs xy ab as (int, int), (int, int) =
-  ...
-
-// can instead be written as
-
-fn add_pairs (x, y) (a, b) as (int, int), (int, int) -&gt; (int, int) =
-  (x + a, y + b)
-
-fn main =
-  add_pairs (1, 2) (3, 4)
-</code></pre>
-<p><sup><sub>     A function with two tuple parameters being pattern matched in the function declaration</sub></sup></p>
-<p>Read more about patterns in the <a href="./matching.html">Pattern Matching &amp; Conditionals</a> chapter</p>
-<h2 id="where-bindings"><a class="header" href="#where-bindings">Where-Bindings</a></h2>
-<p>A function may also be defined inside another function, of which it'll have access to its parent function's parameters.</p>
-<pre><code class="language-lm">fn main = add x y
- where
-  fn add x y = x + y
-</code></pre>
-<p><sup><sub>     A function declared inside another function as a where-binding</sub></sup></p>
-<h2 id="operators"><a class="header" href="#operators">Operators</a></h2>
-<p>New operators can also be defined similarly to functions.</p>
-<pre><code class="language-lm">fn +++ left right as int, int -&gt; int =
-  left + right + right + right
-</code></pre>
+                        <h1 id="calling-c-functions-via-ffi"><a class="header" href="#calling-c-functions-via-ffi">Calling C functions via FFI</a></h1>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../getting-started/create-project.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../features/pointers.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../features/types.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../features/nested-records.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -240,33 +193,17 @@ fn main =
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../getting-started/create-project.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../features/pointers.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../features/types.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../features/nested-records.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
 
         </div>
 
-        <!-- Livereload script (if served using the cli tool) -->
-        <script>
-            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
-            const socket = new WebSocket(wsAddress);
-            socket.onmessage = function (event) {
-                if (event.data === "reload") {
-                    socket.close();
-                    location.reload();
-                }
-            };
-
-            window.onbeforeunload = function() {
-                socket.close();
-            }
-        </script>
 
 
 

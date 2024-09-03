@@ -17,11 +17,9 @@ fn add x y = x + y
 ```
 Although remember that type annotations often help as a form of documentation. 
 
-Functions may also be defined inside other functions, where they have access to the parent functions parameters. 
-
 ## Calling Functions
 
-White-space is used to separate the argument to a function
+White-space is used to separate the arguments to a function
 
 ```lm
 fn main =

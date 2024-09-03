@@ -221,8 +221,9 @@ Hello World!
 <pre><code class="language-lm">fn add x y = x + y
 </code></pre>
 <p>Although remember that type annotations often help as a form of documentation.</p>
+<p>Functions may also be defined inside other functions, where they have access to the parent functions parameters.</p>
 <h2 id="calling-functions"><a class="header" href="#calling-functions">Calling Functions</a></h2>
-<p>White-space is used to separate the arguments to a function</p>
+<p>White-space is used to separate the argument to a function</p>
 <pre><code class="language-lm">fn main =
   add 1 2
 </code></pre>
@@ -570,22 +571,6 @@ fn add_five x as int -&gt; int =
 
         </div>
 
-        <!-- Livereload script (if served using the cli tool) -->
-        <script>
-            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
-            const socket = new WebSocket(wsAddress);
-            socket.onmessage = function (event) {
-                if (event.data === "reload") {
-                    socket.close();
-                    location.reload();
-                }
-            };
-
-            window.onbeforeunload = function() {
-                socket.close();
-            }
-        </script>
 
 
 

@@ -155,3 +155,6 @@ type Maybe value
 fn just_five as Maybe int = Just 5
 ```
 <sup><sub>&nbsp;&nbsp;&nbsp;&nbsp; Two examples of defining a type with type parameters and then instantiating it. </sub></sup>
+
+<sup><sub>*Since `Maybe` is known to be very useful, it's already defined in the Lumina standard library. </sub></sup>
+

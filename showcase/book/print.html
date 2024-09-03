@@ -378,6 +378,7 @@ type Maybe value
 fn just_five as Maybe int = Just 5
 </code></pre>
 <p><sup><sub>     Two examples of defining a type with type parameters and then instantiating it. </sub></sup></p>
+<p><sup><sub>*Since <code>Maybe</code> is known to be very useful, it's already defined in the Lumina standard library. </sub></sup></p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="evaluating-multiple-expressions"><a class="header" href="#evaluating-multiple-expressions">Evaluating Multiple Expressions</a></h1>
 <h3 id="let-bindings"><a class="header" href="#let-bindings">Let bindings</a></h3>
 <p>As a function grows larger, complex, or more and more nested. It can become difficult to read.</p>
@@ -414,7 +415,132 @@ fn main =
     0   // Then do something else to generate a value
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="pattern-matching--conditionals"><a class="header" href="#pattern-matching--conditionals">Pattern Matching &amp; Conditionals</a></h1>
+<p><sup><em>TODO: Explain the purpose of patterns, their distinction from expressions, and how pattern matching is a core tool of functional programming.</em></sup></p>
+<p><strong>Pattern Matching with <code>match</code></strong></p>
+<pre><code class="language-lm">// Matching integers
+fn check_integer n as int -&gt; string =
+  match n
+  | 0    -&gt; "zero"
+  | 1    -&gt; "one"
+  | 2..9 -&gt; "digit"
+  | _    -&gt; "large number"
+
+// Matching sum types
+fn or default m as int, Maybe int -&gt; int =
+  match m
+  | Nothing -&gt; default
+  | Just n  -&gt; n
+
+// Matching records
+fn encode_user user as User -&gt; string = 
+  match user
+  | { kind = Admin, name, .. } -&gt; "admin_" &lt;++&gt; name
+  | { kind = Guest, name, .. } -&gt; "guest_" &lt;++&gt; name
+
+  // Type annotation is optional
+  | { User | kind = Guest, name, .. } -&gt; "guest_" &lt;++&gt; name
+
+// Matching strings
+fn parse_user str as string -&gt; (int, string) =
+  match str
+  | "id:" id " username:" username -&gt;
+    (to_digit id, username)
+  | _ -&gt;
+    crash ("parsing error: " &lt;++&gt; str)
+
+// Matching lists
+fn first_three list as [int] -&gt; Maybe (int, int, int) =
+  match list
+  | [x, y, z : _rest] -&gt; Just (x, y, z)
+  | _ -&gt; Nothing
+
+// Matching tuples
+fn far_away position as (int, int) -&gt; bool =
+  match position
+  | (100.., _) -&gt; true
+  | (_, 100..) -&gt; true
+  | (_, _)     -&gt; false
+</code></pre>
+<p><sup><em>TODO: Should we show and explain string extractors here or under advanced features? Should probably be after partial application</em></sup></p>
+<p><strong>If Expressions</strong></p>
+<pre><code class="language-lm">fn can_drive age =
+  if age &gt; 18
+    then "This person can own a drivers license"
+    else "This person can not own a drivers license"
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="partial-application"><a class="header" href="#partial-application">Partial Application</a></h1>
+<p>A large part of why functional programming is so powerful is being able to conveniently pass around functions as if they're values.</p>
+<p>This lets you create functions whose behavior is more generalised as a portion of the behavior can be passed down as a parameter.</p>
+<p><strong>The Closure Type</strong></p>
+<p>Among types such as <code>int</code> or <code>(float, float)</code>, functions-as-values also have types in the form of closures.</p>
+<pre><code class="language-lm">fn(int, int -&gt; int)
+</code></pre>
+<p><sup><sub>     The type of a closure which expects two <code>int</code> parameters and returns an <code>int</code></sub></sup></p>
+<p>So for example;</p>
+<pre><code class="language-lm">fn change_if_just f m as fn(int -&gt; int), Maybe int -&gt; Maybe int =
+  match m
+  | Nothing -&gt; Nothing
+  | Just n  -&gt; Just (f n)
+</code></pre>
+<p><sup><sub>     A function which runs a function to change a value if it exists</sub></sup></p>
+<p><strong>The Magic <code>#</code> Unary Operator</strong></p>
+<p>To treat a function as if it's a value, the <code>#</code> symbol is used.</p>
+<pre><code class="language-lm">fn add_five_if_just m as Maybe int -&gt; Maybe int =
+  change_if_just #add_five m
+
+fn add_five x as int -&gt; int =
+  x + 5
+</code></pre>
+<p><sup><sub>     A function which adds 5 to an integer if it exists</sub></sup></p>
+<p>The <code>#</code> symbol is a general-purpose way to pass various expressions as closures and can be used in a couple of different ways.</p>
+<pre><code class="language-lm">fn add x y as int, int -&gt; int = x + y
+
+// ... //
+
+// turns the function into a closure of type
+// fn(int, int -&gt; int)
+#add
+
+// partially applicates the function to create a closure with one less parameter
+// fn(int -&gt; int)
+#(add 5)
+
+// partially applicates an operator to create a closure with a single parameter
+// fn(int -&gt; int)
+#(+ 5)
+
+// turn a literal value into a closure
+// fn( -&gt; int), can also be written as fn(int)
+#5
+</code></pre>
+<p>With this in mind, we can rewrite the previous example as:</p>
+<pre><code class="language-lm">fn add_five_if_just m as Maybe int -&gt; Maybe int =
+  change_if_just #(+ 5) m
+</code></pre>
+<p><sup><sub>     A function which adds 5 to an integer if it exists</sub></sup></p>
+<p><strong>Anonymous Functions with Lambdas</strong></p>
+<p>If a function doesn't seem important enough to give it a name, we can inline it with a lambda.</p>
+<pre><code class="language-lm">fn main =
+  (\n -&gt; n + 1) 5
+</code></pre>
+<p><sup><sub>     Runs the inline function with the parameter <code>5</code> to create <code>6</code></sub></sup></p>
+<p>Lambdas can also be passed as closures the same way as named functions.</p>
+<pre><code class="language-lm">fn add_five_if_just m as Maybe int -&gt; Maybe int =
+  change_if_just #(\n -&gt; n + 5) m
+</code></pre>
+<p><strong>Partially applicating Where-Bindings</strong></p>
+<p><sup><em>TODO: Is it overly complicated and confusing to explain this here? Maybe we should have a separate design patterns chapter</em></sup></p>
+<p>A common design pattern is to partially applicate where-bindings</p>
+<pre><code class="language-lm">fn add_five_if_just m as Maybe int -&gt; Maybe int =
+  change_if_just #(add 5)
+ where
+  fn add x y = x + y
+
+  fn change_if_just f as fn(int -&gt; int) -&gt; Maybe int =
+    match m
+    | Nothing -&gt; Nothing
+    | Just n  -&gt; Just (f n)
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="lists--strings"><a class="header" href="#lists--strings">Lists &amp; Strings</a></h1>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="declaring-global-values"><a class="header" href="#declaring-global-values">Declaring Global Values</a></h1>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="module-system"><a class="header" href="#module-system">Module System</a></h1>

@@ -7,14 +7,16 @@ pub fn stdout as i32 = 1
 pub fn stdin as i32  = 0
 
 @[platform "linux"]
-pub fn print str as string -> () =
-  let {ptr, len} = str . toByteVec in
+when s can ToString
+pub fn print str as s -> () =
+  let {ptr, len} = show str . toByteVec in
     do libc:write stdout ptr (len as int)
     then ()
 
 @[platform "linux"]
-pub fn println str as string -> () =
-  let {ptr, len} = (str <++> "\n") . toByteVec in
+when s can ToString
+pub fn println str as s -> () =
+  let {ptr, len} = (show str <++> "\n") . toByteVec in
     do libc:write stdout ptr (len as int)
     then ()
 

@@ -7,16 +7,16 @@ use std:list:vec [Vec]
 //
 // THEIR INDICES ARE CONSTANTS IN COMPILER. 
 pub trait Stringable
-  fn split_at as self, uint -> (self, self)
+  fn split_at_or_empty as self, uint -> (self, self)
   fn split_while as self, fn(u8 -> bool) -> (self, self)
-  fn split_first as self -> (u8, self)
+  fn split_first_or_null as self -> (u8, self)
   fn equals as self, self -> bool
   fn from_raw_parts as *u8, uint -> self
 
 // TODO: all these arguments should be flipped 
 // so that they work with dot-pipe. 
 impl Stringable for string
-  fn split_at str i as string, uint -> (string, string) = 
+  fn split_at_or_empty str i as string, uint -> (string, string) = 
     let (x, y) = str.inner . split_at i in
       ({ inner = x }, { inner = y })
 
@@ -24,7 +24,7 @@ impl Stringable for string
     let (x, y) = str.inner . break #(\byte -> not (f byte)) in
       ({ inner = x }, { inner = y })
 
-  fn split_first str as string -> (u8, string) = 
+  fn split_first_or_null str as string -> (u8, string) = 
     match str.inner . split
     | Nothing -> (0, str)
     | Just (x, xs) -> (x, { inner = xs })

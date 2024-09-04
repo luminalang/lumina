@@ -218,12 +218,43 @@ impl<'s> Collector<'s> {
             self.entities.fattributes.push_as(fkey, attributes);
             if can_be_resolved {
                 let nfunc = NFunc::Key(fkey.1);
-                self.lookups.declare(module, vis, *name, module, nfunc);
+                if let Some(existing) = self.lookups.declare(module, vis, *name, module, nfunc) {
+                    self.emit_func_already_exists(module, name.span, existing);
+                }
             }
 
             Some(fkey.1)
         } else {
             None
+        }
+    }
+
+    fn emit_func_already_exists(&self, module: key::Module, span: Span, existing: Mod<NFunc>) {
+        let mods = [module, existing.module];
+        let spans = [span, self.name_of_nfunc(existing.module, existing.key).span];
+        self.emit_already_exists("function already defined", mods, spans);
+    }
+
+    fn emit_already_exists(&self, err: &'static str, mods: [key::Module; 2], spans: [Span; 2]) {
+        let mut err = self.sources.error(err).m(mods[0]).eline(spans[0], "");
+        if mods[0] == mods[1] {
+            err = err.iline(spans[1], "previously defined here");
+        }
+        err.emit();
+    }
+
+    fn name_of_nfunc(&self, module: key::Module, nfunc: NFunc) -> Tr<&'s str> {
+        match nfunc {
+            NFunc::Key(fkey) => self.entities.fheaders[fkey.inside(module)].name,
+            NFunc::Method(tr, method) => {
+                let fkey = self.entities.methods[tr.inside(module)][method];
+                self.entities.fheaders[fkey.inside(module)].name
+            }
+            NFunc::SumVar(sum, var) => self.entities.variant_names[sum.inside(module)][var],
+            NFunc::Val(val) => {
+                let fkey = self.entities.vals[val.inside(module)];
+                self.entities.fheaders[fkey.inside(module)].name
+            }
         }
     }
 
@@ -233,6 +264,7 @@ impl<'s> Collector<'s> {
         mut ty: parser::ty::Declaration<'s>,
     ) -> Option<key::TypeKind> {
         let name = ty.header.name;
+        let span = ty.header.span;
 
         // desugar `type A` into `type A {}`
         if let ty::DeclarationBody::None = &ty.body {
@@ -295,8 +327,7 @@ impl<'s> Collector<'s> {
 
                     let to_body = |body| Some(FuncBody::TraitMethod(body, trait_));
 
-                    let methods =
-                        self.include_methods_as_functions(module, body.methods, true, to_body);
+                    let methods = self.include_methods_as_functions(module, body.methods, to_body);
 
                     self.entities.methods.push_as(trait_, methods);
 
@@ -313,7 +344,17 @@ impl<'s> Collector<'s> {
                 }
             };
 
-            self.lookups.declare(module, visiblity, name, module, kind);
+            if let Some(existing) = self.lookups.declare(module, visiblity, name, module, kind) {
+                let mods = [module, existing.module];
+                let spans = [
+                    span,
+                    self.entities
+                        .header_of_ty(M(existing.module, existing.key))
+                        .header
+                        .span,
+                ];
+                self.emit_already_exists("type already defined", mods, spans);
+            }
 
             self.include_tydef_members(module, visiblity, kind);
 
@@ -327,13 +368,12 @@ impl<'s> Collector<'s> {
         &mut self,
         module: key::Module,
         methods: Map<key::Method, parser::func::Declaration<'s>>,
-        can_be_resolved: bool,
         mut to_body: impl FnMut(Option<parser::func::Body<'s>>) -> Option<FuncBody<'s>>,
     ) -> Map<key::Method, key::Func> {
         methods
             .into_iter()
             .map(|(_, decl)| {
-                self.include_func(module, decl, can_be_resolved, &mut to_body)
+                self.include_func(module, decl, false, &mut to_body)
                     .expect("target not supported on method yet")
             })
             .collect()
@@ -353,7 +393,7 @@ impl<'s> Collector<'s> {
         let to_body = |body: Option<_>| body.map(|body| FuncBody::ImplMethod(body, ikey));
 
         let impdef = ImplDef { header: imp.header, associations: imp.associations };
-        let methods = self.include_methods_as_functions(module, imp.methods, false, to_body);
+        let methods = self.include_methods_as_functions(module, imp.methods, to_body);
 
         let k = self.entities.impls.push(module, impdef);
         self.entities.imethods.push_as(k, methods);
@@ -370,7 +410,7 @@ impl<'s> Collector<'s> {
     }
 
     fn include_val(&mut self, module: key::Module, val: val::Declaration<'s>) {
-        let name = val.name;
+        let (name, span) = (val.name, val.span);
         let key = self.entities.vals[module].next_key();
         let (header, body, attributes) = val_to_func(key, val);
         let fkey = self.entities.fheaders.push(module, header);
@@ -378,32 +418,49 @@ impl<'s> Collector<'s> {
         self.entities.fattributes.push_as(fkey, attributes);
         self.entities.fbodies.push_as(fkey, body);
         self.entities.vals.push_as(key.inside(module), fkey);
-        self.lookups
-            .declare(module, visibility, name, module, NFunc::Val(key));
+        if let Some(existing) =
+            self.lookups
+                .declare(module, visibility, name, module, NFunc::Val(key))
+        {
+            self.emit_func_already_exists(module, span, existing);
+        }
     }
 
     fn include_tydef_members(&mut self, module: key::Module, vis: Visibility, kind: key::TypeKind) {
-        match kind {
-            key::TypeKind::Record(rkey) => self.entities.field_names[rkey.inside(module)]
-                .iter()
-                .for_each(|(field, name)| {
-                    self.lookups
-                        .declare_accessor(module, vis, **name, rkey, field);
-                }),
+        let clashes = match kind {
+            key::TypeKind::Record(rkey) => {
+                self.entities.field_names[rkey.inside(module)]
+                    .iter()
+                    .for_each(|(field, name)| {
+                        self.lookups
+                            .declare_accessor(module, vis, **name, rkey, field);
+                    });
+                vec![]
+            }
             key::TypeKind::Sum(sum) => self.entities.variant_names[sum.inside(module)]
                 .iter()
-                .for_each(|(var, name)| {
+                .filter_map(|(var, name)| {
                     let nfunc = NFunc::SumVar(sum, var);
-                    self.lookups.declare(module, vis, **name, module, nfunc);
-                }),
+                    self.lookups
+                        .declare(module, vis, **name, module, nfunc)
+                        .map(|existing| (name.span, existing))
+                })
+                .collect(),
             key::TypeKind::Trait(trait_) => self.entities.methods[trait_.inside(module)]
                 .iter()
-                .for_each(|(method, fkey)| {
+                .filter_map(|(method, fkey)| {
                     let header = &self.entities.fheaders[fkey.inside(module)];
                     let name = *header.name;
                     let nfunc = NFunc::Method(trait_, method);
-                    self.lookups.declare(module, vis, name, module, nfunc);
-                }),
+                    self.lookups
+                        .declare(module, vis, name, module, nfunc)
+                        .map(|existing| (header.name.span, existing))
+                })
+                .collect(),
+        };
+
+        for (span, existing) in clashes {
+            self.emit_func_already_exists(module, span, existing);
         }
     }
 
@@ -551,12 +608,29 @@ impl<'s> Collector<'s> {
                 Ok(entity) => match entity.key {
                     Entity::Func(nfunc) => {
                         self.forbid_members(module, "function", &exposed);
-                        self.lookups
-                            .declare(module, v, exposed.name, entity.module, nfunc);
+                        if let Some(existing) =
+                            self.lookups
+                                .declare(module, v, exposed.name, entity.module, nfunc)
+                        {
+                            self.emit_func_already_exists(module, exposed.span, existing);
+                        }
                     }
                     Entity::Type(ty) => {
-                        self.lookups
-                            .declare(module, v, exposed.name, entity.module, ty);
+                        if let Some(existing) =
+                            self.lookups
+                                .declare(module, v, exposed.name, entity.module, ty)
+                        {
+                            let espan = self
+                                .entities
+                                .header_of_ty(M(existing.module, existing.key))
+                                .header
+                                .span;
+                            self.emit_already_exists(
+                                "identifier already defined",
+                                [module, existing.module],
+                                [exposed.span, espan],
+                            );
+                        }
 
                         self.expose_type_members(module, v, entity.map(|_| ty), &exposed.members);
                     }
@@ -627,48 +701,75 @@ impl<'s> Collector<'s> {
             }
             key::TypeKind::Sum(sum) => {
                 let vnames = &self.entities.variant_names[sum.inside(ty.module)];
-                match members {
-                    r#use::Members::All(_) => vnames.iter().for_each(|(var, name)| {
-                        let nfunc = NFunc::SumVar(sum, var);
-                        self.lookups.declare(module, vis, name, ty.module, nfunc);
-                    }),
-                    r#use::Members::Members(names) => {
-                        names
-                            .iter()
-                            .for_each(|name| match vnames.find(|n| *n == *name) {
-                                None => {
-                                    Self::emit_member_not_found(sources, module, *name, "variant")
-                                }
-                                Some(variant) => {
-                                    let nfunc = NFunc::SumVar(sum, variant);
-                                    self.lookups.declare(module, vis, name, ty.module, nfunc);
-                                }
-                            })
-                    }
-                    r#use::Members::None => {}
+                let clashes = match members {
+                    r#use::Members::All(_) => vnames
+                        .iter()
+                        .filter_map(|(var, name)| {
+                            let nfunc = NFunc::SumVar(sum, var);
+                            self.lookups
+                                .declare(module, vis, name, ty.module, nfunc)
+                                .map(|existing| (name.span, existing))
+                        })
+                        .collect(),
+                    r#use::Members::Members(names) => names
+                        .iter()
+                        .filter_map(|name| match vnames.find(|n| *n == *name) {
+                            None => {
+                                Self::emit_member_not_found(sources, module, *name, "variant");
+                                None
+                            }
+                            Some(variant) => {
+                                let nfunc = NFunc::SumVar(sum, variant);
+                                self.lookups
+                                    .declare(module, vis, name, ty.module, nfunc)
+                                    .map(|existing| (name.span, existing))
+                            }
+                        })
+                        .collect(),
+                    r#use::Members::None => vec![],
+                };
+
+                for (span, existing) in clashes {
+                    self.emit_func_already_exists(module, span, existing);
                 }
             }
             key::TypeKind::Trait(trait_) => {
                 let methods = &self.entities.methods[trait_.inside(ty.module)];
-                match members {
-                    r#use::Members::All(_) => methods.iter().for_each(|(m, fkey)| {
-                        let header = &self.entities.fheaders[fkey.inside(ty.module)];
-                        let nfunc = NFunc::Method(trait_, m);
-                        self.lookups
-                            .declare(module, vis, *header.name, ty.module, nfunc);
-                    }),
-                    r#use::Members::Members(names) => names.iter().for_each(|name| {
-                        match methods.find(|fkey| {
-                            self.entities.fheaders[fkey.inside(ty.module)].name == *name
-                        }) {
-                            None => Self::emit_member_not_found(sources, module, *name, "method"),
-                            Some(m) => {
-                                let nfunc = NFunc::Method(trait_, m);
-                                self.lookups.declare(module, vis, **name, ty.module, nfunc);
+                let clashes = match members {
+                    r#use::Members::All(_) => methods
+                        .iter()
+                        .filter_map(|(m, fkey)| {
+                            let header = &self.entities.fheaders[fkey.inside(ty.module)];
+                            let nfunc = NFunc::Method(trait_, m);
+                            self.lookups
+                                .declare(module, vis, *header.name, ty.module, nfunc)
+                                .map(|existing| (header.name.span, existing))
+                        })
+                        .collect(),
+                    r#use::Members::Members(names) => names
+                        .iter()
+                        .filter_map(|name| {
+                            match methods.find(|fkey| {
+                                self.entities.fheaders[fkey.inside(ty.module)].name == *name
+                            }) {
+                                None => {
+                                    Self::emit_member_not_found(sources, module, *name, "method");
+                                    None
+                                }
+                                Some(m) => {
+                                    let nfunc = NFunc::Method(trait_, m);
+                                    self.lookups
+                                        .declare(module, vis, **name, ty.module, nfunc)
+                                        .map(|existing| (name.span, existing))
+                                }
                             }
-                        }
-                    }),
-                    r#use::Members::None => {}
+                        })
+                        .collect(),
+                    r#use::Members::None => vec![],
+                };
+
+                for (span, existing) in clashes {
+                    self.emit_func_already_exists(module, span, existing);
                 }
             }
         }

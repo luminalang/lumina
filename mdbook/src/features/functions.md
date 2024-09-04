@@ -39,7 +39,7 @@ fn main =
 The parameters in a function declaration may be any infallible pattern, not just plain identifiers. 
 
 ```lm
-fn add_pairs xy ab as (int, int), (int, int) =
+fn add_pairs xy ab as (int, int), (int, int) -> (int, int) =
   ...
 
 // can instead be written as
@@ -48,7 +48,7 @@ fn add_pairs (x, y) (a, b) as (int, int), (int, int) -> (int, int) =
   (x + a, y + b)
 
 fn main =
-  add_pairs (1, 2) (3, 4)
+  std:io:println (add_pairs (1, 2) (3, 4))
 ```
 <sup><sub>&nbsp;&nbsp;&nbsp;&nbsp; A function with two tuple parameters being pattern matched in the function declaration</sub></sup>
 
@@ -59,7 +59,8 @@ Read more about patterns in the [Pattern Matching & Conditionals](./matching.md)
 A function may also be defined inside another function, of which it'll have access to its parent function's parameters. 
 
 ```lm
-fn main = add x y
+fn main =
+  std:io:println (add 5 6)
  where
   fn add x y = x + y
 ```

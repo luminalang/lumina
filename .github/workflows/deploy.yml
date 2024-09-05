@@ -11,22 +11,23 @@ jobs:
 
     steps:
       - name: Pulling changes
-        working-directory: lumina/
-        run: git pull
-
-        # - name: Build Compiler
-        #   run: |
-        #     cargo build --target x86_64-unknown-linux-gnu --release
-        #     cargo build --target x86_64-unknown-linux-musl --release
-        #     cargo build --target x86_64-pc-windows-gnu --release
+        working-directory: ./workdir/
+        run: |
+          if [ -d "lumina/" ]; then
+            cd lumina/
+            git pull
+          else
+            git clone ${{ github.repository }} lumina
+            echo "target" >> lumina/.gitignore
+            echo "mdbook/publish" >> lumina/.gitignore
+          fi
 
       - name: Build Documentation
-        working-directory: lumina/
+        working-directory: ./workdir/lumina/mdbook
         run: |
-          cd mdbook
           mdbook build -d publish/
-          cd ..
 
       - name: Test
-        working-directory: lumina/
-        run: cargo test -- --nocapture
+        working-directory: ./workdir/lumina
+        run: |
+          cargo test -- --nocapture

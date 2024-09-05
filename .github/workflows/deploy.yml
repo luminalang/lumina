@@ -11,6 +11,7 @@ jobs:
 
     steps:
       - name: Pulling changes
+        working-directory: lumina/
         run: git pull
 
         # - name: Build Compiler
@@ -20,10 +21,12 @@ jobs:
         #     cargo build --target x86_64-pc-windows-gnu --release
 
       - name: Build Documentation
+        working-directory: lumina/
         run: |
           cd mdbook
           mdbook build -d publish/
           cd ..
 
       - name: Test
+        working-directory: lumina/
         run: cargo test -- --nocapture

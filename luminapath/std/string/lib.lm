@@ -66,11 +66,6 @@ pub fn to_c_str str as string -> *u8 =
 pub trait ToString
   fn show as self -> string
 
-pub fn <> left right as string, string -> string =
-  match left.inner
-  | Nil -> right
-  | _  -> { string | inner = List:Concat left.inner right.inner }
-
 pub fn <:> left right as u8, string -> string =
   { string | inner = left : right.inner }
 

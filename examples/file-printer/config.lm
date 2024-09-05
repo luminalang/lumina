@@ -1,0 +1,5 @@
+val name = "file-printer"
+val version = "1.0"
+val authors = []
+
+val dependencies = []

@@ -100,6 +100,9 @@ pub fn any f list as fn(a -> bool), List a -> bool =
       else any #f right
   | Nil -> false
 
+pub fn from_range range f as (uint, uint), fn(uint -> a) -> List a =
+  Slice (vec:slice (vec:from_range range #f))
+
 pub fn itimes f n as fn(uint -> ()), uint -> () = 
   next 0
  where

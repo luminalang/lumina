@@ -12,6 +12,7 @@ use std:env [process_arguments]
 
 // we need these so that their implementations are always included
 use std:tuple
+use std:bool
 
 @![langItem(list as List)]
 

@@ -1,0 +1,3 @@
+impl ToString for bool
+  fn show b as bool -> string =
+    if b then "true" else "false"

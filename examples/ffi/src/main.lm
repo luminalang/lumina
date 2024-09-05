@@ -1,0 +1,8 @@
+use std:io
+
+@[extern "exit", platform ["linux-gnu", "linux-musl"]]
+fn my_libc_exit_call as i64 -> ()
+
+fn main =
+  let exit_code = 5
+   in my_libc_exit_call exit_code

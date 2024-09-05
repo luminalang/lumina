@@ -17,7 +17,7 @@ jobs:
             cd lumina/
             git pull
           else
-            git clone ${{ github.repository }} lumina
+            git clone https://github.com/${{ github.repository }}.git lumina
             echo "target" >> lumina/.gitignore
             echo "mdbook/publish" >> lumina/.gitignore
           fi

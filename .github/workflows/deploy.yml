@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Pulling changes
-        working-directory: ./workdir/
+        working-directory: workdir/
         run: |
           if [ -d "lumina/" ]; then
             cd lumina/
@@ -23,11 +23,11 @@ jobs:
           fi
 
       - name: Build Documentation
-        working-directory: ./workdir/lumina/mdbook
+        working-directory: workdir/lumina/mdbook
         run: |
           mdbook build -d publish/
 
       - name: Test
-        working-directory: ./workdir/lumina
+        working-directory: workdir/lumina
         run: |
           cargo test -- --nocapture

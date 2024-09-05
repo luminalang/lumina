@@ -7,13 +7,9 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Pulling changes
+        run: git pull
 
         # - name: Build Compiler
         #   run: |
@@ -24,11 +20,7 @@ jobs:
       - name: Build Documentation
         run: |
           cd mdbook
-          if [ ! -d "$HOME/lumina-docs" ]; then
-            echo "docs directory does not exist"
-            exit 1
-          fi
-          mdbook build -d ~/lumina-docs/
+          mdbook build -d publish/
           cd ..
 
       - name: Test

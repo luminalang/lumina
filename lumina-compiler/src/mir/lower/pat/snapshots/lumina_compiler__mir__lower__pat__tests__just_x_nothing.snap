@@ -4,7 +4,7 @@ expression: "format!\n(\"{}\\n\\nmissing patterns {{\\n  {}\\n}}\", tree,\nmissi
 ---
 ▵·0:sum0 variant0
     {
-      table = [PointTable { binds: [(v0, 1)] }],
+      table = [PointTable { binds: [(b0, 1)] }],
       excess = [u8]
       tail = 0
     }

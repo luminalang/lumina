@@ -3,7 +3,7 @@ source: lumina-compiler/src/mir/lower/pat/tests.rs
 expression: "format!\n(\"{}\\n\\nmissing patterns {{\\n  {}\\n}}\", tree,\nmissing.into_iter().map(| p |\np.fmt(& name_of_var, & name_of_field).to_string()).format(\"\\n  \"))"
 ---
 {
-  table = [PointTable { binds: [(v0, 0)] }],
+  table = [PointTable { binds: [(b0, 0)] }],
   excess = []
   tail = 0
 }

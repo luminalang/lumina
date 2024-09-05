@@ -273,15 +273,15 @@ impl<'a> fmt::Display for Pattern<'a> {
             Pattern::Name(name, params) => {
                 write!(f, "{op}{} {}{cp}", name, params.iter().format(" "))
             }
-            Pattern::Extractor(expr, None, params) if params.is_empty() => write!(f, "#({expr})"),
+            Pattern::Extractor(expr, None, params) if params.is_empty() => write!(f, "{expr}"),
             Pattern::Extractor(expr, Some(bind), params) if params.is_empty() => {
-                write!(f, "#({expr})@{bind}")
+                write!(f, "{expr}@{bind}")
             }
             Pattern::Extractor(expr, None, params) => {
-                write!(f, "#({expr}) {}", params.iter().format(" "))
+                write!(f, "{expr} {}", params.iter().format(" "))
             }
             Pattern::Extractor(expr, Some(bind), params) => {
-                write!(f, "#({expr})@{bind} {}", params.iter().format(" "))
+                write!(f, "{expr}@{bind} {}", params.iter().format(" "))
             }
             Pattern::String(str, params) if params.is_empty() => write!(f, "\"{str}\""),
             Pattern::String(str, params) => write!(f, "\"{str}\" {}", params.iter().format(" ")),

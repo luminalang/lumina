@@ -10,7 +10,7 @@ tuple(len = 4)
                 u8 ..
                     u8 ..
                         {
-                          table = [PointTable { binds: [(v0, 0), (v1, 1), (v2, 2), (v3, 3), (v4, 4), (v5, 5), (v6, 6), (v7, 7)] }],
+                          table = [PointTable { binds: [(b0, 0), (b1, 1), (b2, 2), (b3, 3), (b4, 4), (b5, 5), (b6, 6), (b7, 7)] }],
                           excess = [(▵·0:sum0 u8)]
                           tail = 0
                         }

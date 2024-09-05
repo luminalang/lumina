@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut, Index, IndexMut};
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Module(pub u32);
 
-map_key_impl!(Module(u32), "module");
+map_key_impl!(Module(u32), "▵·");
 
 /// A set of modules each containing a set of K -> V pairs
 ///

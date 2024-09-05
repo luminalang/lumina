@@ -61,7 +61,7 @@ macro_rules! test {
 
 macro_rules! pattern {
     ($name:ident, $src:literal) => {
-        test!($name, $src, Parser::pattern_parameter);
+        test!($name, $src, Parser::let_pattern);
     };
 }
 

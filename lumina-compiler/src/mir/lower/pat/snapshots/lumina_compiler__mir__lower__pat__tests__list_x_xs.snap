@@ -5,7 +5,7 @@ expression: "format!\n(\"{}\\n\\nmissing patterns {{\\n  {}\\n}}\", tree,\nmissi
 list variant0
     u8 ..
         {
-          table = [PointTable { binds: [(v10, 1), (v20, 2)] }],
+          table = [PointTable { binds: [(b10, 1), (b20, 2)] }],
           excess = [[u8]]
           tail = 0
         }

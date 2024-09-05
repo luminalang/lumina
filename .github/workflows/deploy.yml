@@ -1,0 +1,35 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+        # - name: Build Compiler
+        #   run: |
+        #     cargo build --target x86_64-unknown-linux-gnu --release
+        #     cargo build --target x86_64-unknown-linux-musl --release
+        #     cargo build --target x86_64-pc-windows-gnu --release
+
+      - name: Build Documentation
+        run: |
+          cd mdbook
+          if [ ! -d "$HOME/lumina-docs" ]; then
+            echo "docs directory does not exist"
+            exit 1
+          fi
+          mdbook build -d ~/lumina-docs/
+          cd ..
+
+      - name: Test
+        run: cargo test -- --nocapture

@@ -47,11 +47,11 @@ fn add x y as int, int -> int = x + y
 // fn(int, int -> int)
 #add
 
-// partially applicates the function to create a closure with one less parameter
+// partially applys the function to create a closure with one less parameter
 // fn(int -> int)
 #(add 5)
 
-// partially applicates an operator to create a closure with a single parameter
+// partially applys an operator to create a closure with a single parameter
 // fn(int -> int)
 #(+ 5)
 
@@ -85,11 +85,11 @@ fn add_five_if_just m as Maybe int -> Maybe int =
   change_if_just #(\n -> n + 5) m
 ```
 
-**Partially applicating Where-Bindings**
+**Partially applys Where-Bindings**
 
 <sup>*TODO: Is it overly complicated and confusing to explain this here? Maybe we should have a separate design patterns chapter*</sup>
 
-A common design pattern is to partially applicate where-bindings
+A common design pattern is to partially apply where-bindings
 
 ```lm
 fn add_five_if_just m as Maybe int -> Maybe int =

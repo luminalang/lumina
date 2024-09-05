@@ -21,13 +21,17 @@
 
 The `bool` type has either the value `true` or `false`
 
+**Arrays**
+
+Arrays are planned but currently not exposed to the user. 
+
 **Prelude**
 
 The following types aren't builtins but are available in prelude by default. 
 
 ```lm
-type string
-type List a // [a]
+type string // utf-8 encoded bytes
+type List a // (or [a]) an efficient dynamic list
 type Maybe a
 type Result a err
 type nothing
@@ -35,6 +39,7 @@ trait Num
 trait Compare
 trait ToString
 ```
+<sup><sub>&nbsp;&nbsp;&nbsp;&nbsp; `string` is incomplete and not yet validated as utf-8</sub></sup>
 
 ## Record types
 

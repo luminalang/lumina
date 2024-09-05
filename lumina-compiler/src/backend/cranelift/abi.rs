@@ -66,7 +66,7 @@ impl lir::Records {
         }
     }
 
-    fn abi_record_fields(
+    pub(super) fn abi_record_fields(
         &self,
         triple: &Triple,
         mk: MonoTypeKey,

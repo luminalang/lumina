@@ -91,6 +91,10 @@ impl<'a, 's> Merge<'s, Tail> for Lower {
         self.tail
     }
 
+    fn err_duplicate_field(&mut self, field: Tr<&'s str>, _: Span) {
+        panic!("duplicate field: {field}");
+    }
+
     fn name_of_field(&self, _: M<key::Record>, _: key::Field) -> &'s str {
         todo!();
     }

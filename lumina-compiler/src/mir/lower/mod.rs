@@ -96,6 +96,7 @@ pub enum FinError {
     UnreachablePattern(Span),
     MissingPatterns(Span, Vec<pat::MissingPattern>),
     InvalidCast(Tr<Type>, Type),
+    DuplicateField(Tr<String>, Span),
 }
 
 impl<'a, 's> Lower<'a, 's> {
@@ -259,6 +260,13 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for ParamsLower<'l, 'a, '
         self.lower.finalizer().transform(&ty)
     }
 
+    fn err_duplicate_field(&mut self, field: Tr<&'s str>, previous: Span) {
+        self.lower.errors.push(FinError::DuplicateField(
+            field.map(str::to_string),
+            previous,
+        ));
+    }
+
     fn str_to_ro(&mut self, str: &'s str) -> M<lumina_key::ReadOnly> {
         self.lower.str_to_ro(str)
     }
@@ -317,6 +325,13 @@ impl<'l, 'a, 's> pat::Merge<'s, key::DecisionTreeTail> for MatchBranchLower<'l, 
         self.lower.finalizer().transform(&ty)
     }
 
+    fn err_duplicate_field(&mut self, field: Tr<&'s str>, previous: Span) {
+        self.lower.errors.push(FinError::DuplicateField(
+            field.map(str::to_string),
+            previous,
+        ));
+    }
+
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
         self.lower.str_to_ro(str)
     }
@@ -351,6 +366,12 @@ pub fn emit_fin_error<'s>(
     error: FinError,
 ) {
     match error {
+        FinError::DuplicateField(field, previous) => sources
+            .error("field assigned twice")
+            .m(module)
+            .iline(previous, "first assigned here")
+            .iline(field.span, "later assigned again here")
+            .emit(),
         FinError::UnreachablePattern(span) => sources
             .error("unreachable pattern")
             .m(module)

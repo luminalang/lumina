@@ -315,11 +315,23 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
             let field = key::Field(i);
             let name = self.merge.name_of_field(record, field);
 
-            static POISON: Tr<hir::Pattern<'static>> = Tr::new(Span::null(), hir::Pattern::Poison);
+            match fields.iter().position(|(n, _, _)| **n == name) {
+                // Missing fields for record destructors are allowed
+                None => {
+                    static ANY: Tr<hir::Pattern<'static>> =
+                        Tr::new(Span::null(), hir::Pattern::Any);
 
-            match fields.iter().find(|(n, _, _)| **n == name) {
-                None => self.remaining.push((&POISON, None)),
-                Some((_, bind, pat)) => {
+                    self.remaining.push((&ANY, None))
+                }
+                Some(i) => {
+                    if let Some((additional, _, _)) = fields
+                        .get(i + 1..)
+                        .and_then(|fields| fields.iter().find(|(n, _, _)| **n == name))
+                    {
+                        self.merge.err_duplicate_field(fields[i].0, additional.span);
+                    }
+
+                    let (_, bind, pat) = &fields[i];
                     self.remaining.push((pat, Some(*bind)));
                 }
             }
@@ -525,6 +537,8 @@ pub trait Merge<'s, Tail: Display + Clone + PartialEq>: Sized {
     fn name_of_field(&self, record: Mod<key::Record>, field: key::Field) -> &'s str;
 
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly>;
+
+    fn err_duplicate_field(&mut self, field: Tr<&'s str>, previous: Span);
 
     fn fin_popped_inst(&mut self, span: Span) -> Option<(GenericMapper<Static>, CallTypes)>;
     fn fin_record(&mut self, rvar: Var) -> Option<(M<key::Record>, Vec<Type>)>;

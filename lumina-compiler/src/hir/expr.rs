@@ -831,6 +831,18 @@ impl<'s> fmt::Display for Expr<'s> {
             Expr::Lit(lit) => write!(f, "{lit:?}"),
             Expr::Tuple(elems) => write!(f, "{op}{}{cp}", elems.iter().format(", ")),
             Expr::List(elems, _) => write!(f, "[{}]", elems.iter().format(", ")),
+            Expr::Match(on, branches) if branches.len() == 1 => {
+                write!(
+                    f,
+                    "{} {} {} {} {} {}",
+                    "let".keyword(),
+                    &branches[0].0,
+                    '='.symbol(),
+                    on,
+                    "in".keyword(),
+                    &branches[0].1,
+                )
+            }
             Expr::Match(on, branches) => write!(
                 f,
                 "{} {} | {}",

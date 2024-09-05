@@ -79,12 +79,12 @@ impl<'a> FuncLower<'a> {
 
                 let values = fields
                     .iter()
-                    .map(|(_, expr)| self.expr_to_value(expr))
+                    .map(|(_, _, expr)| self.expr_to_value(expr))
                     .collect::<Vec<Value>>();
 
                 let sorted = (0..fields.len() as u32)
                     .map(key::Field)
-                    .map(|field| values[fields.iter().position(|(f, _)| *f == field).unwrap()])
+                    .map(|field| values[fields.iter().position(|(f, _, _)| *f == field).unwrap()])
                     .collect();
 
                 self.ssa().construct(sorted, ty)

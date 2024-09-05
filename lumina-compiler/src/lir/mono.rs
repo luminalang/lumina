@@ -51,7 +51,12 @@ impl From<MonoTypeKey> for MonoType {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct Records(Map<MonoTypeKey, MonomorphisedRecord>);
+pub struct Records {
+    #[deref_mut]
+    #[deref]
+    types: Map<MonoTypeKey, MonomorphisedRecord>,
+    pub pointer_size: u32,
+}
 
 pub struct MonomorphisedTypes {
     resolve: HashMap<(M<key::TypeKind>, Vec<MonoType>), MonoTypeKey>,
@@ -237,12 +242,12 @@ impl Records {
 
     fn size_of_ty(&self, ty: &MonoType, sum_are_ptrs: bool) -> u32 {
         match ty {
-            MonoType::SumDataCast { .. } if sum_are_ptrs => 64,
+            MonoType::SumDataCast { .. } if sum_are_ptrs => self.pointer_size,
             MonoType::SumDataCast { largest } => *largest,
-            MonoType::Pointer(_) => 64,
+            MonoType::Pointer(_) => self.pointer_size,
             MonoType::Int(intsize) => intsize.bits() as u32,
             MonoType::Float => 64,
-            MonoType::FnPointer(_, _) => 64,
+            MonoType::FnPointer(_, _) => self.pointer_size,
             MonoType::Unreachable => 0,
             MonoType::Monomorphised(key) => self.size_of_defined(*key),
         }
@@ -315,12 +320,12 @@ impl Records {
 }
 
 impl MonomorphisedTypes {
-    pub fn new(closure: M<key::Trait>) -> Self {
+    pub fn new(closure: M<key::Trait>, pointer_size: u32) -> Self {
         let mut types = Self {
             closure,
             resolve: HashMap::new(),
             tuples: HashMap::new(),
-            types: Records(Map::new()),
+            types: Records { types: Map::new(), pointer_size },
         };
         assert_eq!(UNIT, types.get_or_make_tuple(vec![]));
         types
@@ -490,21 +495,31 @@ impl<'a> Monomorphization<'a> {
         repr: Repr,
     ) -> MonomorphisedRecord {
         let original = original.map(|k| k.map(Into::into));
+        let autoboxed = original
+            .map(|key| {
+                fields
+                    .iter()
+                    .filter_map(|(field, ty)| {
+                        self.mono.types.field_is_recursive(key, ty).then_some(field)
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(HashSet::new);
         MonomorphisedRecord {
-            size: fields.values().map(|ty| self.mono.types.size_of(ty)).sum(),
             repr,
-            autoboxed: original
-                .map(|key| {
-                    fields
-                        .iter()
-                        .filter_map(|(field, ty)| {
-                            self.mono.types.field_is_recursive(key, ty).then_some(field)
-                        })
-                        .collect()
+            size: fields
+                .iter()
+                .map(|(field, ty)| {
+                    if autoboxed.contains(&field) {
+                        self.mono.types.pointer_size
+                    } else {
+                        self.mono.types.size_of(ty)
+                    }
                 })
-                .unwrap_or_else(HashSet::new),
+                .sum(),
             fields,
             original,
+            autoboxed,
         }
     }
 

@@ -208,7 +208,7 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
 
     let mainfunc = &mir.funcs[info.main].as_done();
 
-    let mut mono = mono::MonomorphisedTypes::new(info.closure);
+    let mut mono = mono::MonomorphisedTypes::new(info.closure, target.int_size() as u32);
 
     fn to_morphization<'a>(
         mir: &'a mir::MIR,

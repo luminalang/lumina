@@ -236,17 +236,74 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     }
 
     fn construct_record(&mut self, key: MonoTypeKey, values: &[lir::Value]) -> VEntry {
-        let fields = values.iter().map(|v| self.value_to_field(*v)).collect();
+        let triple = self.ctx.isa.triple();
+        let abi_types = self.types().abi_record_fields(triple, key);
+        assert_eq!(abi_types.len(), values.len());
+
+        let fields = abi_types
+            .into_iter()
+            .zip(values)
+            .map(|((_, abi), v)| {
+                let v = self.value_to_entry(*v);
+                self.map_entry_to_abi_field(abi, v)
+            })
+            .collect();
+
         VEntry::Struct(key, fields)
     }
 
-    fn value_to_field(&mut self, v: lir::Value) -> VField {
-        match self.value_to_entry(v) {
-            VEntry::Direct(v) => VField::Direct(v),
-            VEntry::Struct(_, fields) => VField::Struct(fields),
-            VEntry::FuncPointer(typing, ptr) => VField::FuncPointer(typing, ptr),
-            VEntry::SumPayload { largest, ptr } => VField::SumPayload { largest, ptr },
-            VEntry::ZST => VField::ZST,
+    fn map_entry_to_abi_field(&mut self, abi: abi::StructField<Type>, v: VEntry) -> VField {
+        match abi {
+            abi::StructField::Direct(_) => VField::Direct(v.as_direct()),
+            abi::StructField::AutoBoxedRecursion(ty, _) => {
+                let size = self.types().size_of_defined(ty);
+                assert_eq!(size, self.size_of_entry(&v));
+                let ptr = self.heap_alloc(size as i128);
+                let end = self.write_entry_to_ptr(ptr, 0, &v);
+                assert_eq!(size, end as u32 * 8);
+                VField::AutoBoxedRecursion(ty, ptr)
+            }
+            abi::StructField::Struct(_) => {
+                match v {
+                    VEntry::Struct(_, vfields) => VField::Struct(vfields),
+                    _ => unreachable!(),
+                }
+                // let subfields = fields.values().map(|field| ()).collect();
+                // VField::Struct(subfields)
+            }
+            abi::StructField::FuncPointer(_, _) => match v {
+                abi::Entry::FuncPointer(typing, ptr) => VField::FuncPointer(typing, ptr),
+                _ => unreachable!(),
+            },
+            abi::StructField::SumPayload { .. } => match v {
+                abi::Entry::SumPayload { largest, ptr } => VField::SumPayload { largest, ptr },
+                _ => unreachable!(),
+            },
+            abi::StructField::ZST => VField::ZST,
+        }
+    }
+
+    fn size_of_entry(&self, entry: &VEntry) -> u32 {
+        match entry {
+            abi::Entry::Direct(v) => self.f.type_of_value(*v).bits(),
+            abi::Entry::SumPayload { .. } | abi::Entry::FuncPointer(_, _) => {
+                self.ctx.pointer_type().bits()
+            }
+            abi::Entry::Struct(_, fields) => fields.values().map(|v| self.size_of_field(v)).sum(),
+            abi::Entry::ZST => 0,
+        }
+    }
+
+    fn size_of_field(&self, field: &VField) -> u32 {
+        match field {
+            abi::StructField::Direct(v) => self.f.type_of_value(*v).bits(),
+            abi::StructField::SumPayload { .. }
+            | abi::StructField::FuncPointer(_, _)
+            | abi::StructField::AutoBoxedRecursion(_, _) => self.ctx.pointer_type().bits(),
+            abi::StructField::Struct(fields) => {
+                fields.values().map(|v| self.size_of_field(v)).sum()
+            }
+            abi::StructField::ZST => 0,
         }
     }
 
@@ -477,7 +534,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         match field {
             VField::Direct(v) => VEntry::Direct(v),
             VField::FuncPointer(typing, ptr) => VEntry::FuncPointer(typing, ptr),
-            VField::AutoBoxedRecursion(_, _) => todo!("dereference"),
+            VField::AutoBoxedRecursion(ty, v) => {
+                let (entry, offset) = self.deref_type(v, BitOffset(0), &ty.into());
+                assert_eq!(offset.0, self.types().size_of_defined(ty));
+                entry
+            }
             VField::Struct(fields) => VEntry::Struct(field_type.as_key(), fields),
             VField::SumPayload { largest, ptr } => VEntry::SumPayload { largest, ptr },
             VField::ZST => VEntry::ZST,
@@ -514,7 +575,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 self.ins().store(MemFlags::new(), *v, ptr, offset);
                 offset + size.bytes() as i32
             }
-            VField::AutoBoxedRecursion(_, _) => todo!(),
+            VField::AutoBoxedRecursion(_, optr) => {
+                // TODO: are we meant to flatten it here with dereferences? I don't think we are.
+                self.ins().store(MemFlags::new(), *optr, ptr, offset);
+                offset + self.ctx.pointer_type().bytes() as i32
+            }
             VField::Struct(fields) => fields.values().fold(offset, |offset, field| {
                 self.write_field_to_ptr(ptr, offset, field)
             }),

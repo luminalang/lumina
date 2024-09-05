@@ -62,8 +62,6 @@ impl<'a, 's> Verify<'a, 's> {
                     );
                 };
 
-                // FOUND IT: The problem is that we're assigning this *before* creating the fields. So; they're never "fixed"
-
                 if let Some(bind) = modify.as_deref() {
                     let ty = self.type_of(*bind).cloned();
                     let exp = IType::infer(*var).tr(expr.span);

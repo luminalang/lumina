@@ -46,7 +46,7 @@ map_key_impl!(Variant(u32), "variant");
 /// A Record field
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Field(pub u32);
-map_key_impl!(Field(u32), "val");
+map_key_impl!(Field(u32), "field");
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ReadOnly(u32);

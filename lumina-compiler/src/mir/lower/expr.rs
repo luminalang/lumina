@@ -15,7 +15,7 @@ pub enum Expr {
     Yield(Callable),
 
     Access(Box<Self>, M<key::Record>, Vec<Type>, key::Field),
-    Record(M<key::Record>, Vec<Type>, Vec<(key::Field, Self)>),
+    Record(M<key::Record>, Vec<Type>, Vec<(key::Field, Span, Self)>),
 
     Int(IntSize, i128),
     Bool(bool),
@@ -220,36 +220,42 @@ impl<'a, 's> Lower<'a, 's> {
                     return Expr::Poison;
                 };
 
-                let mut unordered_fields = fields
-                    .iter()
-                    .filter_map(|(name, expr)| {
-                        let expr = self.lower_expr(expr.as_ref());
+                let mut unordered_fields = Vec::with_capacity(fields.len());
 
-                        match self.fnames[key].find(|n| n == name) {
-                            Some(field) => Some((field, expr)),
-                            None => {
-                                // Should've already errored by type finalization
-                                // self.errors.push(FinError::FieldNotFound(key, *name));
-                                None
+                for (name, expr) in fields {
+                    let expr = self.lower_expr(expr.as_ref());
+
+                    match self.fnames[key].find(|n| n == name) {
+                        Some(field) => {
+                            match unordered_fields
+                                .iter()
+                                .find_map(|(f, span, _)| (*f == field).then_some(*span))
+                            {
+                                Some(previous) => {
+                                    self.errors.push(FinError::DuplicateField(
+                                        name.map(str::to_string),
+                                        previous,
+                                    ));
+                                }
+                                None => unordered_fields.push((field, name.span, expr)),
                             }
                         }
-                    })
-                    .collect::<Vec<(key::Field, Expr)>>();
-
-                let mut missing_fields = vec![];
+                        // Should've already errored by type finalization
+                        None => {}
+                    }
+                }
 
                 for field in self.fnames[key].keys() {
-                    if unordered_fields.iter().all(|(f, _)| *f != field) {
+                    if unordered_fields.iter().all(|(f, _, _)| *f != field) {
                         match modified {
                             Some(bind) => {
                                 let object = Expr::bind(**bind);
                                 let expr =
                                     Expr::Access(Box::new(object), key, params.clone(), field);
-                                unordered_fields.push((field, expr));
+                                unordered_fields.push((field, bind.span, expr));
                             }
                             None => {
-                                missing_fields.push(field);
-                                unordered_fields.push((field, Expr::Poison));
+                                unordered_fields.push((field, expr.span, Expr::Poison));
                             }
                         }
                     }
@@ -511,7 +517,7 @@ impl fmt::Display for Expr {
                 '|'.symbol(),
                 fields
                     .iter()
-                    .map(|(k, v)| format!("{k} {} {v}", '='.symbol()))
+                    .map(|(k, _, v)| format!("{k} {} {v}", '='.symbol()))
                     .format(", "),
             ),
             Expr::Int(intsize, n) => write!(f, "{n} {as_} {intsize}"),

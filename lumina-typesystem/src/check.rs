@@ -57,6 +57,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
             }
             (Ty::Generic(g), Ty::Generic(e)) => g == e,
             (Ty::Int(g), Ty::Int(e)) => g == e,
+            (Ty::Simple("poison"), _) | (_, Ty::Simple("poison")) => true,
             (Ty::Simple(g), Ty::Simple(e)) => g == e,
             (Ty::Special(g), Ty::Special(e)) if g == e => true,
             (Ty::Special(var), exp) => self.unify_into_var(u, false, *var, exp),

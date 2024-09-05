@@ -354,6 +354,12 @@ impl<'a, 's> Verify<'a, 's> {
                 }
                 ConstraintError::IntConstantNegativeUnsigned(_, _) => todo!(),
                 ConstraintError::IntConstantTooLarge(_, _, _) => todo!(),
+                ConstraintError::Trait(ty, con) if con.trait_ == self.items.pinfo.listable => {
+                    let tfmt = self.ty_formatter();
+                    let got = tfmt.clone().fmt(&*ty);
+                    let exp = format!("[{}]", tfmt.fmt(&con.params[0]));
+                    self.emit_type_mismatch(ty.span, "", got, exp);
+                }
                 ConstraintError::Trait(ty, con) => {
                     self.error("constraint not met")
                         .eline(

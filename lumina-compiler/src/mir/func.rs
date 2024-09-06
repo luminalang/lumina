@@ -509,8 +509,8 @@ impl<'a, 's> Verify<'a, 's> {
                 .type_system()
                 .try_get_known_type(*var)
                 .and_then(|ty| self.module_of_type(ty.as_ref())),
-            IType::Container(Container::Pointer, _) => self.hir.lookups.find_lib(&["std", "ptr"]),
-            IType::Int(_) => self.hir.lookups.find_lib(&["std", "math"]),
+            IType::Container(Container::Pointer, _) => self.hir.lookups.find_lib("std", "ptr"),
+            IType::Int(_) => self.hir.lookups.find_lib("std", "math"),
             _ => None,
         }
     }

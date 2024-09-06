@@ -61,13 +61,8 @@ impl<'s> Collector<'s> {
             let root = path.join(root_name);
             info!("opening {} as {module}", trim_display(&root));
             let source = match std::fs::read_to_string(&root) {
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
                 Err(err) => {
-                    return Err(self.reserve_module_and_err(
-                        module,
-                        &path,
-                        Error::File(err, path.clone()),
-                    ))
+                    return Err(self.reserve_module_and_err(module, &path, Error::File(err, root)))
                 }
                 Ok(str) => str,
             };

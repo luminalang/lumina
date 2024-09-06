@@ -218,8 +218,12 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                     Expr::PassExpr(Box::new(inner))
                 }
                 parser::Expr::CallExpr(inner, _) => {
-                    let inner = self.expr((**inner).as_ref());
-                    todo!("error that it's not a valid pass?");
+                    let _inner = self.expr((**inner).as_ref());
+                    self.emit_syntax_error::<()>(
+                        to_pass.span,
+                        format!("invalid expression to pass as function value"),
+                    );
+                    Expr::Poison
                 }
                 // #(0)
                 _ => {

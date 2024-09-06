@@ -3,8 +3,8 @@
 use crate::Target;
 use derive_more::From;
 use lumina_key as key;
-use std::path::PathBuf;
-use tracing::info_span;
+use std::path::{Path, PathBuf};
+use tracing::{info_span, warn};
 
 mod sources;
 pub use sources::{ErrorBuilder, Sources};
@@ -103,13 +103,7 @@ pub fn parse_with_config<'s>(
 
         // include all external dependencies listed in config
         for dep in config.dependencies.iter() {
-            let mut path = lumina.clone();
-            path.push("ext");
-            path.push(&dep.name);
-
-            let module = collector.lookups.new_lib("ext", dep.name.clone());
-            collector.entities.add_module(module);
-            collector.include_dir(module, path)?;
+            include_ext_library(&mut collector, &lumina, dep)?;
         }
 
         collector.link_up_imports_and_exposed();
@@ -121,4 +115,44 @@ pub fn parse_with_config<'s>(
             config,
         })
     }
+}
+
+fn include_ext_library<'s>(
+    collector: &mut Collector<'s>,
+    lumina: &Path,
+    dep: &config::Dependency,
+) -> Result<key::Module, Error> {
+    if let Some(module) = collector.lookups.find_lib("ext", &dep.name) {
+        warn!("ignoring versions for whether ext library should be included");
+        return Ok(module);
+    }
+
+    let module = collector.lookups.new_lib("ext", dep.name.clone());
+
+    let mut path = lumina.to_path_buf();
+    path.push("ext");
+    path.push(&dep.name);
+
+    let config = {
+        info_span!("ext:{} config", dep.name);
+        let configpath = path.join("config.lm");
+        let str = std::fs::read_to_string(&configpath).map_err(Error::Config)?;
+        ProjectConfig::parse(&str).map_err(|cerr| Error::ConfigError(str, configpath, cerr))?
+    };
+
+    if config.prelude != "" && config.prelude != "std:prelude" {
+        panic!("specifying a prelude in an `ext` library is not supported");
+    }
+
+    path.push("src");
+
+    collector.entities.add_module(module);
+    collector.include_dir(module, path)?;
+
+    // include all external dependencies listed in config
+    for dep in config.dependencies.iter() {
+        include_ext_library(collector, &lumina, dep)?;
+    }
+
+    Ok(module)
 }

@@ -41,6 +41,11 @@ impl<K: MapKey, V> Map<K, V> {
         self.inner.truncate(at.into())
     }
 
+    /// Remove all elements while keeping the capacity the same
+    pub fn clear(&mut self) {
+        self.inner.clear()
+    }
+
     pub fn with_capacity(cap: usize) -> Self {
         Map { inner: Vec::with_capacity(cap), _key: PhantomData }
     }

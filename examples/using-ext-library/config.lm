@@ -1,0 +1,7 @@
+val name = "using-ext-library"
+val version = "1.0"
+val authors = []
+
+val dependencies = [
+  { name = "example_lib" }
+]

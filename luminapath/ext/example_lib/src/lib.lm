@@ -1,0 +1,1 @@
+pub fn text as string = "Hello from $LUMINAPATH/ext/example_lib/src/main.lm"

@@ -558,7 +558,7 @@ impl<'a, 's> Verify<'a, 's> {
         match self.type_system().call_as_function(span, &ty, params) {
             Some((kind, ptypes, returns)) => InstCall::LocalCall(span, ptypes, returns, kind),
             None if params == 0 => InstCall::Local(ty.value.tr(span)),
-            None => panic!("ET: can not take parameters (or do we err on this later?)"),
+            None => InstCall::Local(ty),
         }
     }
 

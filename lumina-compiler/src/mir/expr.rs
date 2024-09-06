@@ -189,11 +189,20 @@ impl<'a, 's> Verify<'a, 's> {
             }
             InstCall::Local(ty) if params.is_empty() => ty.value,
             InstCall::Local(ty) => {
+                // TODO: this is insufficient. We need a `type_system().is_poison(_)` method.
+                // That method should also be used before any direct comparisons with `==` in TS if
+                // we still have those.
                 if matches!(ty.value, IType::Simple("poison")) {
                     return IType::poison();
                 }
 
-                todo!("ET: parameters to non-function");
+                let got = self.ty_formatter().fmt(&*ty);
+                self.error("type mismatch")
+                    .eline(params[0].span, "parameter given to non-closure")
+                    .iline(span, format!("attempted to apply this {got} as a closure"))
+                    .emit();
+
+                IType::poison()
             }
             InstCall::Instantiated(instinfo) => {
                 self.type_check_and_emit_application(span, &params, &instinfo.ptypes);

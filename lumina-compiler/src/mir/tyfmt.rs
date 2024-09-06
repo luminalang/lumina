@@ -22,6 +22,7 @@ impl<'a, 's> FmtSpecial<'a, 's> for Inference {
         let ty = state.env.get(*self);
         match ty {
             Ok(ty) => state.fmt(&**ty).fmt(f),
+            Err(_) if state.env.get_int_constraint(*self).is_some() => "integer".fmt(f),
             Err(_) => "_".fmt(f),
         }
     }

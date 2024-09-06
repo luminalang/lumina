@@ -178,22 +178,33 @@ impl<'a, 's> TypeSystem<'a, 's> {
                     return self.call_as_function(span, &fty, params);
                 }
 
-                match self.env.vars[*var].assignment.clone() {
+                let vdata = &self.env.vars[*var];
+                match vdata.assignment.clone() {
                     Some(ty) => self.call_as_function(span, &ty, params),
                     None if params == 0 => None,
-                    None => {
-                        let params = (0..params)
-                            .map(|_| self.env.var(span))
-                            .map(Ty::Special)
-                            .collect::<Vec<_>>();
+                    None => match vdata.int_constraint {
+                        Some(intcon) => {
+                            // To improve the error of trying to call an int, force inference to
+                            // avoid showing tvars in user-facing messages.
+                            let intsize = intcon.to_default_type(self.default_int_size);
+                            let ty = IType::Int(intsize).tr(vdata.span);
+                            self.env.vars[*var].assignment = Some(ty);
+                            None
+                        }
+                        None => {
+                            let params = (0..params)
+                                .map(|_| self.env.var(span))
+                                .map(Ty::Special)
+                                .collect::<Vec<_>>();
 
-                        let ret = Ty::Special(self.env.var(span));
+                            let ret = Ty::Special(self.env.var(span));
 
-                        self.env.vars[*var].assignment =
-                            Some(Ty::closure(params.clone(), ret.clone()).tr(span));
+                            self.env.vars[*var].assignment =
+                                Some(Ty::closure(params.clone(), ret.clone()).tr(span));
 
-                        Some((Container::Closure, params, ret))
-                    }
+                            Some((Container::Closure, params, ret))
+                        }
+                    },
                 }
             }
             _ => None,

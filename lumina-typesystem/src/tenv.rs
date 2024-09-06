@@ -94,6 +94,10 @@ impl<'s> TEnv<'s> {
         vdata.assignment.as_ref().ok_or(vdata.span)
     }
 
+    pub fn get_int_constraint(&self, var: Var) -> Option<IntConstraint> {
+        self.vars[var].int_constraint
+    }
+
     pub fn add_field(&mut self, var: Var, name: Tr<&'s str>) -> Var {
         debug_assert_eq!(
             self.vars[var].assignment, None,

@@ -259,6 +259,13 @@ impl<'s> Lookups<'s> {
         self.resolve_in(origin, Namespace::Types, module, &[name], igv)
     }
 
+    fn poison_or_not_found<'a>(&self, module: key::Module, name: &'a str) -> ImportError<'a> {
+        self.modules[module]
+            .try_poison_namespace(name)
+            .map(|_| ImportError::Poison)
+            .unwrap_or(ImportError::NotFound(module, name))
+    }
+
     fn resolve_in<'a>(
         &self,
         origin: key::Module,
@@ -278,10 +285,10 @@ impl<'s> Lookups<'s> {
                     .resolve_import(module, *x)
                     .map(|m| m.map(Entity::Module))
                     .or_else(|| self.modules[module].try_namespace(namespace, *x))
-                    .ok_or(ImportError::NotFound(module, *x)),
+                    .ok_or_else(|| self.poison_or_not_found(module, *x)),
                 _ => self.modules[module]
                     .try_namespace(namespace, *x)
-                    .ok_or(ImportError::NotFound(module, *x)),
+                    .ok_or_else(|| self.poison_or_not_found(module, *x)),
             },
             [x, xs @ ..] => {
                 match self.resolve_import(module, x) {
@@ -296,6 +303,9 @@ impl<'s> Lookups<'s> {
                     // no module of this name found, but it could still be a type/trait
                     None if xs.len() == 1 => {
                         match self.modules[module].try_namespace(Namespace::Types, *x) {
+                            None if self.modules[module].try_poison_namespace(*x).is_some() => {
+                                Err(ImportError::Poison)
+                            }
                             None => Err(ImportError::ModNotFound(module, *x)),
                             Some(entity) => match entity.key {
                                 Entity::Type(type_) => {
@@ -413,6 +423,7 @@ pub enum ImportError<'s> {
     LibNotInstalled(&'s str),
     NotFound(key::Module, &'s str),
     ModNotFound(key::Module, &'s str),
+    Poison,
 }
 
 pub trait EntityT: Sized {
@@ -437,6 +448,7 @@ macro_rules! impl_entityt {
     };
 }
 
+impl_entityt!(Span, poisoned);
 impl_entityt!(NFunc, funcs);
 impl_entityt!(key::TypeKind, types);
 
@@ -450,6 +462,8 @@ pub struct Namespaces<'s> {
     kind: ModuleKind,
 
     accessors: HashMap<&'s str, Vec<Mod<(key::Record, key::Field)>>>,
+
+    poisoned: HashMap<&'s str, Mod<Span>>,
 }
 
 #[derive(Debug)]
@@ -501,6 +515,10 @@ impl<'s> Namespaces<'s> {
     fn try_type_namespace<'a>(&self, name: &'a str) -> Option<Mod<Entity<'a>>> {
         self.types.get(name).copied().map(|m| m.map(Entity::Type))
     }
+
+    fn try_poison_namespace<'a>(&self, name: &'a str) -> Option<Mod<Span>> {
+        self.poisoned.get(name).copied()
+    }
 }
 
 /// Pointer to something in the function namespace
@@ -515,6 +533,7 @@ pub enum NFunc {
 impl Sources {
     pub fn emit_lookup_err(&self, span: Span, module: key::Module, kind: &str, err: ImportError) {
         match err {
+            ImportError::Poison => {}
             ImportError::LibNotInstalled(str) => self
                 .error("library not found")
                 .m(module)

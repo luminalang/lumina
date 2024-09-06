@@ -8,6 +8,14 @@ macro_rules! kind_key {
             $($vname($vty)),*,
         }
 
+        impl $name {
+            #[inline(always)]
+            #[allow(dead_code)]
+            pub fn inside(self, module: $crate::Module) -> M<$name> {
+                $crate::M(module, self)
+            }
+        }
+
         $(
             impl From<$vty> for $name {
                 fn from(key: $vty) -> Self {

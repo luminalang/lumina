@@ -629,19 +629,46 @@ impl<'s> Collector<'s> {
 
                         self.expose_type_members(module, v, entity.map(|_| ty), &exposed.members);
                     }
-                    Entity::Module(_) => self
-                        .sources
-                        .error("import error")
-                        .m(module)
-                        .eline(span, "entity not found")
-                        .text("there is however a module of that name")
-                        .emit(),
-                    Entity::Member(..) => {
-                        panic!("ET: members should be exposed with the `Type [member]` syntax, not `Type::member`");
+                    Entity::Module(_) => {
+                        self.sources
+                            .error("import error")
+                            .m(module)
+                            .eline(span, "item not found")
+                            .text("there is however a module of that name")
+                            .emit();
+
+                        self.lookups
+                            .declare(module, v, exposed.name, module, exposed.span);
+                    }
+                    Entity::Member(kind, name) => {
+                        let tname = self
+                            .entities
+                            .header_of_ty(kind.inside(entity.module))
+                            .header
+                            .name;
+                        let kind = match kind {
+                            key::TypeKind::Sum(_) => "variant",
+                            key::TypeKind::Record(_) => "field",
+                            key::TypeKind::Trait(_) => "method",
+                        };
+                        self.sources
+                            .error("import error")
+                            .m(module)
+                            .eline(span, "item not found")
+                            .text(format!(
+                                "to expose the {kind} named {name}, use `{tname} [{name}]` instead"
+                            ))
+                            .emit();
+                        self.lookups
+                            .declare(module, v, exposed.name, module, exposed.span);
                     }
                 },
 
-                Err(err) => self.sources.emit_lookup_err(span, module, "entity", err),
+                Err(err) => {
+                    self.sources.emit_lookup_err(span, module, "item", err);
+                    self.lookups
+                        .declare(module, v, exposed.name, module, exposed.span);
+                }
             }
         }
     }

@@ -39,6 +39,8 @@ pub struct TyFmtState<'a, 's> {
     pub(crate) hir: &'a HIR<'s>,
     env: &'a TEnv<'s>,
 
+    default_intsize: u8,
+
     forall: Map<key::Generic, &'s str>,
     pforall: Map<key::Generic, &'s str>,
 
@@ -104,6 +106,13 @@ impl<'a, 's, T: FmtSpecial<'a, 's>> TyFormatted<'a, 's> for Ty<T> {
                 }
             }
             Ty::Special(special) => T::specialfmt(special, state, f),
+            Ty::Int(size) if size.bits() == state.default_intsize => {
+                if size.signed {
+                    "int".fmt(f)
+                } else {
+                    "uint".fmt(f)
+                }
+            }
             ty if state.surface => write!(f, "{ty}"),
             ty => write!(f, "{}{ty}{}", '('.symbol(), ')'.symbol()),
         }

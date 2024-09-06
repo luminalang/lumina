@@ -441,7 +441,9 @@ impl<'a, 's> Verify<'a, 's> {
     pub fn ty_formatter(&'a self) -> TyFmtState<'a, 's> {
         let forall = self.fdef.forall.borrow().names().collect();
         let pforall = self.pforall.names().collect();
-        TyFmtState::new(self.hir, &self.tenvs[self.current.fkey], forall, pforall)
+        let isize = self.target.int_size();
+        let env = &self.tenvs[self.current.fkey];
+        TyFmtState::new(self.hir, env, isize, forall, pforall)
     }
 
     pub fn module(&self) -> key::Module {

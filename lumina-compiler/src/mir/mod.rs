@@ -87,7 +87,7 @@ pub fn run<'a, 'h, 's>(
     // Verify members of implementations, as well as statically finishing the method typings
     let mut imethods = hir.impls.secondary();
     for impl_ in hir.impls.iter() {
-        let (assoc, methods) = verify_impl_headers(&hir, &mut tenvs, impl_);
+        let (assoc, methods) = verify_impl_headers(&hir, &mut tenvs, impl_, target.int_size());
         if !assoc.is_empty() {
             unimplemented!("associated types");
         }
@@ -258,6 +258,7 @@ fn verify_impl_headers<'s>(
     hir: &hir::HIR<'s>,
     tenvs: &mut MMap<key::Func, TEnv<'s>>,
     impl_: M<key::Impl>,
+    default_int_size: u8,
 ) -> (
     Map<key::AssociatedType, Tr<Type>>,
     Map<key::Method, Option<M<key::Func>>>,
@@ -393,7 +394,8 @@ fn verify_impl_headers<'s>(
             let fdef = &hir.funcs[fkey].as_defined();
             let fname = *hir.func_names[fkey];
             let forall = fdef.forall.borrow().names().collect();
-            let fstring = tyfmt::TyFmtState::new(hir, &env, forall, iforall.clone())
+            let isize = default_int_size;
+            let fstring = tyfmt::TyFmtState::new(hir, &env, isize, forall, iforall.clone())
                 .function(fname, &fdef.typing);
             error = error.text(format!("{}  {}", "unknown".symbol(), fstring));
 
@@ -406,8 +408,9 @@ fn verify_impl_headers<'s>(
             let env = TEnv::new();
             let fname = hir.func_names[trmethodmap[*method].inside(tmod)];
             let forall = forall.names().collect();
-            let fstring =
-                tyfmt::TyFmtState::new(hir, &env, forall, iforall.clone()).function(fname, &typing);
+            let isize = default_int_size;
+            let fstring = tyfmt::TyFmtState::new(hir, &env, isize, forall, iforall.clone())
+                .function(fname, &typing);
             error = error.text(format!("{}  {}", "missing".symbol(), fstring));
 
             if i == missing_methods.len() - 1 {
@@ -433,11 +436,12 @@ fn verify_impl_headers<'s>(
             let fdef = hir.funcs[*ifunc].as_defined();
             let imforall: Map<_, _> = fdef.forall.borrow().names().collect();
             let fname = hir.func_names[*ifunc];
+            let isize = default_int_size;
 
-            let got = tyfmt::TyFmtState::new(hir, &env, imforall.clone(), iforall.clone())
+            let got = tyfmt::TyFmtState::new(hir, &env, isize, imforall.clone(), iforall.clone())
                 .function(fname, &fdef.typing);
 
-            let exp = tyfmt::TyFmtState::new(hir, &TEnv::new(), imforall, iforall.clone())
+            let exp = tyfmt::TyFmtState::new(hir, &TEnv::new(), isize, imforall, iforall.clone())
                 .function(hir.func_names[*tfunc], &result.instantiated);
 
             error = error.text(format!("{}      {}", "got".symbol(), got));

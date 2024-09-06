@@ -81,6 +81,7 @@ pub struct BuildFlags {
     pub project: Option<FilePathBuf>,
 }
 
+#[derive(Debug)]
 pub struct Environment {
     pub current_directory: FilePathBuf,
     pub lumina_directory: FilePathBuf,

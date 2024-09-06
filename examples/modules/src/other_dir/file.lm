@@ -1,0 +1,6 @@
+pub fn print str as string -> () =
+  std:io:println str
+
+pub type Color = Red | Green | Blue
+
+pub type Direction = Up | Down | Left | Right

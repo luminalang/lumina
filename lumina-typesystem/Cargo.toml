@@ -10,7 +10,7 @@ itertools = "*"
 lumina-util = { path = "../lumina-util" }
 lumina-key = { path = "../lumina-key" }
 lumina-collections = { path = "../lumina-collections" }
-derive_more = "*"
+derive_more = { version = "1.0.*", features = ["from", "display", "index", "index_mut", "deref", "deref_mut"] }
 derive-new = "0.6"
 tracing = "0.1.40"
 smallvec = "*"

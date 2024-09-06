@@ -56,6 +56,16 @@ pub struct FuncAttr<'s> {
 #[derive(Debug, Default)]
 pub struct TypeAttr<'s> {
     pub shared: SharedAttr<'s>,
+    pub repr: Repr,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Repr {
+    #[default]
+    Lumina,
+    C,
+    Packed,
+    Align(u8),
 }
 
 impl<'s> TypeAttr<'s> {
@@ -64,7 +74,7 @@ impl<'s> TypeAttr<'s> {
         sources: &Sources,
         exprs: &[Tr<parser::Expr<'s>>],
     ) -> TypeAttr<'s> {
-        let mut this = TypeAttr { shared: SharedAttr::new() };
+        let mut this = TypeAttr { shared: SharedAttr::new(), repr: Repr::default() };
 
         for expr in exprs {
             if let Err(err) = this.parse_attr(expr.as_ref()) {
@@ -78,7 +88,41 @@ impl<'s> TypeAttr<'s> {
     fn parse_attr(&mut self, expr: Tr<&parser::Expr<'s>>) -> Result<(), Error> {
         let (entry, params) = path(expr, "attribute name")?;
         match entry.path.as_slice() {
+            ["repr"] => self.parse_repr(expr.span, params),
             _ => self.shared.parse_attr(expr.span, entry, params),
+        }
+    }
+
+    fn parse_repr(&mut self, span: Span, params: &[Tr<parser::Expr<'s>>]) -> Result<(), Error> {
+        if params.is_empty() {
+            return Err(Error::Expected(span, "argument for repr"));
+        }
+
+        if let Ok(name) = name(params[0].as_ref()) {
+            match name {
+                "align" if params.len() != 2 => Err(Error::Expected(
+                    params[0].span.move_indice(5),
+                    "integer argument for `repr align`",
+                )),
+                "align" => num(params[1].as_ref()).map(|n| self.repr = Repr::Align(n as u8)),
+                "packed" => {
+                    self.repr = Repr::Packed;
+                    Ok(())
+                }
+                _ => Err(Error::Expected(params[0].span, "`align` or `packed`")),
+            }
+        } else {
+            if let Ok(str) = string(params[0].as_ref(), "") {
+                match str {
+                    "C" => self.repr = Repr::C,
+                    "lumina" => self.repr = Repr::Lumina,
+                    _ => return Err(Error::UnknownRepr(params[0].span, str.to_string())),
+                }
+
+                Ok(())
+            } else {
+                Err(Error::Expected(span, "string or identifier"))
+            }
         }
     }
 }
@@ -93,6 +137,7 @@ fn emit_err(module: key::Module, sources: &Sources, err: Error) {
     match err {
         Error::Expected(span, exp) => base.eline(span, format!("expected {exp}")),
         Error::Unknown(span) => base.eline(span, format!("unknown attribute")),
+        Error::UnknownRepr(span, repr) => base.eline(span, format!("unknown repr: {repr}")),
     }
     .emit()
 }
@@ -190,6 +235,15 @@ fn path<'a, 's>(
     }
 }
 
+fn name<'a, 's>(expr: Tr<&'a parser::Expr<'s>>) -> Result<&'s str, Error> {
+    match expr.value {
+        parser::Expr::Call(apath, params) if apath.path.is_name() && params.is_empty() => {
+            Ok(apath.path.as_name().unwrap())
+        }
+        _ => Err(Error::Expected(expr.span, "identifier without parameters")),
+    }
+}
+
 fn string<'a, 's>(expr: Tr<&'a parser::Expr<'s>>, exp: &'static str) -> Result<&'s str, Error> {
     match expr.value {
         parser::Expr::Lit(parser::Literal::String(name)) => Ok(name),
@@ -218,5 +272,6 @@ fn strings<'s>(exprs: &[Tr<parser::Expr<'s>>], exp: &'static str) -> Result<Vec<
 
 pub enum Error {
     Expected(Span, &'static str),
+    UnknownRepr(Span, String),
     Unknown(Span),
 }

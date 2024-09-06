@@ -510,7 +510,19 @@ impl<'a, 's> Verify<'a, 's> {
                 .try_get_known_type(*var)
                 .and_then(|ty| self.module_of_type(ty.as_ref())),
             IType::Container(Container::Pointer, _) => self.hir.lookups.find_lib("std", "ptr"),
-            IType::Int(_) => self.hir.lookups.find_lib("std", "math"),
+            IType::Int(size) => self.hir.lookups.find_lib("std", "math").and_then(|math| {
+                match self
+                    .hir
+                    .lookups
+                    .resolve_module(math, &[size.to_string().as_str()])
+                {
+                    Ok(ast::Mod { key: ast::Entity::Module(module), .. }) => Some(module),
+                    _ => {
+                        warn!("skipping resolving the stdlib std:math:{size} because it is not available");
+                        None
+                    }
+                }
+            }),
             _ => None,
         }
     }

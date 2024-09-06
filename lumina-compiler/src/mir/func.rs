@@ -221,7 +221,7 @@ impl<'a, 's> Verify<'a, 's> {
             self.type_check_and_emit(ret, expected);
         }
 
-        let forall = self.fdef.forall.borrow_mut();
+        let mut forall = self.fdef.forall.borrow_mut();
         let lforalls = self.fdef.lambdas.foralls.borrow_mut();
 
         // Finalize all types by defaulting and resolving any remaining inference
@@ -230,7 +230,11 @@ impl<'a, 's> Verify<'a, 's> {
             self.target,
             &self.field_lookup[module],
         );
-        Finalizer::new(ts, None).infer_all_unknown_types();
+        let default_to_generic = match &self.hir.funcs[fkey] {
+            hir::FuncDefKind::Defined(_) => Some(&mut *forall),
+            _ => None,
+        };
+        Finalizer::new(ts, default_to_generic).infer_all_unknown_types();
 
         // Finalization pass transforming HIR to MIR
         let mut finalization = lower::Lower::new(

@@ -1,6 +1,5 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"(Just (Just (Pair 10 20)))\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"(Just (Just (Pair 10 20)))\"; format! (\"\\n{}\", ast) }"
 ---
-
-(1^Just (1^Just (1^Pair 10 20)))
+(Just (Just (Pair 10 20)))

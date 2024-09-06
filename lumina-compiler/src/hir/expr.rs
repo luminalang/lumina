@@ -78,7 +78,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             .collect::<Vec<_>>()
     }
 
-    pub fn expr(&mut self, expr: Tr<&parser::Expr<'s>>) -> Tr<Expr<'s>> {
+    pub fn expr(&mut self, mut expr: Tr<&parser::Expr<'s>>) -> Tr<Expr<'s>> {
         trace!("lowering expression {expr}");
 
         match expr.value {
@@ -91,19 +91,19 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             }
             parser::Expr::Lit(parser::Literal::Float(n)) => Expr::Lit(Literal::Float(*n)),
             parser::Expr::Lit(parser::Literal::String(str)) => Expr::Lit(Literal::String(*str)),
-            parser::Expr::Call(apath, params, _) => {
-                self.callable(apath.as_ref(), params, Expr::Call)
-            }
-            parser::Expr::Lambda(patterns, params, body, _seal) => {
+            parser::Expr::Call(apath, params) => self.callable(apath.as_ref(), params, Expr::Call),
+            parser::Expr::Lambda(patterns, params, body) => {
                 let lambda = self.lambda(patterns, None, (**body).as_ref());
                 let params = self.exprs(params);
                 Expr::Call(lambda.into(), TypeAnnotation::new(), params)
             }
 
+            parser::Expr::Group(inner) => self.expr((&**inner).tr(expr.span)).value,
+
             // (f 0) 1
             // -------
             // let _ = #(f 0) in _ 1
-            parser::Expr::CallExpr(inner, params, _) => {
+            parser::Expr::CallExpr(inner, params) => {
                 let value = Expr::PassExpr(Box::new(self.expr((**inner).as_ref()))).tr(inner.span);
                 let params = self.exprs(params);
 
@@ -123,7 +123,8 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             }
             parser::Expr::DotPipe(elems) => {
                 let [left, right] = &**elems;
-                self.dotpipe(expr.span, left.as_ref(), right.as_ref())
+                expr.span = right.span;
+                self.dotpipe(left.as_ref(), right.as_ref())
             }
             parser::Expr::Match(on, branches) => {
                 let on = self.expr(on.as_ref().as_ref());
@@ -193,43 +194,52 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         .tr(expr.span)
     }
 
-    fn pass(&mut self, inner: Tr<&parser::Expr<'s>>) -> Expr<'s> {
-        match &inner.value {
-            parser::Expr::Call(apath, params, seal) if *seal < 2 => {
-                self.callable(apath.as_ref(), params, Expr::Pass)
-            }
-            parser::Expr::Call(apath, params, _) => {
-                // #((f a))
-                // lowers to
-                // let _ = f a in #_
-                let expr = self.callable(apath.as_ref(), params, Expr::Call);
-                let bind = self.bindings.declare_nameless();
-                let pat = Pattern::Bind(bind, Box::new(Pattern::Any)).tr(apath.span);
-                let and_then =
-                    Expr::Pass(bind.into(), TypeAnnotation::new(), vec![]).tr(apath.span);
-                Expr::let_bind(expr.tr(apath.span), pat, and_then)
-            }
-            parser::Expr::Lambda(patterns, params, body, seal) if *seal == 1 => {
-                assert!(params.is_empty(), "does the parser allow parameters here?");
-                warn!(
+    fn pass(&mut self, to_pass: Tr<&parser::Expr<'s>>) -> Expr<'s> {
+        match &to_pass.value {
+            // #(...)
+            parser::Expr::Group(inner) => match &**inner {
+                // #(\ ...)
+                parser::Expr::Lambda(patterns, params, body) => {
+                    assert!(params.is_empty());
+                    warn!(
                     "TODO: add type annotation to the parser and give the typing here for lambdas"
                 );
-                let lambda = self.lambda(patterns, None, (**body).as_ref());
-                let params = self.exprs(params);
-                Expr::Pass(lambda.into(), TypeAnnotation::new(), params)
+                    let lambda = self.lambda(patterns, None, (**body).as_ref());
+                    let params = self.exprs(params);
+                    Expr::Pass(lambda.into(), TypeAnnotation::new(), params)
+                }
+                // #(f ...)
+                parser::Expr::Call(apath, params) => {
+                    self.callable(apath.as_ref(), params, Expr::Pass)
+                }
+                // #((f ...))
+                parser::Expr::Group(inner) => {
+                    let inner = self.expr((&**inner).tr(to_pass.span));
+                    Expr::PassExpr(Box::new(inner))
+                }
+                parser::Expr::CallExpr(inner, _) => {
+                    let inner = self.expr((**inner).as_ref());
+                    todo!("error that it's not a valid pass?");
+                }
+                // #(0)
+                _ => {
+                    let lkey = self.lambda(&[], None, (&**inner).tr(to_pass.span));
+                    Expr::Pass(lkey.into(), TypeAnnotation::new(), vec![])
+                }
+            },
+            // #f
+            parser::Expr::Call(apath, params) => {
+                assert!(params.is_empty());
+                self.callable(apath.as_ref(), params, Expr::Pass)
             }
-            parser::Expr::Lambda(_, _, _, seal) => {
-                assert_ne!(*seal, 0);
-                todo!("evaluate and then pass the returned value from evaluation");
-            }
+            // ##...
             parser::Expr::Pass(inner) => {
-                let inner = self.expr((**inner).as_ref());
-                Expr::PassExpr(Box::new(inner))
+                let inner = self.pass((**inner).as_ref());
+                Expr::PassExpr(Box::new(inner.tr(to_pass.span)))
             }
-            parser::Expr::CallExpr(_, _, _) => todo!(""),
-
+            // #0
             _ => {
-                let lkey = self.lambda(&[], None, inner);
+                let lkey = self.lambda(&[], None, (&**to_pass).tr(to_pass.span));
                 Expr::Pass(lkey.into(), TypeAnnotation::new(), vec![])
             }
         }
@@ -265,14 +275,9 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         }
     }
 
-    fn dotpipe(
-        &mut self,
-        span: Span,
-        left: Tr<&parser::Expr<'s>>,
-        right: Tr<&parser::Expr<'s>>,
-    ) -> Expr<'s> {
+    fn dotpipe(&mut self, left: Tr<&parser::Expr<'s>>, right: Tr<&parser::Expr<'s>>) -> Expr<'s> {
         match right.value {
-            parser::Expr::Call(apath, params, _) => {
+            parser::Expr::Call(apath, params) => {
                 let left = self.expr(left);
 
                 let path = apath.path.as_slice();
@@ -315,12 +320,29 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                     })
                 }
             }
+            // 1 . (returns_function 0)
+            // lowers to
+            // let _ = #(returns_function 0) in _ 1
+            parser::Expr::Group(inner) => {
+                let yielded_function = self.expr((&**inner).tr(right.span));
+                let intermediate = self.bindings.declare_nameless();
+                let param = self.expr(left);
+                Expr::let_bind(
+                    yielded_function,
+                    Pattern::Bind(intermediate, Box::new(Pattern::Any)).tr(left.span),
+                    Expr::Call(intermediate.into(), TypeAnnotation::new(), vec![param])
+                        .tr(right.span),
+                )
+            }
             _ => {
                 self.ast
                     .sources
                     .error("invalid pipe operator")
                     .m(self.module)
-                    .eline(span, "dot pipes may only be used to applicate functions")
+                    .eline(
+                        right.span,
+                        "dot pipes may only be used to applicate functions",
+                    )
                     .emit();
 
                 Expr::Poison

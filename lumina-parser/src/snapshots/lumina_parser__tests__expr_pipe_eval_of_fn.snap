@@ -1,6 +1,5 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"1 >> (f 0)\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"1 >> (f 0)\"; format! (\"\\n{}\", ast) }"
 ---
-
-1 >> (1^f 0)
+1 >> (f 0)

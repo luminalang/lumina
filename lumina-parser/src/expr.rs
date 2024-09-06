@@ -3,42 +3,20 @@ use itertools::Itertools;
 use lumina_util::{Highlighting, Identifier, Span, Spanned, Tr};
 use std::fmt;
 
-/// One weird syntactic quirk of using pipe operators in eagerly evaluated language is that the
-/// meaning of `1 . (f 0)` and `1 . f 0` are suddenly different. So; Parenthesis become much more
-/// significant. This flag is to mark how many times things are wrapped by parenthesis and thereby are to
-/// be eagerly evaluated instead of further applicated
-///
-/// Should applicate returnt fn
-/// `1 . ((\ -> #f))`
-///
-/// Should applicate returnt fn
-/// `1 . ((\a -> #f) 0)`
-///
-/// Should *not* applicate returnt fn
-/// `1 . (\a -> a)`
-///
-/// Should applicate returnt fn
-/// `1 . (f 0)`
-///
-/// Should *not* applicate returnt fn
-/// `1 . f 0`
-pub type Sealed = u16;
-
 #[derive(Clone, Debug)]
 pub enum Expr<'a> {
     Lit(Literal<'a>),
-    Call(Tr<AnnotatedPath<'a>>, Vec<Tr<Self>>, Sealed),
+    Call(Tr<AnnotatedPath<'a>>, Vec<Tr<Self>>),
+
+    // To correctly resolve pipe application and operator precedence we need to keep grouping
+    // information.
+    Group(Box<Self>),
 
     DotPipe(Box<[Tr<Self>; 2]>),             // a . b
     FieldAccess(Box<Tr<Self>>, Tr<&'a str>), // a.b
 
-    Lambda(
-        Vec<Tr<Pattern<'a>>>,
-        Vec<Tr<Self>>,
-        Box<Tr<Expr<'a>>>,
-        Sealed,
-    ),
-    CallExpr(Box<Tr<Self>>, Vec<Tr<Self>>, Sealed),
+    Lambda(Vec<Tr<Pattern<'a>>>, Vec<Tr<Self>>, Box<Tr<Expr<'a>>>),
+    CallExpr(Box<Tr<Self>>, Vec<Tr<Self>>),
     Operators {
         init: Box<Tr<Self>>,
         ops: Vec<(Tr<&'a str>, Tr<Self>)>,
@@ -70,7 +48,6 @@ impl<'a> Expr<'a> {
         Expr::Call(
             AnnotatedPath::without(Identifier::parse(*str).unwrap()).tr(str.span),
             params,
-            0,
         )
         .tr(str.span)
     }
@@ -378,10 +355,10 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             // maybe we should also have a `left.can_return_function()`
             (t, _) if t.is_valid_start_of_expr_param() => {
                 self.expr_params(left.span, |params| match left.value {
-                    Expr::Lambda(patterns, p, body, seal) if seal < 2 && p.is_empty() => {
-                        Expr::Lambda(patterns, params, body, seal)
+                    Expr::Lambda(patterns, p, body) if p.is_empty() => {
+                        Expr::Lambda(patterns, params, body)
                     }
-                    other => Expr::CallExpr(Box::new(other.tr(left.span)), params, 0),
+                    other => Expr::CallExpr(Box::new(other.tr(left.span)), params),
                 })
             }
 
@@ -429,15 +406,14 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             (T::Dot, _) if self.parser.take(apath.span.end()) == "." => {
                 self.parser.progress();
                 let aspan = apath.span;
-                return self
-                    .expr_path_field_accessors(true, Expr::Call(apath, vec![], 0).tr(aspan));
+                return self.expr_path_field_accessors(true, Expr::Call(apath, vec![]).tr(aspan));
             }
             _ => {
                 if params {
-                    self.expr_params(apath.span, |params| Expr::Call(apath, params, 0))
+                    self.expr_params(apath.span, |params| Expr::Call(apath, params))
                 } else {
                     let span = apath.span;
-                    Some(Expr::Call(apath, vec![], 0).tr(span))
+                    Some(Expr::Call(apath, vec![]).tr(span))
                 }
             }
         }
@@ -504,9 +480,8 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             .shared_paren(Parser::expr, Expr::Poison.tr(span))?;
 
         if elems.len() == 1 {
-            let mut value = elems.remove(0).value;
-            self.hack_apply_seal(&mut value);
-            Some(value.tr(span.extend(end)))
+            let value = elems.remove(0).value;
+            Some(Expr::Group(Box::new(value)).tr(span.extend(end)))
         } else {
             Some(Expr::Tuple(elems).tr(span.extend(span)))
         }
@@ -516,15 +491,6 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         self.parser.shared_record(span).map(|curly| {
             Expr::Record { init: Box::new(curly.init), fields: curly.fields }.tr(curly.span)
         })
-    }
-
-    fn hack_apply_seal(&self, expr: &mut Expr<'a>) {
-        match expr {
-            Expr::Call(_, _, seal) | Expr::Lambda(_, _, _, seal) | Expr::CallExpr(_, _, seal) => {
-                *seal += 1
-            }
-            _ => {}
-        }
     }
 
     fn expr_list(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
@@ -571,7 +537,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         self.parser.expect(T::Arrow)?;
 
         self.expr()
-            .map(|expr| Expr::Lambda(patterns, vec![], Box::new(expr), 0))
+            .map(|expr| Expr::Lambda(patterns, vec![], Box::new(expr)))
             .map(|lambda| lambda.tr(span))
     }
 
@@ -614,7 +580,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                     let str = self.parser.take(ospan);
                     let identifier = Identifier::parse(str).unwrap();
                     let span = span.extend(ospan);
-                    let call = Expr::Call(AnnotatedPath::without(identifier).tr(ospan), vec![], 0);
+                    let call = Expr::Call(AnnotatedPath::without(identifier).tr(ospan), vec![]);
                     return Some(Expr::Pass(Box::new(call.tr(span))).tr(span));
                 }
                 (Token::OpenParen, _) => match parser.lexer.next() {
@@ -629,9 +595,8 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                                 let call = Expr::Call(
                                     AnnotatedPath::without(identifier).tr(ospan),
                                     vec![rhs],
-                                    0,
                                 );
-                                Expr::Pass(Box::new(call.tr(span))).tr(span)
+                                Expr::Pass(Box::new(Expr::Group(Box::new(call)).tr(span))).tr(span)
                             })
                         });
                     }
@@ -742,14 +707,6 @@ impl T {
 
 impl<'a> fmt::Display for Expr<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fn sealf(seal: &Sealed) -> String {
-            if *seal > 0 {
-                format!("{seal}^")
-            } else {
-                "".into()
-            }
-        }
-
         let op = '('.symbol();
         let cp = ')'.symbol();
         let oc = '{'.symbol();
@@ -766,17 +723,13 @@ impl<'a> fmt::Display for Expr<'a> {
         let arrow = "->".symbol();
 
         match self {
-            Expr::Call(path, params, seal) if params.is_empty() => {
-                write!(f, "{}{path}", sealf(seal))
+            Expr::Call(path, params) if params.is_empty() => {
+                write!(f, "{path}")
             }
-            Expr::Call(path, params, seal) => {
-                write!(
-                    f,
-                    "{op}{}{path} {}{cp}",
-                    sealf(seal),
-                    params.iter().format(" ")
-                )
+            Expr::Call(path, params) => {
+                write!(f, "{path} {}", params.iter().format(" "))
             }
+            Expr::Group(inner) => write!(f, "{op}{inner}{cp}"),
             Expr::FieldAccess(object, field) => write!(f, "{object}.{field}"),
             Expr::DotPipe(elems) => write!(f, "{} . {}", elems[0], elems[1]),
             Expr::Operators { init, ops } => write!(
@@ -786,25 +739,18 @@ impl<'a> fmt::Display for Expr<'a> {
                 ops.iter()
                     .format_with(" ", |(op, right), f| f(&format_args!("{} {}", op, right)))
             ),
-            Expr::CallExpr(expr, params, seal) => {
-                write!(
-                    f,
-                    "{op}{}{expr} {}{cp}",
-                    sealf(seal),
-                    params.iter().format(" ")
-                )
+            Expr::CallExpr(expr, params) => {
+                write!(f, "{expr} {}", params.iter().format(" "))
             }
-            Expr::Lambda(patterns, params, expr, seal) if params.is_empty() => write!(
+            Expr::Lambda(patterns, params, expr) if params.is_empty() => write!(
                 f,
-                "{op}{}\\{} {arrow} {}{cp}",
-                if *seal > 1 { sealf(seal) } else { "".into() },
+                "{op}\\{} {arrow} {}{cp}",
                 patterns.iter().format(" "),
                 expr
             ),
-            Expr::Lambda(patterns, params, expr, seal) => write!(
+            Expr::Lambda(patterns, params, expr) => write!(
                 f,
-                "{op}{op}{}\\{} {arrow} {}{cp} {}{cp}",
-                sealf(seal),
+                "{op}{op}\\{} {arrow} {}{cp} {}{cp}",
                 patterns.iter().format(" "),
                 expr,
                 params.iter().format(" ")
@@ -813,8 +759,6 @@ impl<'a> fmt::Display for Expr<'a> {
                 write!(f, "{oc} {}{} {cc}", init, fields.iter().format(", "))
             }
             Expr::Lit(lit) => lit.fmt(f),
-            // Expr::PipeLeft(exprs) => write!(f, "{} {pl} {}", exprs[0], exprs[1]),
-            // Expr::PipeRight(exprs) => write!(f, "{} {pr} {}", exprs[0], exprs[1]),
             Expr::If(exprs) => {
                 let cond = exprs[0].to_string();
                 let then_expr = exprs[1].to_string();

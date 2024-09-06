@@ -2,4 +2,4 @@
 source: lumina-parser/src/tests.rs
 expression: "{ \"#(f 0)@a \\\"a\\\"\"; format! (\"\\n{}\", ast) }"
 ---
-#(1^f 0)@a "a"
+#(f 0)@a "a"

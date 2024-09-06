@@ -35,7 +35,6 @@ impl<'a> CurlyValue<'a> for Expr<'a> {
         Expr::Call(
             name.map(Identifier::from_raw).map(AnnotatedPath::without),
             vec![],
-            0,
         )
     }
     fn from_field_access(names: Vec<Tr<&'a str>>) -> Self {

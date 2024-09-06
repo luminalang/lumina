@@ -1,6 +1,5 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"(Just 20)\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"(Just 20)\"; format! (\"\\n{}\", ast) }"
 ---
-
-(1^Just 20)
+(Just 20)

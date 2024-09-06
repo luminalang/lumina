@@ -185,7 +185,7 @@ fn path<'a, 's>(
     exp: &'static str,
 ) -> Result<(&'a parser::AnnotatedPath<'s>, &'a [Tr<parser::Expr<'s>>]), Error> {
     match expr.value {
-        parser::Expr::Call(apath, params, _) => Ok((apath, params)),
+        parser::Expr::Call(apath, params) => Ok((apath, params)),
         _ => Err(Error::Expected(expr.span, exp)),
     }
 }

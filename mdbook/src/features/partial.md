@@ -85,7 +85,7 @@ fn add_five_if_just m as Maybe int -> Maybe int =
   change_if_just #(\n -> n + 5) m
 ```
 
-**Partially applys Where-Bindings**
+**Partially Applicating Where-Bindings**
 
 <sup>*TODO: Is it overly complicated and confusing to explain this here? Maybe we should have a separate design patterns chapter*</sup>
 

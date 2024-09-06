@@ -1,6 +1,5 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"f 0 << f 1 << f 2\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"f 0 << f 1 << f 2\"; format! (\"\\n{}\", ast) }"
 ---
-
-(f 0) << (f 1) << (f 2)
+f 0 << f 1 << f 2

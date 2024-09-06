@@ -1,12 +1,11 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{\n    \"\nmatch (match 0 | 0 -> true | _ -> false)\n | true ->\n   match 0\n   | 0 -> 0\n     | 1 -> 1\n    | _ -> 2\n| false ->\n     match 0 | false -> 0 | true -> 1\n\";\n    format!(\"\\n{}\", ast)\n}"
+expression: "{\n    \"\nmatch (match 0 | 0 -> true | _ -> false)\n | true ->\n   match 0\n   | 0 -> 0\n     | 1 -> 1\n    | _ -> 2\n| false ->\n     match 0 | false -> 0 | true -> 1\n\";\n    format! (\"\\n{}\", ast)\n}"
 ---
-
 match
-  match 0
+  (match 0
   | 0 -> true
-  | _ -> false
+  | _ -> false)
 | true ->
   match 0
   | 0 -> 0

@@ -1,6 +1,5 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"(\\\\(x, y) {a, b} -> \\\\ -> 0) 2\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"(\\\\(x, y) {a, b} -> \\\\ -> 0) 2\"; format! (\"\\n{}\", ast) }"
 ---
-
-((1^\(x, y) { a, b } -> (\ -> 0)) 2)
+((\(x, y) { a, b } -> (\ -> 0))) 2

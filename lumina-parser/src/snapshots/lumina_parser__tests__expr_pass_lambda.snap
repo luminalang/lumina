@@ -1,6 +1,5 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"map #(\\\\n -> n)\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"map #(\\\\n -> n)\"; format! (\"\\n{}\", ast) }"
 ---
-
-(map #(\n -> n))
+map #((\n -> n))

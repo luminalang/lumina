@@ -56,6 +56,8 @@ pub struct HIR<'s> {
     pub iassoc: MMap<key::Impl, Vec<(Tr<&'s str>, Tr<Type>)>>,
     pub itraits: MMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
 
+    pub type_repr: HashMap<M<key::TypeKind>, ast::attr::Repr>,
+
     pub langitems: Map<key::Module, LangItems<'s>>,
 
     // Certain parts of the AST will be kept for the next pass
@@ -91,6 +93,7 @@ pub fn run<'a, 's>(
     let mut iassoc = ast.entities.associated_types.secondary();
     let mut itraits = ast.entities.impls.secondary();
     let mut langitems = Map::with_capacity(ast.entities.langitems.len());
+    let mut type_repr = HashMap::new();
 
     let info = Info { ast: &ast, langitems: &HashMap::new(), pinfo: &info, target };
 
@@ -103,6 +106,8 @@ pub fn run<'a, 's>(
         ast.entities.sums.iter_module(module).for_each(|sum| {
             let (variants, forall) = lower_sum(info, sum);
             let header = &ast.entities.sums[sum].header;
+            let repr = ast.entities.sums[sum].attributes.repr;
+            insert_repr(sum, &mut type_repr, repr);
             sums.push(module, (header.name.tr(header.span), forall));
             variant_types.push_as(sum, variants);
         });
@@ -110,6 +115,8 @@ pub fn run<'a, 's>(
         ast.entities.records.iter_module(module).for_each(|record| {
             let (fields, forall) = lower_record(info, record);
             let header = &ast.entities.records[record].header;
+            let repr = ast.entities.records[record].attributes.repr;
+            insert_repr(record, &mut type_repr, repr);
             records.push(module, (header.name.tr(header.span), forall));
             field_types.push_as(record, fields);
         });
@@ -117,6 +124,8 @@ pub fn run<'a, 's>(
         ast.entities.traits.iter_module(module).for_each(|trait_| {
             let (tassoc, forall) = lower_trait(info, trait_);
             let header = &ast.entities.traits[trait_].header;
+            let repr = ast.entities.traits[trait_].attributes.repr;
+            insert_repr(trait_, &mut type_repr, repr);
             traits.push_as(trait_, (header.name.tr(header.span), forall));
             assoc.push_as(trait_, tassoc);
         });
@@ -178,6 +187,7 @@ pub fn run<'a, 's>(
             lookups: ast.lookups,
             methods: ast.entities.methods,
             imethods: ast.entities.imethods,
+            type_repr,
             funcs,
             records,
             field_types,
@@ -195,6 +205,14 @@ pub fn run<'a, 's>(
         tenvs,
         iquery,
     )
+}
+
+fn insert_repr<K: Into<key::TypeKind>>(
+    key: M<K>,
+    type_repr: &mut HashMap<M<key::TypeKind>, ast::attr::Repr>,
+    repr: ast::attr::Repr,
+) {
+    type_repr.insert(key.map(K::into), repr);
 }
 
 pub fn from_langs(ty: &str, langs: &LangItems, mlangs: &LangItems) -> Option<M<key::TypeKind>> {

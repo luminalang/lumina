@@ -45,6 +45,7 @@ pub struct MIR {
     pub itraits: MMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
     pub val_initializers: MMap<key::Val, M<key::Func>>,
     pub trait_objects: MMap<key::Trait, Option<SelfPositions>>,
+    pub type_repr: HashMap<M<key::TypeKind>, ast::attr::Repr>,
 
     pub module_names: Map<key::Module, String>,
     pub func_names: MMap<key::Func, String>,
@@ -153,6 +154,7 @@ pub fn run<'a, 'h, 's>(
             variant_names: hir
                 .vnames
                 .map(|_, variants| variants.values().map(|name| name.to_string()).collect()),
+            type_repr: hir.type_repr,
 
             trait_objects,
             impls,

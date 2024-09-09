@@ -2,6 +2,7 @@ use crate::ast::Sources;
 use derive_new::new;
 use lumina_key as key;
 use lumina_parser as parser;
+use lumina_typesystem::IntSize;
 use lumina_util::{Span, Spanned, Tr};
 
 #[derive(new)]
@@ -66,6 +67,7 @@ pub enum Repr {
     C,
     Packed,
     Align(u8),
+    Enum(IntSize),
 }
 
 impl<'s> TypeAttr<'s> {
@@ -109,7 +111,22 @@ impl<'s> TypeAttr<'s> {
                     self.repr = Repr::Packed;
                     Ok(())
                 }
-                _ => Err(Error::Expected(params[0].span, "`align` or `packed`")),
+                _ => {
+                    match name.as_bytes() {
+                        [s @ (b'u' | b'i'), _, ..] => {
+                            if let Ok(size) = name[1..].parse::<u8>() {
+                                self.repr = Repr::Enum(IntSize::new(*s == b'i', size));
+                                return Ok(());
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    Err(Error::Expected(
+                        params[0].span,
+                        "valid repr such as `align` or `packed`",
+                    ))
+                }
             }
         } else {
             if let Ok(str) = string(params[0].as_ref(), "") {

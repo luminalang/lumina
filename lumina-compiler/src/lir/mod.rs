@@ -22,6 +22,7 @@ macro_rules! to_morphization {
     ($lir:expr, $mir:expr, $tmap:expr) => {
         crate::lir::mono::Monomorphization::new(
             &mut $lir.mono,
+            &$mir.type_repr,
             &$mir.field_types,
             &$mir.variant_types,
             &$mir.methods,
@@ -197,7 +198,6 @@ enum Callable {
     Sum {
         tmap: TypeMap,
         var: key::Variant,
-        payload_size: u32,
         ty: MonoTypeKey,
     },
     Local(Value),
@@ -217,6 +217,7 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
     ) -> mono::Monomorphization<'a> {
         mono::Monomorphization::new(
             mono,
+            &mir.type_repr,
             &mir.field_types,
             &mir.variant_types,
             &mir.methods,
@@ -563,13 +564,11 @@ impl<'a> FuncLower<'a> {
         tmap
     }
 
-    fn elems_to_tuple(&mut self, elems: Vec<Value>, payload: Option<u32>) -> Value {
-        let ty = payload
-            .map(|largest| MonoType::SumDataCast { largest })
-            .unwrap_or_else(|| {
-                let types = elems.iter().map(|v| self.type_of_value(*v)).collect();
-                self.lir.mono.get_or_make_tuple(types).into()
-            });
+    fn elems_to_tuple(&mut self, elems: Vec<Value>) -> Value {
+        let ty = {
+            let types = elems.iter().map(|v| self.type_of_value(*v)).collect();
+            self.lir.mono.get_or_make_tuple(types).into()
+        };
 
         self.ssa().construct(elems, ty)
     }
@@ -903,10 +902,7 @@ impl<'a> FuncLower<'a> {
                     let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
                     let ty = morph.sum(sum, &type_params);
 
-                    let (tag_size, payload_size) = self.lir.mono.types.as_sum_type(ty).unwrap();
-                    assert_eq!(tag_size, mono::TAG_SIZE.bits() as u32);
-
-                    Callable::Sum { var, ty, tmap, payload_size }
+                    Callable::Sum { var, ty, tmap }
                 }
             },
             mir::Callable::Lambda(lambda, mapper) => {

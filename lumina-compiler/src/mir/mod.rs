@@ -45,7 +45,7 @@ pub struct MIR {
     pub itraits: MMap<key::Impl, (M<key::Trait>, Vec<Type>)>,
     pub val_initializers: MMap<key::Val, M<key::Func>>,
     pub trait_objects: MMap<key::Trait, Option<SelfPositions>>,
-    pub type_repr: HashMap<M<key::TypeKind>, ast::attr::Repr>,
+    pub type_repr: hir::TypeRepr,
 
     pub module_names: Map<key::Module, String>,
     pub func_names: MMap<key::Func, String>,

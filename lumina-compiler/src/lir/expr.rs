@@ -66,7 +66,6 @@ impl<'a> FuncLower<'a> {
                 let value = self.expr_to_value(object);
 
                 let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
-
                 let mk = morph.record(*record, types);
 
                 let ty = self.lir.mono.types.type_of_field(mk, *field);
@@ -74,7 +73,6 @@ impl<'a> FuncLower<'a> {
             }
             mir::Expr::Record(record, types, fields) => {
                 let mut mono = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
-
                 let ty = MonoType::Monomorphised(mono.record(*record, types));
 
                 let values = fields
@@ -95,7 +93,7 @@ impl<'a> FuncLower<'a> {
             mir::Expr::ReadOnly(ro) => Value::ReadOnly(*ro),
             mir::Expr::Tuple(elems) => {
                 let params = self.params_to_values(elems);
-                self.elems_to_tuple(params, None)
+                self.elems_to_tuple(params)
             }
             mir::Expr::PointerToPointerCast(expr, to) | mir::Expr::ToPointerCast(expr, _, to) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(to);
@@ -182,8 +180,8 @@ impl<'a> FuncLower<'a> {
             }
             mir::Expr::SizeOf(ty) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
-                let size = self.lir.mono.types.size_of(&ty) / 8;
-                Value::Int(size as i128, self.lir.target.uint())
+                let intsize = self.lir.target.int_size();
+                self.ssa().size_of(ty, IntSize::new(false, intsize))
             }
             mir::Expr::Cmp(cmp, params) => {
                 let params = [
@@ -279,10 +277,11 @@ impl<'a> FuncLower<'a> {
                 let v = self.ssa().val_to_ref(key, ty.clone());
                 self.ssa().deref(v, ty)
             }
-            Callable::Sum { var, payload_size, ty, .. } => {
-                let parameters = self.elems_to_tuple(params, Some(payload_size));
+            Callable::Sum { var, ty, .. } => {
+                let parameters = self.ssa().construct(params, MonoType::SumDataCast);
 
-                let tag = Value::Int(var.0 as i128, mono::TAG_SIZE);
+                let tag_size = self.lir.mono.types.as_sum_type(ty).unwrap();
+                let tag = Value::Int(var.0 as i128, tag_size);
 
                 self.ssa()
                     .construct(vec![tag, parameters.into()], MonoType::Monomorphised(ty))
@@ -328,15 +327,9 @@ impl<'a> FuncLower<'a> {
     }
 
     pub fn heap_alloc(&mut self, value: lir::Value, ty: MonoType) -> Value {
-        let size = self.lir.mono.types.size_of(&ty);
-        if size == 0 {
-            let zero = Value::Int(0, self.lir.target.uint());
-            self.ssa().transmute(zero, MonoType::pointer(ty))
-        } else {
-            let ptr = self.ssa().alloc(size, ty);
-            self.ssa().write(ptr, value);
-            ptr
-        }
+        let ptr = self.ssa().alloc(ty);
+        self.ssa().write(ptr, value);
+        ptr
     }
 
     pub fn call_closure(&mut self, objty: MonoTypeKey, obj: Value, params: Vec<Value>) -> Value {

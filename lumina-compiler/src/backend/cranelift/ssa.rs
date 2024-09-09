@@ -215,7 +215,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         match ret {
             abi::Return::Param(_) => None,
             abi::Return::StructOutPtr(kind, _) => {
-                let size = self.types().size_of_defined(*kind);
+                let size = self.types().size_of(&MonoType::from(*kind));
                 let slotdata = StackSlotData::new(StackSlotKind::ExplicitSlot, size, 0);
                 let slot = self.f.builder.create_sized_stack_slot(slotdata);
                 let ptr = self.ins().stack_addr(types::I64, slot, 0);
@@ -256,7 +256,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         match abi {
             abi::StructField::Direct(_) => VField::Direct(v.as_direct()),
             abi::StructField::AutoBoxedRecursion(ty, _) => {
-                let size = self.types().size_of_defined(ty);
+                let size = self.types().size_of(&MonoType::from(ty));
                 assert_eq!(size, self.size_of_entry(&v));
                 let ptr = self.heap_alloc(size as i128);
                 let end = self.write_entry_to_ptr(ptr, 0, &v);
@@ -536,7 +536,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             VField::FuncPointer(typing, ptr) => VEntry::FuncPointer(typing, ptr),
             VField::AutoBoxedRecursion(ty, v) => {
                 let (entry, offset) = self.deref_type(v, BitOffset(0), &ty.into());
-                assert_eq!(offset.0, self.types().size_of_defined(ty));
+                assert_eq!(offset.0, self.types().size_of(&MonoType::from(ty)));
                 entry
             }
             VField::Struct(fields) => VEntry::Struct(field_type.as_key(), fields),

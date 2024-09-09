@@ -114,13 +114,10 @@ impl<'a> Debugger<'a> {
                 assert_eq!(exp, &self.lir.functions[*mfunc].returns)
             }
             Entry::Transmute(v) => {
-                let ty = self.lir.type_of_value(self.mfunc, *v);
-                let size = self.lir.mono.types.size_of(&ty);
-                let esize = self.lir.mono.types.size_of(exp);
-                assert_eq!(
-                    size, esize,
-                    "both sides of transmute need to be of equal size: {size} != {esize}"
-                );
+                let _ty = self.lir.type_of_value(self.mfunc, *v);
+            }
+            Entry::SizeOf(_) => {
+                self.as_int(exp, "size-of");
             }
             Entry::CallExtern(fkey, params) => {
                 let extern_ = &self.lir.extern_funcs[fkey];
@@ -156,18 +153,7 @@ impl<'a> Debugger<'a> {
             }
             Entry::Copy(v) => assert_eq!(exp, &self.lir.type_of_value(self.mfunc, *v)),
             Entry::Construct(values) => match exp {
-                MonoType::SumDataCast { largest } => {
-                    let size = values
-                        .iter()
-                        .map(|v| {
-                            self.lir
-                                .mono
-                                .types
-                                .size_of(&self.lir.type_of_value(self.mfunc, *v))
-                        })
-                        .sum::<u32>();
-                    assert!(size <= *largest);
-                }
+                MonoType::SumDataCast => {}
                 MonoType::Monomorphised(mk) => {
                     let fields = self.lir.mono.fields(*mk);
                     self.params(
@@ -186,10 +172,10 @@ impl<'a> Debugger<'a> {
                 let ty = &self.lir.mono.types[*key].fields[*field];
                 assert_eq!(exp, ty);
             }
-            Entry::SumField { of, offset } => {
+            Entry::CastFromSumPayload { of } => {
                 let of = self.lir.type_of_value(self.mfunc, *of);
                 match of {
-                    MonoType::SumDataCast { largest } => assert!(offset.0 < largest),
+                    MonoType::SumDataCast => {}
                     _ => panic!("SumField of non-opaque sum data: {}", self.tfmt(&of)),
                 }
             }
@@ -276,7 +262,7 @@ impl<'a> Debugger<'a> {
 
     #[track_caller]
     fn as_unit(&self, ty: &MonoType) {
-        assert_eq!(self.lir.mono.types.size_of(ty), 0, "non-unit");
+        assert_eq!(*ty, MonoType::from(UNIT), "non-unit");
     }
 
     #[track_caller]

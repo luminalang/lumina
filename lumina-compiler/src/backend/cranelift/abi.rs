@@ -59,7 +59,7 @@ impl lir::Records {
             |size, len| size <= Type::triple_pointer_type(triple).bits() * 3 && len <= 3;
 
         match self.abi_param(triple, ty) {
-            Param::Struct(mk, fields) if !fits_in_ret(self[mk].size, self[mk].fields.len()) => {
+            Param::Struct(mk, fields) if !fits_in_ret(self[mk].size, self[mk].fields()) => {
                 Return::StructOutPtr(mk, fields)
             }
             param => Return::Param(param),

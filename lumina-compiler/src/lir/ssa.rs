@@ -1,7 +1,4 @@
-use super::{
-    mono::fmt, mono::MonoFormatter, mono::TAG_SIZE, BitOffset, MonoFunc, MonoType, MonoTypeKey,
-    UNIT,
-};
+use super::{mono::fmt, mono::MonoFormatter, MonoFunc, MonoType, MonoTypeKey, UNIT};
 use crate::{MAYBE_JUST, MAYBE_NONE};
 use derive_more::From;
 use itertools::Itertools;
@@ -236,6 +233,11 @@ impl Blocks {
         self.assign(entry, to)
     }
 
+    pub fn size_of(&mut self, ty: MonoType, to: IntSize) -> Value {
+        let entry = Entry::SizeOf(ty);
+        self.assign(entry, MonoType::Int(to))
+    }
+
     pub fn call<C: Callable>(&mut self, call: C, params: Vec<Value>, ret: MonoType) -> Value {
         let entry = C::construct(call, params);
         self.assign(entry, ret)
@@ -324,9 +326,9 @@ impl Blocks {
         let entry = Entry::Field { of, key, field };
         self.assign(entry, ty)
     }
-    pub fn sum_field(&mut self, of: Value, offset: BitOffset, ty: MonoType) -> Value {
-        let entry = Entry::SumField { of, offset };
-        self.assign(entry, ty)
+    pub fn cast_from_payload(&mut self, of: Value, tuple: MonoType) -> Value {
+        let entry = Entry::CastFromSumPayload { of };
+        self.assign(entry, tuple)
     }
 
     pub fn cmps<const N: usize>(
@@ -352,8 +354,8 @@ impl Blocks {
         }
     }
 
-    pub fn alloc(&mut self, size: u32, objty: MonoType) -> Value {
-        let entry = Entry::Alloc { size };
+    pub fn alloc(&mut self, objty: MonoType) -> Value {
+        let entry = Entry::Alloc;
         let ty = MonoType::Pointer(Box::new(objty));
         self.assign(entry, ty)
     }
@@ -447,11 +449,11 @@ impl V {
 
 impl Value {
     pub fn maybe_just() -> Value {
-        Value::Int(MAYBE_JUST.0 as i128, TAG_SIZE)
+        Value::Int(MAYBE_JUST.0 as i128, IntSize::new(false, 16))
     }
 
     pub fn maybe_none() -> Value {
-        Value::Int(MAYBE_NONE.0 as i128, TAG_SIZE)
+        Value::Int(MAYBE_NONE.0 as i128, IntSize::new(true, 16))
     }
 
     pub fn as_fptr(&self) -> MonoFunc {
@@ -509,9 +511,8 @@ pub enum Entry {
         key: MonoTypeKey,
         field: key::Field,
     },
-    SumField {
+    CastFromSumPayload {
         of: Value,
-        offset: BitOffset,
     },
 
     IntAdd(Value, Value),
@@ -522,6 +523,7 @@ pub enum Entry {
     IntCmpInclusive(Value, std::cmp::Ordering, Value, IntSize),
 
     Transmute(Value), // Transmute two values of equal size
+    SizeOf(MonoType),
     Reduce(Value),
     ExtendSigned(Value),
     ExtendUnsigned(Value),
@@ -535,9 +537,7 @@ pub enum Entry {
     BlockParam(V),
 
     // Pointer Manipulation
-    Alloc {
-        size: u32,
-    },
+    Alloc,
     Dealloc {
         ptr: Value,
     },
@@ -637,6 +637,7 @@ impl fmt::Display for Entry {
                 write!(f, "{} {}", "callc".keyword(), CStyle(key, params))
             }
             Entry::Transmute(v) => write!(f, "{} {v}", "transmute".keyword()),
+            Entry::SizeOf(v) => write!(f, "{} {v:#?}", "size-of".keyword()),
             Entry::RefStaticVal(val) => write!(f, "&{val}"),
             Entry::Copy(v) => write!(f, "{} {v}", "copy".keyword()),
             Entry::BlockParam(param) => write!(f, "{} {param}", "fparam".keyword()),
@@ -652,18 +653,11 @@ impl fmt::Display for Entry {
             }
             Entry::BitAnd([left, right]) => write!(f, "{} {left} {right}", "bit-and".keyword()),
             Entry::BitNot(v) => write!(f, "{} {v}", "bit-not".keyword()),
-            Entry::Alloc { size } => write!(
-                f,
-                "{} {}{}{}",
-                "alloc".keyword(),
-                "size".keyword(),
-                '='.symbol(),
-                size.path(),
-            ),
+            Entry::Alloc => write!(f, "{}", "alloc".keyword(),),
             Entry::Dealloc { ptr } => write!(f, "{} {ptr}", "dealloc".keyword()),
             Entry::Field { of, field, .. } => write!(f, "{} {of} {field}", "field".keyword(),),
-            Entry::SumField { of, offset, .. } => {
-                write!(f, "{} {of} {offset}", "sumfield".keyword(),)
+            Entry::CastFromSumPayload { of } => {
+                write!(f, "{} {of}", "cast-payload".keyword(),)
             }
             Entry::IntAdd(v, n) => write!(f, "{} {v} {n}", "add".keyword()),
             Entry::IntSub(v, n) => write!(f, "{} {v} {n}", "sub".keyword()),

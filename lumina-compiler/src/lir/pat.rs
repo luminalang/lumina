@@ -266,13 +266,15 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let [tag_ty, data_ty] = [key::Field(0), key::Field(1)]
             .map(|field| self.f.lir.mono.types.type_of_field(maybe_mk, field));
 
-        assert_eq!(tag_ty, MonoType::Int(mono::TAG_SIZE));
+        assert_eq!(tag_ty, MonoType::Int(IntSize::new(false, 16)));
 
         let tag = self.ssa().field(maybe, maybe_mk, key::Field(0), tag_ty);
 
         let data = self.ssa().field(maybe, maybe_mk, key::Field(1), data_ty);
 
-        let check = self.ssa().eq([tag, Value::maybe_just()], mono::TAG_SIZE);
+        let check = self
+            .ssa()
+            .eq([tag, Value::maybe_just()], IntSize::new(false, 16));
         (check, data)
     }
 
@@ -321,12 +323,21 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
             // Add parameters matching the MIR pattern of `Cons x xs`
             if constr == mir::pat::LIST_CONS {
-                let mut offset = BitOffset(0);
+                let x_xs_ty = self
+                    .f
+                    .lir
+                    .mono
+                    .get_or_make_tuple(vec![innermt.clone(), listmt.clone()]);
 
-                let x = self.ssa().sum_field(data, offset, innermt.clone());
-                offset.0 += self.f.lir.mono.types.size_of(&innermt) as u32;
+                let params = self.ssa().cast_from_payload(data, MonoType::from(x_xs_ty));
 
-                let xs = self.ssa().sum_field(data, offset, listmt.clone());
+                let x = self
+                    .ssa()
+                    .field(params, listmt.as_key(), key::Field(0), innermt.clone());
+
+                let xs = self
+                    .ssa()
+                    .field(params, listmt.as_key(), key::Field(1), listmt.clone());
 
                 vparams.push_back(x);
                 vparams.push_back(xs);
@@ -478,7 +489,12 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                         .lir
                         .mono
                         .get_or_make_tuple(vec![string.into(), string.into()]);
-                    let tuple = self.ssa().sum_field(data, BitOffset(0), tuple_ty.into());
+
+                    // Parameters to a variant are always wrapped as a tuple normally, so, might as
+                    // well replicate that here. Not sure whether it's needed though.
+                    let tuple_ty_ty = self.f.lir.mono.get_or_make_tuple(vec![tuple_ty.into()]);
+
+                    let tuple = self.ssa().cast_from_payload(data, tuple_ty_ty.into());
 
                     let [x, xs] = [0, 1]
                         .map(key::Field)
@@ -501,7 +517,9 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let oblock = self.block();
         let on_mk = self.f.type_of_value(on).as_key();
 
-        let tag_ty = MonoType::Int(mono::TAG_SIZE);
+        let tag_size = self.f.lir.mono.types.as_sum_type(on_mk).unwrap();
+
+        let tag_ty = MonoType::Int(tag_size);
         let copy_tag = self.ssa().field(on, on_mk, key::Field(0), tag_ty);
 
         let data = self.f.lir.mono.types.type_of_field(on_mk, key::Field(1));
@@ -527,20 +545,21 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                 let finst = GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
                 let raw_var_types = &self.f.mir.variant_types[sum][*var];
 
-                let mut base_offset = BitOffset(0);
-                let params = raw_var_types
+                let param_types: Vec<_> = raw_var_types
                     .iter()
                     .map(|ty| {
                         let ty = (&finst).transform(ty);
-                        let ty = to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap)
-                            .apply(&ty);
-
-                        let size = self.f.lir.mono.types.size_of(&ty) as u32;
-                        let offset = base_offset;
-                        base_offset.0 += size;
-
-                        self.ssa().sum_field(data_field, offset, ty)
+                        to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap)
+                            .apply(&ty)
                     })
+                    .collect();
+                let param_tuple = self.f.lir.mono.get_or_make_tuple(param_types.clone());
+
+                let params = self.ssa().cast_from_payload(data_field, param_tuple.into());
+                let params = (0..param_types.len() as u32)
+                    .map(key::Field)
+                    .zip(param_types)
+                    .map(|(field, ty)| self.ssa().field(params, param_tuple, field, ty))
                     .collect();
 
                 self.constructors.push(params);

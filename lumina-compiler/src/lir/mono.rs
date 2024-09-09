@@ -1,6 +1,7 @@
 use super::{FuncOrigin, MonoTyping, UNIT};
 use crate::prelude::*;
 use crate::VTABLE_FIELD;
+use ast::attr::Repr;
 use derive_more::{Deref, DerefMut};
 use lumina_collections::map_key_impl;
 use lumina_key as key;
@@ -11,7 +12,7 @@ use lumina_util::Highlighting;
 use std::collections::HashSet;
 use std::fmt;
 
-pub const TAG_SIZE: IntSize = IntSize::new(false, 32);
+// pub const TAG_SIZE: IntSize = IntSize::new(false, 32);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MonoTypeKey(pub u32);
@@ -36,7 +37,7 @@ impl From<u32> for BitOffset {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum MonoType {
     Int(IntSize),
-    SumDataCast { largest: u32 },
+    SumDataCast,
     Pointer(Box<Self>),
     FnPointer(Vec<Self>, Box<Self>),
     Float,
@@ -69,31 +70,35 @@ pub struct MonomorphisedTypes {
 
 // #[derive(Debug)]
 pub struct MonomorphisedRecord {
-    pub size: u32,
     pub repr: Repr,
+
     pub fields: Map<key::Field, MonoType>,
     pub autoboxed: HashSet<key::Field>,
 
     // Used to detect circular structure that need indirection
     pub original: Option<M<key::TypeKind>>,
+
+    is_placeholder: bool,
 }
 
 impl MonomorphisedRecord {
+    // When creating a record, we first insert it's placeholder and edge-case a check for whether
+    // a type we use is the placeholder. This way we can detect circular types without further analysis.
     fn placeholder() -> Self {
         Self {
-            size: u32::MAX,
             repr: Repr::Lumina,
             fields: Map::new(),
             autoboxed: HashSet::new(),
             original: None,
+
+            is_placeholder: true,
         }
     }
-}
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Repr {
-    Transparent,
-    Lumina,
+    /// Gets the number of explicitly defined fields in this record
+    pub fn fields(&self) -> usize {
+        self.fields.len()
+    }
 }
 
 pub struct MonoFormatter<'a, T> {
@@ -134,7 +139,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoType> {
             MonoType::Float => "float".fmt(f),
             MonoType::Unreachable => "!".fmt(f),
             MonoType::Monomorphised(key) => fmt(self.types, *key).fmt(f),
-            MonoType::SumDataCast { largest, .. } => write!(f, "[sum_data; {largest}]"),
+            MonoType::SumDataCast => write!(f, "<sum_data>"),
         }
     }
 }
@@ -187,20 +192,20 @@ pub fn fmt<'a, T>(types: &'a Map<MonoTypeKey, MonomorphisedRecord>, v: T) -> Mon
 }
 
 impl Records {
-    pub fn as_sum_type(&self, mk: MonoTypeKey) -> Option<(u32, u32)> {
+    pub fn as_sum_type(&self, mk: MonoTypeKey) -> Option<IntSize> {
         if self[mk].fields.len() != 2 {
             return None;
         }
 
         let tag = &self[mk].fields[key::Field(0)];
         let tag_size = match tag {
-            MonoType::Int(intsize) => intsize.bits() as u32,
+            MonoType::Int(intsize) => intsize,
             _ => return None,
         };
 
         let data = &self[mk].fields[key::Field(1)];
         match data {
-            MonoType::SumDataCast { largest } => Some((tag_size, *largest)),
+            MonoType::SumDataCast => Some(*tag_size),
             _ => None,
         }
     }
@@ -229,67 +234,6 @@ impl Records {
                 .values()
                 .any(|ty| self.field_is_recursive(key, ty)),
             _ => false,
-        }
-    }
-
-    pub fn size_of_without_ptr_sum(&self, ty: &MonoType) -> u32 {
-        self.size_of_ty(ty, false)
-    }
-
-    pub fn size_of(&self, ty: &MonoType) -> u32 {
-        self.size_of_ty(ty, true)
-    }
-
-    fn size_of_ty(&self, ty: &MonoType, sum_are_ptrs: bool) -> u32 {
-        match ty {
-            MonoType::SumDataCast { .. } if sum_are_ptrs => self.pointer_size,
-            MonoType::SumDataCast { largest } => *largest,
-            MonoType::Pointer(_) => self.pointer_size,
-            MonoType::Int(intsize) => intsize.bits() as u32,
-            MonoType::Float => 64,
-            MonoType::FnPointer(_, _) => self.pointer_size,
-            MonoType::Unreachable => 0,
-            MonoType::Monomorphised(key) => self.size_of_defined(*key),
-        }
-    }
-
-    pub fn size_of_defined(&self, key: MonoTypeKey) -> u32 {
-        let size = self[key].size;
-
-        // recursive; will be autoboxed. So; we take pointer size
-        // (unless it's a sum-type, those are always tag+dataptr for now)
-        if size == u32::MAX {
-            match self[key].original {
-                Some(M(_, key::TypeKind::Sum(_))) => {
-                    let field = &self[key].fields[key::Field(1)];
-                    TAG_SIZE.bits() as u32 + self.size_of_without_ptr_sum(field)
-                }
-                _ => self.size_of(&MonoType::u8_pointer()),
-            }
-        } else {
-            size
-        }
-    }
-
-    pub fn field_offset(&self, ty: MonoTypeKey, field: key::Field) -> BitOffset {
-        let ty = &self[ty];
-
-        if !ty.autoboxed.is_empty() {
-            panic!("offsets are wrong on recursive types since we don't respect autobox. we should just mark the type itself");
-        }
-
-        match ty.repr {
-            Repr::Lumina | Repr::Transparent => {
-                let mut offset = BitOffset(0);
-
-                for f in 0..field.0 {
-                    let f = key::Field(f);
-                    let ty = &ty.fields[f];
-                    offset.0 += self.size_of(ty) as u32;
-                }
-
-                offset
-            }
         }
     }
 
@@ -345,11 +289,12 @@ impl MonomorphisedTypes {
         }
 
         let record = MonomorphisedRecord {
-            size: elems.iter().map(|ty| self.types.size_of(ty)).sum(),
             repr: Repr::Lumina,
             autoboxed: HashSet::new(),
             fields: elems.iter().cloned().collect(),
             original: None,
+
+            is_placeholder: false,
         };
 
         let key = self.types.push(record);
@@ -419,6 +364,8 @@ pub struct TypeMap {
 pub struct Monomorphization<'a> {
     pub mono: &'a mut MonomorphisedTypes,
 
+    type_repr: &'a hir::TypeRepr,
+
     field_types: &'a MMap<key::Record, Map<key::Field, Tr<Type>>>,
     variant_types: &'a MMap<key::Sum, Map<key::Variant, Vec<Tr<Type>>>>,
 
@@ -436,6 +383,7 @@ macro_rules! fork {
     ($this:ident, $tmap:expr) => {
         Monomorphization::new(
             $this.mono,
+            $this.type_repr,
             $this.field_types,
             $this.variant_types,
             $this.methods,
@@ -464,9 +412,11 @@ impl<'a> Monomorphization<'a> {
         kind: M<impl Into<key::TypeKind>>,
         params: &[Type],
         gkind: GenericKind,
-        or: impl FnOnce(&mut Self, TypeMap) -> MonomorphisedRecord,
+        or: impl FnOnce(&mut Self, Repr, TypeMap) -> MonomorphisedRecord,
     ) -> MonoTypeKey {
         let kind = kind.map(Into::into);
+        let repr = self.type_repr[kind];
+
         let (mut tmap, mparams) = self.new_type_map_by(params, gkind);
 
         let key = (kind, mparams);
@@ -480,8 +430,8 @@ impl<'a> Monomorphization<'a> {
                     Type::defined(kind, params.to_vec()),
                     MonoType::Monomorphised(mk),
                 );
-                let record = or(self, tmap);
-                assert_eq!(self.mono.types[mk].size, u32::MAX);
+                let record = or(self, repr, tmap);
+                assert!(self.mono.types[mk].is_placeholder);
                 self.mono.types[mk] = record;
                 mk
             }
@@ -505,33 +455,9 @@ impl<'a> Monomorphization<'a> {
                     .collect()
             })
             .unwrap_or_else(HashSet::new);
-        MonomorphisedRecord {
-            repr,
-            size: fields
-                .iter()
-                .map(|(field, ty)| {
-                    if autoboxed.contains(&field) {
-                        self.mono.types.pointer_size
-                    } else {
-                        self.mono.types.size_of(ty)
-                    }
-                })
-                .sum(),
-            fields,
-            original,
-            autoboxed,
-        }
+        MonomorphisedRecord { repr, is_placeholder: false, fields, original, autoboxed }
     }
 
-    // TODO: The refactor that makes it so that the defined type monomorphisation takes MonoType
-    // for trait objects instead of Types which are then monomorphised, is that something we should
-    // do for all types and not just trait objects?
-    //
-    // For trait objects we *had* to make that change. But; it's possible that we *have* to do it
-    // this way for the others for some reason.
-    //
-    // no there literally isn't. ok but let's make sure this works for trait objects first before
-    // making the change generally.
     pub fn defined(&mut self, M(module, kind): M<key::TypeKind>, params: &[Type]) -> MonoTypeKey {
         match kind {
             key::TypeKind::Record(k) => self.record(k.inside(module), params),
@@ -544,11 +470,11 @@ impl<'a> Monomorphization<'a> {
     }
 
     pub fn record(&mut self, key: M<key::Record>, params: &[Type]) -> MonoTypeKey {
-        self.get_or_monomorphise(key, params, GenericKind::Entity, |this, mut tmap| {
+        self.get_or_monomorphise(key, params, GenericKind::Entity, |this, repr, mut tmap| {
             let fields = &this.field_types[key];
             let fields = fork!(this, &mut tmap).applys(fields.values().map(|t| &t.value));
 
-            this.construct(Some(key), fields, Repr::Lumina)
+            this.construct(Some(key), fields, repr)
         })
     }
 
@@ -561,32 +487,18 @@ impl<'a> Monomorphization<'a> {
     //  (^ the above is planned but not currently true. For convenience sake we just always heap
     //  allocate sumtype data payloads so that we can use pointer offsets. Which is terrible)
     pub fn sum(&mut self, key: M<key::Sum>, params: &[Type]) -> MonoTypeKey {
-        self.get_or_monomorphise(key, params, GenericKind::Entity, |this, mut tmap| {
-            let mut morph = fork!(this, &mut tmap);
+        self.get_or_monomorphise(key, params, GenericKind::Entity, |this, repr, _| {
+            let tag = match repr {
+                Repr::Enum(size) => size,
+                Repr::Align(bytes) => IntSize::new(false, bytes * 8),
+                _ => IntSize::new(false, 16),
+            };
 
-            let variants = &this.variant_types[key];
-            let variants = variants
-                .values()
-                .map(|types| types.iter().map(|t| morph.apply(&**t)).collect())
-                .collect::<Map<key::Variant, Vec<MonoType>>>();
-
-            // The size of the enum is the size of it's largest field plus the tag
-            let largest = variants
-                .values()
-                .map(|params| {
-                    params
-                        .iter()
-                        .map(|ty| this.mono.types.size_of(ty) as u32)
-                        .sum::<u32>()
-                })
-                .max()
-                .unwrap();
-
-            let fields = [MonoType::Int(TAG_SIZE), MonoType::SumDataCast { largest }]
+            let fields = [MonoType::Int(tag), MonoType::SumDataCast]
                 .into_iter()
                 .collect();
 
-            this.construct(Some(key), fields, Repr::Lumina)
+            this.construct(Some(key), fields, repr)
         })
     }
 
@@ -690,13 +602,13 @@ impl<'a> Monomorphization<'a> {
         let mut object_fields = Map::new();
         object_fields.push(MonoType::u8_pointer());
         object_fields.push(vtable);
-        let rdata = &mut self.mono.types[dst];
-        *rdata = MonomorphisedRecord {
-            size: 64 * 2, // TODO: platform-specific pointer size
+
+        self.mono.types[dst] = MonomorphisedRecord {
             repr: Repr::Lumina,
             fields: object_fields,
             autoboxed: HashSet::new(),
             original: Some(key.map(key::TypeKind::Trait)),
+            is_placeholder: false,
         };
     }
 
@@ -844,7 +756,7 @@ impl fmt::Debug for MonoType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             MonoType::Int(intsize) => write!(f, "{intsize}"),
-            MonoType::SumDataCast { largest } => write!(f, "<sum {largest}>"),
+            MonoType::SumDataCast => write!(f, "<sum_data>"),
             MonoType::Pointer(ty) => write!(f, "*{ty:?}"),
             MonoType::FnPointer(params, ret) => {
                 write!(

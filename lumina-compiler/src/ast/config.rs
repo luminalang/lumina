@@ -12,6 +12,8 @@ pub struct ProjectConfig {
     pub epanic: bool,
     pub prelude: String,
     pub dependencies: Vec<Dependency>,
+    pub linker_args: Vec<String>,
+    pub linker_libs: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -61,15 +63,19 @@ impl ProjectConfig {
                 self.epanic = bool(val.value)?;
                 Ok(())
             }
-            "authors" => {
-                let authors = self.parse_str_list(val.value)?;
-                self.authors.extend(authors);
-                Ok(())
-            }
+            "authors" => self
+                .parse_str_list(val.value)
+                .map(|authors| self.authors.extend(authors)),
             "prelude" => {
                 self.prelude = name(val.value)?;
                 Ok(())
             }
+            "linker_args" => self
+                .parse_str_list(val.value)
+                .map(|args| self.linker_args.extend(args)),
+            "linker_libs" => self
+                .parse_str_list(val.value)
+                .map(|args| self.linker_libs.extend(args)),
             _ => Err(Error::InvalidVal(val.span)),
         }
     }

@@ -86,3 +86,9 @@ fn example_using_ext_library() {
 fn example_modules() {
     run("examples/modules", "HelloWorld\nHelloWorld\n");
 }
+
+#[cfg(unix)]
+#[test]
+fn example_ffi() {
+    run("examples/ffi", "");
+}

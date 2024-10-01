@@ -97,7 +97,12 @@ pub fn run<'a, 's>(
     info: ProjectInfo,
     target: Target,
     ast: AST<'s>,
-) -> (HIR<'s>, MMap<key::Func, TEnv<'s>>, ImplIndex) {
+) -> (
+    ast::ProjectConfig,
+    HIR<'s>,
+    MMap<key::Func, TEnv<'s>>,
+    ImplIndex,
+) {
     let mut tenvs = ast.entities.fheaders.secondary();
 
     let mut funcs = ast.entities.fheaders.secondary();
@@ -197,6 +202,7 @@ pub fn run<'a, 's>(
         .map(|_, assoc| assoc.values().map(|a| a.name.tr(a.span)).collect());
 
     (
+        ast.config,
         HIR {
             fnames: ast.entities.field_names,
             val_initializers: ast.entities.vals,

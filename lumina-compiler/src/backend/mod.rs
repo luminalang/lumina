@@ -1,6 +1,6 @@
 pub mod cranelift;
 
-use super::{target::LinuxPlatform, target::Platform, Target};
+use super::{ast, target::LinuxPlatform, target::Platform, Target};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
@@ -10,12 +10,14 @@ use std::process::ExitCode;
 use tracing::info;
 
 pub fn link_native_binary(
+    config: ast::ProjectConfig,
     target: Target,
-    project_name: String,
     output: &Path,
+    projectpath: PathBuf,
     luminapath: PathBuf,
     object: Vec<u8>,
 ) -> Result<(), ExitCode> {
+    let project_name = config.name.clone();
     let workdir = create_workdir(&luminapath, &project_name);
 
     let objectfile = {
@@ -45,11 +47,19 @@ pub fn link_native_binary(
                 Command::new(bindir.join("ld.lld"))
             };
 
+            for arg in config.linker_args {
+                linker.arg(arg);
+            }
+
             linker.arg("-o").arg(output).arg(&objectfile);
 
             iter_objects(&sublinuxdir, &["o", "a"], |path| {
                 linker.arg(path);
             });
+
+            for lib in config.linker_libs {
+                linker.arg(projectpath.join(lib));
+            }
 
             linker.arg(linuxdir.join("syscall.o"));
 

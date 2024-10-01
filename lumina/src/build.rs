@@ -20,6 +20,8 @@ pub fn build_project(
     settings: cli::BuildFlags,
 ) -> Result<FilePathBuf, ExitCode> {
     let mut project_path = env.current_directory.clone();
+    let lumina_dir = env.lumina_directory.clone();
+
     if let Some(path) = settings.project {
         if path.is_absolute() {
             project_path = path;
@@ -35,7 +37,7 @@ pub fn build_project(
 
     let ast = match compiler::ast::parse(
         project_path.clone(),
-        env.lumina_directory.clone(),
+        lumina_dir.clone(),
         settings.epanic,
         target.clone(),
     ) {
@@ -54,8 +56,7 @@ pub fn build_project(
         Ok(pinfo) => pinfo,
     };
 
-    let project_name = ast.config.name.clone();
-    let (hir, tenvs, mut iquery) = compiler::hir::run(pinfo, target, ast);
+    let (pconfig, hir, tenvs, mut iquery) = compiler::hir::run(pinfo, target, ast);
 
     let (mir, has_failed) = compiler::mir::run(pinfo, target, hir, tenvs, &mut iquery);
     if has_failed {
@@ -71,13 +72,13 @@ pub fn build_project(
         Some(name) => {
             let mut path = std::path::PathBuf::from(name);
             while path.is_dir() {
-                path.push(&project_name);
+                path.push(&pconfig.name);
             }
             path
         }
         None if run => {
             let mut path = std::env::temp_dir();
-            path.push(&project_name);
+            path.push(&pconfig.name);
             path.set_extension(target.executable_extension());
             path
         }
@@ -87,7 +88,7 @@ pub fn build_project(
         }
     };
 
-    link_native_binary(target, project_name, &output, env.lumina_directory, object)?;
+    link_native_binary(pconfig, target, &output, project_path, lumina_dir, object)?;
 
     Ok(output)
 }

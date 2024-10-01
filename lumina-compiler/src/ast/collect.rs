@@ -79,14 +79,19 @@ impl<'s> Collector<'s> {
                 .map_err(|err| Error::File(err, path.clone()))?;
             let path = entry.path();
 
-            if file_type.is_file() && path.file_name() == Some(OsStr::new(root_name)) {
+            let fname = path.file_name().unwrap();
+
+            if file_type.is_file() && fname == OsStr::new(root_name) {
                 continue;
             }
 
-            //
-
             // prelude has already been included as module key 0
-            if path.file_name() == Some(OsStr::new("prelude")) {
+            if is_entrypoint && fname == OsStr::new("prelude") {
+                continue;
+            }
+
+            // skip non-lumina files
+            if file_type.is_file() && path.extension() != Some(OsStr::new("lm")) {
                 continue;
             }
 

@@ -1,4 +1,6 @@
 use std:libc
+use std:list [List [Slice]]
+use std:list:vec [Vec]
  
 @[platform "linux"]
 pub fn stdout as i32 = 1
@@ -24,6 +26,11 @@ pub fn println str as s -> () =
 pub fn interupt = libc:raise sigint
 
 fn sigint = 2
+
+pub fn raw_print str len as string, uint -> () =
+  match str.inner
+  | Slice {vec:Slice u8 | start, vec = {Vec u8 | ptr, len}} -> do libc:write stdout ptr (len as int) then ()
+  | _ -> ()
 
 when s can ToString
 pub fn trace s as s -> s =

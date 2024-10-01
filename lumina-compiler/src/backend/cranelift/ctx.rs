@@ -1,4 +1,4 @@
-use super::FuncHeader;
+use super::{abi, FuncHeader};
 use crate::prelude::*;
 use cranelift::prelude::*;
 use cranelift_module::DataId;
@@ -10,6 +10,7 @@ pub struct Context<'a> {
     pub isa: Arc<dyn isa::TargetIsa>,
     pub val_to_globals: &'a MMap<key::Val, DataId>,
     pub lir: &'a lir::Output,
+    pub structs: abi::Structs<'a>,
     pub objmodule: ObjectModule,
     pub funcmap: Map<lir::MonoFunc, FuncHeader>,
     pub externmap: HashMap<M<key::Func>, FuncHeader>,
@@ -44,7 +45,7 @@ impl<'a> Context<'a> {
     //     )
     // }
 
-    pub fn pointer_type(&self) -> Type {
+    pub fn ptr(&self) -> Type {
         let triple = self.isa.triple();
         Type::triple_pointer_type(triple)
     }

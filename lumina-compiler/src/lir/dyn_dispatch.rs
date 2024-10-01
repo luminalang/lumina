@@ -31,8 +31,6 @@ impl<'a> FuncLower<'a> {
                 let mut fnptr_ptypes = vec![MonoType::u8_pointer()];
                 fnptr_ptypes.extend(remaining.iter().cloned());
 
-                // TODO: remember caching
-
                 let symbol = format!(
                     "__Partial_{target}_{}",
                     key.1.iter().map(|ty| self.ty_symbol(ty)).format(",")
@@ -42,14 +40,10 @@ impl<'a> FuncLower<'a> {
                     let ptr = ssa.transmute(V(0).value(), MonoType::pointer(capture_tuple.into()));
                     let data = ssa.deref(ptr, capture_tuple.into());
 
-                    let mut applicated = this
-                        .lir
-                        .mono
-                        .fields(capture_tuple)
-                        .map(|field| {
-                            let ty = this.types().type_of_field(capture_tuple, field);
-                            ssa.field(data, capture_tuple, field, ty)
-                        })
+                    let mut applicated = this.lir.mono.types[capture_tuple]
+                        .as_record()
+                        .iter()
+                        .map(|(field, ty)| ssa.field(data, capture_tuple, field, ty.clone()))
                         .collect::<Vec<_>>();
 
                     for p in ssa.params(lir::Block::entry()).skip(1) {
@@ -87,9 +81,10 @@ impl<'a> FuncLower<'a> {
     //       call data b c
     pub fn partially_applicate_closure(&mut self, target: V, mut params: Vec<Value>) -> Value {
         let inner_object = self.ssa().type_of(target).as_key();
-        let inner_fnptr = self.types().as_closure_get_fnptr(inner_object);
+        let vtable = self.types()[inner_object].as_dyn_trait().1.clone();
 
-        let (inner_ptypes, inner_ret) = inner_fnptr.as_fnptr();
+        let (inner_ptypes, inner_ret) = vtable.as_fnptr();
+
         let inner_ret = inner_ret.clone();
 
         let mut fnptr_ptypes = Vec::with_capacity(inner_ptypes.len() - params.len());
@@ -116,13 +111,12 @@ impl<'a> FuncLower<'a> {
             let data = ssa.deref(ptr, capture_tuple.into());
             let inner = ssa.field(data, capture_tuple, field(0), inner_object.into());
             let inner_data = ssa.field(inner, inner_object, field(0), MonoType::u8_pointer());
-            let inner_call = ssa.field(inner, inner_object, field(1), inner_fnptr);
+            let inner_call = ssa.field(inner, inner_object, field(1), vtable.clone());
 
             let mut applicated = vec![inner_data];
 
-            for field_ in this.lir.mono.fields(capture_tuple).skip(1) {
-                let ty = this.types().type_of_field(capture_tuple, field_);
-                let v = ssa.field(data, capture_tuple, field_, ty);
+            for (field_, ty) in this.types()[capture_tuple].as_record().iter().skip(1) {
+                let v = ssa.field(data, capture_tuple, field_, ty.clone());
                 applicated.push(v);
             }
 

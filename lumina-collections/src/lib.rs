@@ -2,7 +2,7 @@
 mod tests;
 
 mod map;
-pub use map::{Map, MapKey};
+pub use map::{KeysIter, Map, MapKey};
 
 mod modmap;
 pub use modmap::{MMap, Module, M};

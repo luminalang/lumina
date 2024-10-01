@@ -29,6 +29,9 @@ impl<K: MapKey, V> Map<K, V> {
         Self { inner: Vec::new(), _key: PhantomData }
     }
 
+    pub fn as_mut_vec(&mut self) -> &mut Vec<V> {
+        &mut self.inner
+    }
     pub fn as_slice(&self) -> &[V] {
         self.inner.as_slice()
     }
@@ -164,9 +167,16 @@ impl<K: Into<usize>, V> IndexMut<K> for Map<K, V> {
     }
 }
 
+#[derive(Clone)]
 pub struct KeysIter<K> {
     range: std::ops::Range<usize>,
     _key: PhantomData<K>,
+}
+
+impl<K: MapKey> KeysIter<K> {
+    pub fn up_to(key: K) -> Self {
+        KeysIter { range: 0..key.into(), _key: PhantomData }
+    }
 }
 
 impl<K: From<usize>> Iterator for KeysIter<K> {

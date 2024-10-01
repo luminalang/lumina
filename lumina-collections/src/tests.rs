@@ -20,6 +20,11 @@ fn keys_iter() {
 
     let secondary = mmap.secondary_with(|_, v| *v);
     assert_eq!(secondary, mmap);
+
+    assert_eq!(
+        KeysIter::up_to(TestKey(2)).collect::<Vec<TestKey>>(),
+        vec![TestKey(0), TestKey(1)]
+    );
 }
 
 #[test]

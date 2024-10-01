@@ -219,13 +219,11 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
     fn tuple(&mut self, on: Value, next: &mir::DecTree) {
         let mk = self.f.type_of_value(on).as_key();
 
-        let constructor = self
-            .f
-            .lir
-            .mono
-            .fields(mk)
+        let constructor = self.f.types()[mk]
+            .as_record()
+            .keys()
             .map(|field| {
-                let ty = self.f.lir.mono.types.type_of_field(mk, field);
+                let ty = self.f.types()[mk].as_record()[field].clone();
                 self.ssa().field(on, mk, field, ty)
             })
             .collect();
@@ -261,21 +259,13 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         self.next(&falsey.1);
     }
 
-    fn is_just(&mut self, maybe: Value) -> (Value, Value) {
+    fn is_just(&mut self, maybe: Value) -> Value {
         let maybe_mk = self.f.type_of_value(maybe).as_key();
-        let [tag_ty, data_ty] = [key::Field(0), key::Field(1)]
-            .map(|field| self.f.lir.mono.types.type_of_field(maybe_mk, field));
 
-        assert_eq!(tag_ty, MonoType::Int(IntSize::new(false, 16)));
+        let (tagsize, _) = self.f.types()[maybe_mk].as_sum();
+        let tag = self.ssa().tag_of(maybe, tagsize);
 
-        let tag = self.ssa().field(maybe, maybe_mk, key::Field(0), tag_ty);
-
-        let data = self.ssa().field(maybe, maybe_mk, key::Field(1), data_ty);
-
-        let check = self
-            .ssa()
-            .eq([tag, Value::maybe_just()], IntSize::new(false, 16));
-        (check, data)
+        self.ssa().eq([tag, Value::maybe_just()], tagsize)
     }
 
     fn list(&mut self, on: Value, ty: &Type, vars: &SumBranches) {
@@ -311,7 +301,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
         let maybe = self.ssa().call(split, vec![on], ret);
 
-        let (is_just, data) = self.is_just(maybe);
+        let is_just = self.is_just(maybe);
 
         let [con_block, nil_block] = [mir::pat::LIST_CONS, mir::pat::LIST_NIL].map(|constr| {
             let vblock = self.ssa().new_block(0);
@@ -329,15 +319,15 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     .mono
                     .get_or_make_tuple(vec![innermt.clone(), listmt.clone()]);
 
-                let params = self.ssa().cast_from_payload(data, MonoType::from(x_xs_ty));
+                let params = self.ssa().cast_payload(maybe, MonoType::from(x_xs_ty));
 
                 let x = self
                     .ssa()
-                    .field(params, listmt.as_key(), key::Field(0), innermt.clone());
+                    .field(params, x_xs_ty, key::Field(0), innermt.clone());
 
                 let xs = self
                     .ssa()
-                    .field(params, listmt.as_key(), key::Field(1), listmt.clone());
+                    .field(params, x_xs_ty, key::Field(1), listmt.clone());
 
                 vparams.push_back(x);
                 vparams.push_back(xs);
@@ -364,13 +354,11 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
     fn record(&mut self, on: Value, next: &mir::DecTree) {
         let mk = self.f.type_of_value(on).as_key();
 
-        let constructor = self
-            .f
-            .lir
-            .mono
-            .fields(mk)
+        let constructor = self.f.types()[mk]
+            .as_record()
+            .keys()
             .map(|field| {
-                let ty = self.f.lir.mono.types.type_of_field(mk, field);
+                let ty = self.f.types()[mk].as_record()[field].clone();
                 self.ssa().field(on, mk, field, ty)
             })
             .collect();
@@ -474,7 +462,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
                     let maybe = self.f.call_closure(objty, closure, vec![on]);
 
-                    let (is_just, data) = self.is_just(maybe);
+                    let is_just = self.is_just(maybe);
 
                     let next_check_block = self.ssa().new_block(0);
 
@@ -490,11 +478,9 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                         .mono
                         .get_or_make_tuple(vec![string.into(), string.into()]);
 
-                    // Parameters to a variant are always wrapped as a tuple normally, so, might as
-                    // well replicate that here. Not sure whether it's needed though.
                     let tuple_ty_ty = self.f.lir.mono.get_or_make_tuple(vec![tuple_ty.into()]);
 
-                    let tuple = self.ssa().cast_from_payload(data, tuple_ty_ty.into());
+                    let tuple = self.ssa().cast_payload(maybe, tuple_ty_ty.into());
 
                     let [x, xs] = [0, 1]
                         .map(key::Field)
@@ -517,14 +503,8 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let oblock = self.block();
         let on_mk = self.f.type_of_value(on).as_key();
 
-        let tag_size = self.f.lir.mono.types.as_sum_type(on_mk).unwrap();
-
-        let tag_ty = MonoType::Int(tag_size);
-        let copy_tag = self.ssa().field(on, on_mk, key::Field(0), tag_ty);
-
-        let data = self.f.lir.mono.types.type_of_field(on_mk, key::Field(1));
-
-        let data_field = self.ssa().field(on, on_mk, key::Field(1), data);
+        let (tag_size, _) = self.f.types()[on_mk].as_sum();
+        let tag = self.ssa().tag_of(on, tag_size);
 
         assert!(
             v.branches
@@ -555,7 +535,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     .collect();
                 let param_tuple = self.f.lir.mono.get_or_make_tuple(param_types.clone());
 
-                let params = self.ssa().cast_from_payload(data_field, param_tuple.into());
+                let params = self.ssa().cast_payload(on, param_tuple.into());
                 let params = (0..param_types.len() as u32)
                     .map(key::Field)
                     .zip(param_types)
@@ -571,7 +551,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             })
             .collect();
 
-        self.ssa().jump_table(copy_tag, jmp_table_blocks);
+        self.ssa().jump_table(tag, jmp_table_blocks);
     }
 
     pub fn get_continuation(&mut self, ty: MonoType) -> Block {

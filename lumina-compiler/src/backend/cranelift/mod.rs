@@ -13,6 +13,8 @@ mod abi;
 mod ctx;
 use ctx::Context;
 mod ssa;
+// mod structs;
+// use structs::Struct;
 
 impl Target {
     fn isa(&self) -> isa::Builder {
@@ -35,14 +37,16 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
 
     let objbuilder = ObjectBuilder::new(
         isa.clone(),
-        b"whatisthis".to_vec(),
+        b"lumina".to_vec(),
         cranelift_module::default_libcall_names(),
     )
     .unwrap();
     let mut objmodule = ObjectModule::new(objbuilder);
 
+    let mut structs = abi::Structs::new(&lir.types);
+
     let vals = lir.val_types.map(|val, ty| {
-        let size = lir.types.size_of(ty) as usize;
+        let size = structs.size_of(ty) as usize;
         let name = format!("{}___VAL", lir.functions[lir.val_initializers[&val]].symbol);
         let thread_local = false; // TODO: this is something we're gonna want
         let id = objmodule
@@ -70,17 +74,15 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
         .extern_funcs
         .iter()
         .map(|(key, func)| {
-            let triple = isa.triple();
-            let params = lir.types.get_abi_params(triple, &func.params);
-            let ret = lir.types.get_abi_return(triple, &func.returns);
+            let mut typing = structs.records.get_abi_typing(&func.params, &func.returns);
+            typing.conv = isa.default_call_conv();
 
-            let conv = isa.default_call_conv();
-            let sig = abi::signature(conv, &params, &ret);
+            let sig = structs.signature(typing.conv, &typing.params, &typing.ret);
             let id = objmodule
                 .declare_function(&func.symbol, Linkage::Import, &sig)
                 .unwrap();
 
-            (*key, FuncHeader { id, params, ret })
+            (*key, FuncHeader { id, typing })
         })
         .collect();
 
@@ -95,26 +97,25 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
                 format!("// {}", func.symbol).dimmed()
             );
 
-            let triple = isa.triple();
-            let conv = isa::CallConv::Fast;
-            let params = lir.types.get_abi_params(
-                triple,
+            let typing = structs.records.get_abi_typing(
                 func.blocks.params(entry).map(|v| func.blocks.type_of(v)),
+                &func.returns,
             );
 
-            let ret = lir.types.get_abi_return(triple, &func.returns);
-            let sig = abi::signature(conv, &params, &ret);
+            let sig = structs.signature(typing.conv, &typing.params, &typing.ret);
 
             assert!(!func.symbol.is_empty());
             let id = objmodule
                 .declare_function(&func.symbol, Linkage::Hidden, &sig)
                 .unwrap();
 
-            FuncHeader { id, params, ret }
+            FuncHeader { id, typing }
         })
         .collect();
 
-    let mut ctx = Context::new(isa, &vals, &lir, objmodule, funcmap, externmap, rotable);
+    let mut ctx = Context::new(
+        isa, &vals, &lir, structs, objmodule, funcmap, externmap, rotable,
+    );
 
     for (mfunc, func) in lir.functions.iter() {
         let _span = info_span!(
@@ -166,26 +167,48 @@ impl<'a> Context<'a> {
             let init = self
                 .objmodule
                 .declare_func_in_func(header.id, &mut builder.func);
-            let ret = builder.ins().call(init, &[]);
-
-            match header.ret {
-                abi::Return::Param(_) => {}
-                abi::Return::StructOutPtr(_, _) => todo!("large return of val"),
-            }
 
             let dataid = self.val_to_globals[val];
             let data = self
                 .objmodule
                 .declare_data_in_func(dataid, &mut builder.func);
-
             let ptr = builder.ins().symbol_value(types::I64, data);
 
-            let values = builder.inst_results(ret).to_vec();
-            let mut offset = 0;
-            for v in values {
-                let mflags = MemFlags::new();
-                builder.ins().store(mflags, v, ptr, offset);
-                offset += builder.func.stencil.dfg.value_type(v).bytes() as i32;
+            // Attach the struct-return pointer as last parameter if needed
+            let params = match &header.typing.ret {
+                abi::Return::Struct(key)
+                    if self.structs.pass_mode(*key) == abi::PassBy::Pointer =>
+                {
+                    vec![ptr]
+                }
+                _ => vec![],
+            };
+
+            let ret = builder.ins().call(init, &params);
+
+            match header.typing.ret {
+                abi::Return::Struct(key) => match self.structs.pass_mode(key) {
+                    abi::PassBy::Value => {
+                        let align = self.structs.get(key).align;
+                        let mut offset = 0;
+
+                        for v in builder.inst_results(ret).to_vec() {
+                            let size = builder.func.dfg.value_type(v).bytes();
+
+                            builder.ins().store(MemFlags::trusted(), v, ptr, offset);
+
+                            let padding = (align - size % align) % align;
+                            offset += padding as i32 + size as i32;
+                        }
+                    }
+                    // already done as we passed the data as struct return directly
+                    abi::PassBy::Pointer => {}
+                },
+                abi::Return::Scalar(_) => {
+                    let r = builder.inst_results(ret)[0];
+                    builder.ins().store(MemFlags::trusted(), r, ptr, 0);
+                }
+                abi::Return::ZST => {}
             }
         }
 
@@ -307,10 +330,8 @@ impl<'a> Context<'a> {
     }
 }
 
-// Single source of truth to synchronise type signature with SSA generation
 #[derive(Clone, Debug)]
 struct FuncHeader {
     id: FuncId,
-    params: Map<key::Param, abi::Param>,
-    ret: abi::Return,
+    typing: abi::Typing,
 }

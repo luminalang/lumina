@@ -1,248 +1,832 @@
 use crate::lir;
 use crate::lir::{MonoType, MonoTypeKey};
 use crate::prelude::*;
+use cranelift::codegen::ir::ArgumentPurpose;
 use cranelift::prelude::*;
-use cranelift_codegen::ir;
-use target_lexicon::Triple;
+use lumina_collections::{map_key_impl, KeysIter};
+use std::cell::RefCell;
 
-impl lir::Records {
-    pub(super) fn get_abi_typing<'t, I>(&self, triple: &Triple, params: I, ret: &MonoType) -> Typing
+pub struct Structs<'a> {
+    structs: Map<MonoTypeKey, Struct>,
+    pub records: &'a lir::Types,
+
+    autobox_stack: RefCell<Vec<M<key::TypeKind>>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// Similar to key::Field except after the ABI has possibly re-ordered fields
+pub struct Field(u32);
+map_key_impl!(Field(u32), "afield");
+
+// The goal is to make this `struct` completely agnostic to ABI.
+#[derive(Clone, Debug, new)]
+pub struct Struct {
+    pub align: u32,
+
+    // Whether this struct can be passed as inlined scalars or is implicitly put behind a pointer.
+    // Applies for both parameter and return position.
+    // pub passing_mode: PassBy,
+
+    // CL lower is allowed to reorder fields for optimal alignment.
+    //
+    // Therefore; we need to map the original fields to their new indice.
+    pub field_map: Map<key::Field, Field>,
+    pub fields: Map<Field, FieldV>,
+}
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum PassBy {
+    Pointer,
+    Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FieldV {
+    Flat(MonoType),
+    AutoBoxed(MonoTypeKey),
+
+    SumPayloadPointer { sum: MonoTypeKey },
+    SumPayloadInline(Type),
+}
+
+impl Struct {
+    fn is_lowered(&self) -> bool {
+        self.align != u32::MAX
+    }
+}
+
+impl lir::Types {
+    pub(super) fn get_abi_typing<'t, I>(&self, params: I, ret: &MonoType) -> Typing
     where
         I: IntoIterator<Item = &'t MonoType>,
     {
         Typing {
-            params: self.get_abi_params(triple, params),
-            ret: self.get_abi_return(triple, ret),
+            params: self.get_abi_params(params),
+            ret: self.get_abi_return(ret),
             conv: isa::CallConv::Fast,
         }
     }
 
     pub(super) fn get_abi_params<'t>(
         &self,
-        triple: &Triple,
         params: impl IntoIterator<Item = &'t MonoType>,
     ) -> Map<key::Param, Param> {
-        params
-            .into_iter()
-            .map(|ty| self.abi_param(triple, ty))
-            .collect()
+        params.into_iter().map(|ty| self.abi_param(ty)).collect()
     }
 
-    pub(super) fn abi_param(&self, triple: &Triple, ty: &MonoType) -> Param {
+    pub(super) fn abi_param(&self, ty: &MonoType) -> Param {
         match ty {
-            MonoType::Int(bitsize) => Param::Direct(Type::int(bitsize.bits() as u16).unwrap()),
-            MonoType::Pointer(_) => Param::Direct(Type::triple_pointer_type(triple)),
-            MonoType::FnPointer(params, ret) => {
-                let typing = self.get_abi_typing(triple, params, ret);
-                Param::FuncPointer(Box::new(typing), Type::triple_pointer_type(triple))
+            MonoType::Int(bitsize) => {
+                Param::Scalar(Scalar::direct(Type::int(bitsize.bits() as u16).unwrap()))
             }
-            MonoType::Float => Param::Direct(types::F64),
+            MonoType::Pointer(inner) => Param::Scalar(Scalar {
+                point: Type::int(self.pointer_bits as u16).unwrap(),
+                kind: ScalarKind::Pointer((**inner).clone()),
+            }),
+            MonoType::FnPointer(params, ret) => {
+                let typing = self.get_abi_typing(params, ret);
+                Param::Scalar(Scalar::fn_pointer(
+                    Type::int(self.pointer_bits as u16).unwrap(),
+                    typing,
+                ))
+            }
+            MonoType::Float => Param::Scalar(Scalar::direct(types::F64)),
             MonoType::Unreachable => Param::ZST,
-            MonoType::Monomorphised(mk) => {
-                let fields = self.abi_record_fields(triple, *mk);
-                if fields.is_empty() {
-                    Param::ZST
-                } else {
-                    Param::Struct(*mk, fields)
+            MonoType::Monomorphised(mk) => match &self[*mk] {
+                lir::MonoTypeData::Record { fields, .. } if fields.is_empty() => Param::ZST,
+                _ => Param::Struct(*mk),
+            },
+        }
+    }
+
+    pub(super) fn get_abi_return(&self, ty: &MonoType) -> Return {
+        match self.abi_param(ty) {
+            Param::Struct(key) => Return::Struct(key),
+            Param::Scalar(scalar) => Return::Scalar(scalar),
+            Param::ZST => Return::ZST,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ByteOffset(pub u32);
+
+impl<'a> Structs<'a> {
+    pub fn new(records: &'a lir::Types) -> Self {
+        let mut this = Self {
+            structs: records
+                .keys()
+                .map(|_| Struct { align: u32::MAX, field_map: Map::new(), fields: Map::new() })
+                .collect(),
+            records,
+            autobox_stack: RefCell::new(vec![]),
+        };
+
+        for mk in records.keys() {
+            let _ = this.get_or_make(mk);
+        }
+
+        this
+    }
+
+    fn should_autobox_field(&self, key: MonoTypeKey, ty: &MonoType) -> bool {
+        match &self.records[key] {
+            lir::MonoTypeData::Record { key: rkey, .. } => {
+                let Some(original) = rkey else {
+                    return false;
+                };
+
+                let kind = original.map(key::TypeKind::Record);
+                self.autobox_stack.borrow_mut().push(kind);
+
+                let autobox = self.autobox_check(ty);
+
+                let kind = original.map(key::Record::into);
+                assert_eq!(self.autobox_stack.borrow_mut().pop(), Some(kind));
+
+                autobox
+            }
+            _ => false,
+        }
+    }
+
+    fn autobox_check(&self, ty: &MonoType) -> bool {
+        match ty {
+            MonoType::Monomorphised(key) => match &self.records[*key] {
+                lir::MonoTypeData::Record { key: rkey, fields, .. } => {
+                    if let Some(original) = rkey {
+                        let mut stack = self.autobox_stack.borrow_mut();
+                        let kind = original.map(key::TypeKind::Record);
+
+                        // early-return if one of the inner structs are recursive so we don't halt
+                        //
+                        // but if it's the struct we're checking autobox for that's recursive; then
+                        // return that we're meant to autobox.
+                        if stack.iter().any(|k| *k == kind) {
+                            return stack[0] == kind;
+                        }
+
+                        stack.push(kind);
+                    }
+
+                    let autobox = fields.values().any(|fty| self.autobox_check(fty));
+
+                    if let Some(original) = rkey {
+                        let kind = original.map(key::Record::into);
+                        assert_eq!(self.autobox_stack.borrow_mut().pop(), Some(kind));
+                    }
+
+                    autobox
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn get(&self, key: MonoTypeKey) -> &Struct {
+        let struct_ = &self.structs[key];
+        assert!(
+            struct_.is_lowered(),
+            "`get` used for struct before it's been converted to ABI Struct"
+        );
+        struct_
+    }
+
+    fn scalars_of_ty<F: FnMut(Scalar<Type>)>(&self, ty: &MonoType, f: &mut F) {
+        let ptr = || Type::int(self.records.pointer_bits as u16).unwrap();
+
+        match ty {
+            MonoType::Int(intsize) => f(Scalar::direct(Type::int(intsize.bits() as u16).unwrap())),
+            MonoType::Pointer(inner) => f(Scalar::pointer(ptr(), &*inner)),
+            MonoType::FnPointer(params, ret) => {
+                let typing = self.records.get_abi_typing(params, ret);
+                f(Scalar::fn_pointer(ptr(), typing))
+            }
+            MonoType::Float => f(Scalar::direct(types::F64)),
+            MonoType::Unreachable => unreachable!(),
+            MonoType::Monomorphised(key) => self.iter_s_stable_fields(*key, f),
+        }
+    }
+
+    /// Visitor over S_Stable representation of fields within a Struct
+    pub fn iter_s_stable_fields<F: FnMut(Scalar<Type>)>(&self, key: MonoTypeKey, f: &mut F) {
+        for field in self.structs[key].fields.values() {
+            let ptr = || Type::int(self.records.pointer_bits as u16).unwrap();
+
+            match field {
+                FieldV::Flat(ty) => self.scalars_of_ty(ty, f),
+                &FieldV::SumPayloadInline(size) => {
+                    f(Scalar::new(size, ScalarKind::SumInline(size)))
+                }
+                &FieldV::SumPayloadPointer { sum } => {
+                    // Since this is a field of a struct, we're assuming that the inner pointer
+                    // is S_Stable. However; make sure we're not accidentally breaking this
+                    // assumption somewhere.
+                    let largest = self.sum_payload_alloca_size(sum);
+                    f(Scalar::new(ptr(), ScalarKind::HeapSumPointer { largest }))
+                }
+                FieldV::AutoBoxed(ty) => {
+                    f(Scalar { point: ptr(), kind: ScalarKind::Pointer((*ty).into()) })
                 }
             }
-            // We store all data payloads as pointers for now
-            //
-            // Makes the destructoring casts a lot easier. Although; inline optimizations is
-            // definitely a good idea.
-            MonoType::SumDataCast { .. } => Param::Direct(Type::triple_pointer_type(triple)),
         }
     }
 
-    pub(super) fn get_abi_return(&self, triple: &Triple, ty: &MonoType) -> Return {
-        let fits_in_ret =
-            |size, len| size <= Type::triple_pointer_type(triple).bits() * 3 && len <= 3;
+    // NOTE: This borrows `self` mutably even though most of the time it doesn't need to.
+    //
+    // Using `make()` followed by `get()` is generally a better idea.
+    fn get_or_make(&mut self, key: MonoTypeKey) -> &Struct {
+        self.make(key);
+        self.get(key)
+    }
 
-        match self.abi_param(triple, ty) {
-            Param::Struct(mk, fields) if !fits_in_ret(self[mk].size, self[mk].fields()) => {
-                Return::StructOutPtr(mk, fields)
-            }
-            param => Return::Param(param),
+    pub fn pass_mode(&self, key: MonoTypeKey) -> PassBy {
+        match &self.records[key] {
+            lir::MonoTypeData::Record { key: _, .. } => match self.c_class_of_aggregate(key) {
+                SystemVClass::Integer => PassBy::Value,
+                SystemVClass::Memory => PassBy::Pointer,
+            },
+            _ => PassBy::Value,
         }
     }
 
-    pub(super) fn abi_record_fields(
-        &self,
-        triple: &Triple,
-        mk: MonoTypeKey,
-    ) -> Map<key::Field, StructField<Type>> {
-        self[mk]
-            .fields
-            .iter()
-            .map(|(fieldkey, ty)| {
-                if self[mk].autoboxed.contains(&fieldkey) {
-                    let key = ty.as_key();
-                    StructField::AutoBoxedRecursion(key, Type::triple_pointer_type(triple))
-                } else {
-                    match ty {
-                        MonoType::Int(bitsize) => {
-                            StructField::Direct(Type::int(bitsize.bits() as u16).unwrap())
-                        }
-                        MonoType::FnPointer(params, ret) => {
-                            let typing = self.get_abi_typing(triple, params, ret);
-                            StructField::FuncPointer(
-                                Box::new(typing),
-                                Type::triple_pointer_type(triple),
-                            )
-                        }
-                        MonoType::Pointer(_) => {
-                            StructField::Direct(Type::triple_pointer_type(triple))
-                        }
-                        MonoType::Float => StructField::Direct(types::F64),
-                        MonoType::Unreachable => StructField::ZST,
+    // Gets the largest scalar count and largest size among the sum variants
+    fn largest_sum_variant(&self, variants: &Map<key::Variant, MonoTypeKey>) -> (usize, u32) {
+        let mut scalars = 0;
+        let mut size = 0;
 
-                        // Flatten & inline regardless of size
-                        MonoType::Monomorphised(mk) => StructField::Struct(
-                            self.abi_record_fields(triple, *mk)
-                                .into_iter()
-                                .map(|(_, ty)| ty)
-                                .collect(),
-                        ),
-                        MonoType::SumDataCast { largest } => StructField::SumPayload {
-                            largest: *largest,
-                            ptr: Type::triple_pointer_type(triple),
-                        },
+        for param_tuple in variants.values() {
+            let (s, ss) = self.variant_inline_size_of_struct(*param_tuple);
+            scalars = scalars.max(s);
+            size = size.max(ss);
+        }
+
+        (scalars, size)
+    }
+
+    fn variant_inline_size_of_struct(&self, key: MonoTypeKey) -> (usize, u32) {
+        let ptr = self.records.pointer_bits / 8;
+
+        match &self.records[key] {
+            lir::MonoTypeData::Record { key: _, fields, .. } => {
+                let mut scalars = 0;
+                let mut size = 0;
+
+                for v in fields.values() {
+                    if self.should_autobox_field(key, v) {
+                        scalars += 1;
+                        size += self.records.pointer_bits / 8;
+                    } else {
+                        let (s, ss) = self.variant_inline_size(v);
+                        scalars += s;
+                        size += ss;
                     }
                 }
-            })
-            .collect()
+
+                (scalars, size)
+            }
+            lir::MonoTypeData::Sum { tag, .. } => (2, tag.bytes() as u32 + ptr),
+            lir::MonoTypeData::DynTraitObject { .. } => (2, ptr * 2),
+            lir::MonoTypeData::Placeholder => unreachable!(),
+        }
+    }
+
+    fn variant_inline_size(&self, ty: &MonoType) -> (usize, u32) {
+        let ptr = || self.records.pointer_bits / 8;
+
+        match ty {
+            MonoType::Int(intsize) => (1, intsize.bytes() as u32),
+            MonoType::Pointer(_) | MonoType::FnPointer(_, _) => (1, ptr()),
+            MonoType::Float => (1, 8),
+            MonoType::Monomorphised(inner) => self.variant_inline_size_of_struct(*inner),
+            MonoType::Unreachable => unreachable!(),
+        }
+    }
+
+    // TODO: we're calling this operation *a lot* while it's fairly expensive we should probably
+    // memoizise it.
+    pub fn sum_payload_alloca_size(&self, sum: MonoTypeKey) -> u32 {
+        let (_, variants) = self.records[sum].as_sum();
+        variants
+            .values()
+            .map(|&param_tuple| self.size_of(&param_tuple.into()))
+            .max()
+            .unwrap()
+    }
+
+    fn make(&mut self, key: MonoTypeKey) {
+        if self.structs[key].is_lowered() {
+            trace!("{key}: reusing existing");
+            return;
+        }
+
+        trace!(
+            "{key}: lowering without type id {:?}",
+            self.records[key].original()
+        );
+
+        match &self.records[key] {
+            lir::MonoTypeData::Sum { tag, key: _, variants } => {
+                trace!(
+                    "{key}: lowering variant types {}",
+                    variants.values().format(" & ")
+                );
+
+                let tagfield = FieldV::Flat(MonoType::Int(*tag));
+                let ptr = Type::int(self.records.pointer_bits as u16).unwrap();
+
+                let (scalarcount, largest) = self.largest_sum_variant(variants);
+
+                trace!("for sum {key}: scalarcount={scalarcount} largest={largest}");
+
+                // TODO: once iconcat/isplit scalar compression is fully implemented we want to
+                // check scalarcount <= 2 instead
+                let allowed_to_compress = || scalarcount == 1 && largest <= 8;
+
+                self.structs[key] = if largest == 0 {
+                    assert_eq!(scalarcount, 0);
+                    Struct::new(tag.bytes() as u32, [Field(0)].into(), [tagfield].into())
+                } else if allowed_to_compress() {
+                    // Assuming all sum types are tag+arch makes things easier for now.
+                    // They'd likely be padded to that regardless so it doesn't seem all
+                    // that wasteful.
+                    let fields = [FieldV::SumPayloadInline(ptr), tagfield].into();
+                    Struct::new(ptr.bytes(), [1, 0].map(Field).into(), fields)
+                } else {
+                    let fields = [FieldV::SumPayloadPointer { sum: key }, tagfield].into();
+                    Struct::new(ptr.bytes(), [1, 0].map(Field).into(), fields)
+                };
+            }
+            lir::MonoTypeData::Record { repr, key: _, fields } => {
+                if fields.is_empty() {
+                    trace!("{key}: ZST");
+                    self.structs[key].align = 0;
+                    return;
+                }
+
+                match repr {
+                    ast::attr::Repr::Lumina => {
+                        let _align = self.calculate_align_of_struct(key);
+                        let mut fieldorder: Vec<key::Field> = fields.keys().collect();
+
+                        // Sort fields for better alignment
+                        fieldorder.sort_by(|&a, &b| {
+                            self.calculate_align_of(&fields[b])
+                                .cmp(&self.calculate_align_of(&fields[a]))
+                        });
+
+                        self.structs[key].field_map = fields
+                            .keys()
+                            .map(|field| {
+                                Field(fieldorder.iter().position(|k| *k == field).unwrap() as u32)
+                            })
+                            .collect();
+
+                        assert_eq!(fields.len(), fieldorder.len());
+
+                        self.lower_struct_fields(key, fieldorder.into_iter());
+
+                        assert!(!self.structs[key].fields.is_empty(), "{key}");
+                    }
+                    ast::attr::Repr::C => {
+                        let _align = self.calculate_align_of_struct(key);
+                        self.structs[key].field_map = fields.keys().map(|k| Field(k.0)).collect();
+
+                        let fieldorder = fields.keys();
+                        self.lower_struct_fields(key, fieldorder);
+                    }
+                    ast::attr::Repr::Packed => todo!(),
+                    ast::attr::Repr::Align(_) => todo!(),
+                    ast::attr::Repr::Enum(_) => unreachable!(),
+                }
+            }
+            lir::MonoTypeData::DynTraitObject { vtable, .. } => {
+                let align = self.records.pointer_bits / 8;
+                self.structs[key] = Struct {
+                    align,
+                    field_map: [0, 1].map(Field).into(),
+                    fields: [
+                        FieldV::Flat(MonoType::u8_pointer()),
+                        FieldV::Flat(vtable.clone()),
+                    ]
+                    .into(),
+                };
+            }
+            lir::MonoTypeData::Placeholder => unreachable!(),
+        }
+    }
+
+    fn lower_struct_fields<I>(&mut self, key: MonoTypeKey, fields: I)
+    where
+        I: Iterator<Item = key::Field> + Clone,
+    {
+        trace!("{key}: lowering fields");
+
+        for field in fields {
+            let fty = &self.records[key].as_record()[field];
+
+            if self.should_autobox_field(key, fty) {
+                trace!("{key}:{fty:?}: recursive autobox");
+                let autoboxed = FieldV::AutoBoxed(key);
+                self.structs[key].fields.push(autoboxed);
+            } else {
+                let flat = FieldV::Flat(fty.clone());
+                self.structs[key].fields.push(flat);
+            }
+        }
+    }
+
+    pub fn get_real_field(&self, key: MonoTypeKey, field: key::Field) -> Field {
+        self.get(key).field_map[field]
+    }
+
+    pub fn offset_of(&self, key: MonoTypeKey, field: Field) -> ByteOffset {
+        let struct_ = &self.structs[key];
+
+        let mut offset = 0;
+        for i in KeysIter::up_to(field) {
+            let field = &struct_.fields[i];
+            let (size, align) = self.size_and_align_of_field(field);
+            let padding = (align - offset % align) % align;
+            offset += padding + size;
+        }
+
+        let (_, align) = self.size_and_align_of_field(&struct_.fields[field]);
+        let padding = (align - offset % align) % align;
+
+        ByteOffset(offset + padding)
+    }
+
+    fn calculate_align_of(&mut self, ty: &MonoType) -> u32 {
+        match ty {
+            MonoType::Monomorphised(key) => self.get_or_make(*key).align,
+            _ => {
+                let (size, align) = self.size_and_align_of(ty);
+                assert_eq!(size, align);
+                align
+            }
+        }
+    }
+
+    fn calculate_align_of_struct(&mut self, for_: MonoTypeKey) -> u32 {
+        if self.structs[for_].is_lowered() {
+            let align = self.structs[for_].align;
+            trace!("{for_}: fetched alignment {align}");
+            return align;
+        }
+
+        trace!("{for_}: calculating alignment");
+
+        let mut align = 0;
+
+        for (_, ty) in self.records[for_].as_record() {
+            if self.should_autobox_field(for_, ty) {
+                align = align.max(self.records.pointer_bits / 8);
+            } else {
+                let field_alignment = self.calculate_align_of(ty);
+                align = align.max(field_alignment);
+            }
+        }
+
+        trace!("{for_}: alignment calculated to {align}");
+
+        assert!(align <= self.records.pointer_bits / 8);
+        self.structs[for_].align = align;
+
+        align
+    }
+
+    pub fn size_and_align_of(&self, ty: &MonoType) -> (u32, u32) {
+        let (size, align) = match ty {
+            MonoType::Monomorphised(mk) => {
+                let align = self.structs[*mk].align;
+                if align == 0 {
+                    assert!(self.structs[*mk].fields.is_empty());
+                    return (0, 0);
+                }
+
+                let mut offset = 0;
+
+                for field in self.structs[*mk].fields.values() {
+                    let (size, align) = self.size_and_align_of_field(field);
+                    let padding = (align - offset % align) % align;
+                    offset += padding + size;
+                }
+
+                let end_padding = (align - offset % align) % align;
+                let size = offset + end_padding;
+
+                // trace!("size={size} align={align} for {mk}");
+
+                (size, align)
+            }
+            MonoType::Int(intsize) => (intsize.bytes() as u32, intsize.bytes() as u32),
+            MonoType::Float | MonoType::FnPointer(_, _) | MonoType::Pointer(_) => {
+                let size = self.records.pointer_bits / 8;
+                (size, size)
+            }
+            MonoType::Unreachable => (0, 0),
+        };
+
+        (size, align)
+    }
+
+    pub fn size_and_align_of_field(&self, f: &FieldV) -> (u32, u32) {
+        match f {
+            FieldV::Flat(ty) => self.size_and_align_of(ty),
+            FieldV::SumPayloadInline(clty) => (clty.bytes(), clty.bytes()),
+            FieldV::AutoBoxed(_) | FieldV::SumPayloadPointer { .. } => {
+                let ptr = self.records.pointer_bits / 8;
+                (ptr, ptr)
+            }
+        }
+    }
+
+    pub fn size_of(&self, ty: &MonoType) -> u32 {
+        self.size_and_align_of(ty).0
+    }
+
+    fn struct_has_unaligned_fields(&self, key: MonoTypeKey) -> bool {
+        let struct_ = self.get(key);
+        struct_.align == 0
+    }
+
+    fn is_non_trivial(&self) -> bool {
+        false
+    }
+
+    // ref: System V Application Binary Interface Version 1.0
+    //      page 24
+    fn c_class_of_aggregate(&self, key: MonoTypeKey) -> SystemVClass {
+        let eightbyte = self.records.pointer_bits / 8;
+        let struct_size = self.size_of(&key.into());
+
+        if struct_size > (eightbyte * 8) || self.struct_has_unaligned_fields(key) {
+            // 1. always pass large structs through the stack
+            SystemVClass::Memory
+        } else if self.is_non_trivial() {
+            // 2. use Memory for non-trivial objects
+            unreachable!("not possible to define non-trivial C structs in Lumina");
+        } else {
+            let mut class = None;
+
+            // 4. use the class of the fields. Prioritise Memory over Integer.
+            for i in self.structs[key].fields.keys() {
+                let field_class = match self.structs[key].fields[i].clone() {
+                    FieldV::Flat(ty) => self.c_class_of(&ty),
+                    _ => SystemVClass::Integer,
+                };
+
+                match class {
+                    None => class = Some(field_class),
+                    Some(SystemVClass::Memory) => {}
+                    Some(SystemVClass::Integer) => match field_class {
+                        SystemVClass::Memory => class = Some(SystemVClass::Memory),
+                        SystemVClass::Integer => {}
+                    },
+                }
+            }
+
+            // 5c. if the size exceeds two eightbytes and there are no floats or
+            // vectors (which we don't support C repr of) then also use the stack.
+            if struct_size > (eightbyte * 2) {
+                SystemVClass::Memory
+            } else {
+                class.expect("empty repr C structs are not valid")
+            }
+        }
+    }
+
+    fn c_class_of(&self, ty: &MonoType) -> SystemVClass {
+        match ty {
+            MonoType::FnPointer(_, _) | MonoType::Pointer(_) | MonoType::Int(_) => {
+                SystemVClass::Integer
+            }
+            MonoType::Monomorphised(mk) => self.c_class_of_aggregate(*mk),
+            _ => panic!("unsupported type in repr C struct: {ty:?}"),
+        }
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum StructField<T> {
-    Direct(T),
-    AutoBoxedRecursion(MonoTypeKey, T),
-    FuncPointer(Box<Typing>, T),
-    Struct(Map<key::Field, StructField<T>>),
-    SumPayload { largest: u32, ptr: T },
-    ZST,
+enum SystemVClass {
+    Integer,
+    Memory,
+    // Sse,
+    // Sseup,
+    // NoClass,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Typing {
     pub conv: isa::CallConv,
     pub params: Map<key::Param, Param>,
     pub ret: Return,
 }
 
-// TODO: using SmallVec could do a lot of good here
-#[derive(Clone, Debug)]
-pub enum Entry<T> {
-    Direct(T),
-    FuncPointer(Box<Typing>, T),
-    Struct(MonoTypeKey, Map<key::Field, StructField<T>>),
-    SumPayload { largest: u32, ptr: T },
+/// A singular S_Stable hardware value with attached metadata
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scalar<T> {
+    pub point: T,
+    pub kind: ScalarKind,
+}
+
+impl<T> Scalar<T> {
+    pub fn new(point: T, kind: ScalarKind) -> Self {
+        Self { point, kind }
+    }
+
+    pub fn direct(point: T) -> Self {
+        Self { point, kind: ScalarKind::Direct }
+    }
+
+    pub fn pointer(point: T, inner: &MonoType) -> Self {
+        Self { point, kind: ScalarKind::Pointer(inner.clone()) }
+    }
+
+    pub fn fn_pointer(point: T, typing: Typing) -> Self {
+        Self { point, kind: ScalarKind::FuncPointer(Box::new(typing)) }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScalarKind {
+    Direct,
+    FuncPointer(Box<Typing>),
+
+    // Since we stack-allocate large payloads by default; we cannot treat the payload differently
+    // on a variant-basis since whether we need to heap-allocate or not for escape analysis
+    // wouldn't be statically known.
+    // All variants are either treated as having inline or pointer, no mixture.
+    SumInline(Type),
+    HeapSumPointer { largest: u32 },
+
+    Pointer(MonoType),
+    AutoBoxed(MonoType),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Param {
+    Struct(MonoTypeKey),
+    Scalar(Scalar<types::Type>),
     ZST,
 }
 
-pub type Param = Entry<Type>;
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Return {
-    Param(Entry<Type>),
-    StructOutPtr(MonoTypeKey, Map<key::Field, StructField<Type>>),
+    Struct(MonoTypeKey),
+    Scalar(Scalar<types::Type>),
+    ZST,
 }
 
-impl<T: Clone + Copy> Entry<T> {
-    pub fn visit(&self, mut on: impl FnMut(T)) {
-        match self {
-            Entry::ZST => {}
-            Entry::Direct(ty) => on(*ty),
-            Entry::Struct(_, fields) => fields.values().for_each(|field| field.visit(&mut on)),
-            Entry::FuncPointer(_, ptr) => on(*ptr),
-            Entry::SumPayload { ptr, .. } => on(*ptr),
-            // Param::FlatArray { size, times } => match Type::int(*size as u16) {
-            //     Some(elem) => (0..*times).for_each(|_| on(elem)),
-            //     None => unimplemented!("uneven arrays by-value"),
-            // },
-            // Param::ArrayPtr { .. } => on(Type::triple_pointer_type(triple)),
-            // Param::ZST => {}
+impl<'a> Structs<'a> {
+    pub fn signature(
+        &mut self,
+        conv: isa::CallConv,
+        abiparams: &Map<key::Param, Param>,
+        abiret: &Return,
+    ) -> Signature {
+        let mut sig = Signature::new(conv);
+        sig.call_conv = conv;
+
+        for p in abiparams.values() {
+            match p {
+                Param::Struct(mk) => {
+                    let size = self.size_of(&(*mk).into());
+                    let purpose = ArgumentPurpose::StructArgument(size);
+                    self.struct_to_abi_param(purpose, *mk, &mut sig);
+                }
+                Param::Scalar(scalar) => sig.params.push(AbiParam::new(scalar.point)),
+                Param::ZST => {}
+            }
         }
+
+        match abiret {
+            Return::Struct(mk) => {
+                let purpose = ArgumentPurpose::StructReturn;
+                self.struct_to_abi_param(purpose, *mk, &mut sig);
+            }
+            Return::Scalar(scalar) => sig.returns.push(AbiParam::new(scalar.point)),
+            Return::ZST => {}
+        }
+
+        sig
     }
 
-    pub fn map<U>(&self, on: &mut dyn FnMut(T) -> U) -> Entry<U> {
-        match self {
-            Entry::Direct(v) => Entry::Direct(on(*v)),
-            Entry::FuncPointer(typing, ptr) => Entry::FuncPointer(typing.clone(), on(*ptr)),
-            Entry::Struct(mk, fields) => Entry::Struct(
-                *mk,
-                fields.values().map(|field| field.map(&mut *on)).collect(),
-            ),
-            &Entry::SumPayload { largest, ptr } => Entry::SumPayload { largest, ptr: on(ptr) },
-            Entry::ZST => Entry::ZST,
-        }
-    }
+    fn struct_to_abi_param(
+        &mut self,
+        purpose: ArgumentPurpose,
+        mk: MonoTypeKey,
+        sig: &mut Signature,
+    ) {
+        let ptr = Type::int(self.records.pointer_bits as u16).unwrap();
 
-    #[track_caller]
-    pub fn as_direct(self) -> T {
-        match self {
-            Entry::Direct(v) => v,
-            _ => panic!("not a direct value"),
-        }
-    }
-}
-
-impl<T: Clone + Copy> StructField<T> {
-    pub fn visit(&self, on: &mut impl FnMut(T)) {
-        match self {
-            StructField::ZST => {}
-            StructField::FuncPointer(_, ptr) => on(*ptr),
-            StructField::AutoBoxedRecursion(_, ty) | StructField::Direct(ty) => on(*ty),
-            StructField::Struct(fields) => fields.values().for_each(|field| field.visit(on)),
-            // StructField::Array { size, times } => match Type::int(*size as u16) {
-            //     Some(elem) => (0..*times).for_each(|_| on(elem)),
-            //     None => unimplemented!("uneven arrays by-value"),
-            // },
-            StructField::SumPayload { ptr, .. } => on(*ptr),
-        }
-    }
-
-    pub fn map<U>(&self, on: &mut dyn FnMut(T) -> U) -> StructField<U> {
-        match self {
-            StructField::Direct(v) => StructField::Direct(on(*v)),
-            StructField::FuncPointer(typing, ptr) => {
-                StructField::FuncPointer(typing.clone(), on(*ptr))
+        match self.pass_mode(mk) {
+            PassBy::Pointer => sig.params.push(AbiParam::special(ptr, purpose)),
+            PassBy::Value => {
+                let buf = if purpose == ArgumentPurpose::StructReturn {
+                    &mut sig.returns
+                } else {
+                    &mut sig.params
+                };
+                self.iter_s_stable_fields(mk, &mut |scalar| buf.push(AbiParam::new(scalar.point)));
             }
-            StructField::AutoBoxedRecursion(mk, ty) => {
-                StructField::AutoBoxedRecursion(*mk, on(*ty))
-            }
-            StructField::Struct(fields) => {
-                StructField::Struct(fields.values().map(|field| field.map(&mut *on)).collect())
-            }
-            &StructField::SumPayload { largest, ptr } => {
-                StructField::SumPayload { largest, ptr: on(ptr) }
-            }
-            StructField::ZST => todo!(),
         }
     }
 }
 
-pub fn signature(
-    conv: isa::CallConv,
-    abiparams: &Map<key::Param, Param>,
-    abiret: &Return,
-) -> Signature {
-    let mut sig = Signature::new(conv);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumina_typesystem::IntSize;
 
-    for p in abiparams.values() {
-        p.visit(|p| sig.params.push(AbiParam::new(p)));
+    #[test]
+    fn repr_c_padding() {
+        let mut records = lir::MonomorphisedTypes::new(
+            M(key::Module(0), key::Trait::from(0)),
+            64,
+            ast::attr::Repr::C,
+        );
+
+        let int = |bits| MonoType::Int(IntSize::new(false, bits));
+
+        let small = records.get_or_make_tuple(vec![int(16), int(32)]);
+        let large = records.get_or_make_tuple(vec![small.into(), int(16), int(64)]);
+
+        let mut structs = Structs::new(&records.types);
+
+        let small_struct = structs.get_or_make(small).clone();
+        assert_eq!(small_struct.align, 32 / 8);
+        assert_eq!(structs.size_of(&small.into()), (32 / 8) * 2);
+
+        let u16_ = structs.get_real_field(large, key::Field(1));
+        assert_eq!(structs.offset_of(large, u16_), ByteOffset(4 * 2));
+
+        let large_struct = structs.get_or_make(large);
+        assert_eq!(large_struct.align, 64 / 8);
+
+        assert_eq!(
+            structs.size_of(&large.into()),
+            structs.size_of(&small.into()) + ((64 / 8) * 2)
+        );
     }
 
-    match abiret {
-        Return::Param(p) => p.visit(|p| sig.returns.push(AbiParam::new(p))),
-        Return::StructOutPtr(..) => {
-            sig.params.push(AbiParam::special(
-                types::I64,
-                ir::ArgumentPurpose::StructReturn,
-            ));
-        }
+    #[test]
+    fn padding_at_end() {
+        lumina_util::test_logger();
+
+        let m = key::Module(0);
+
+        let mut records =
+            lir::MonomorphisedTypes::new(M(m, key::Trait::from(0)), 64, ast::attr::Repr::Lumina);
+
+        let int = |bits| MonoType::Int(IntSize::new(false, bits));
+
+        let record = records.get_or_make_tuple(vec![int(64), int(16)]);
+
+        let mut structs = Structs::new(&records.types);
+        let struct_ = structs.get_or_make(record);
+        assert_eq!(struct_.align, 8);
+
+        assert_eq!(structs.size_of(&record.into()), 16);
     }
 
-    sig
+    #[test]
+    fn recursive_types() {
+        lumina_util::test_logger();
+
+        let m = key::Module(0);
+
+        let mut records =
+            lir::MonomorphisedTypes::new(M(m, key::Trait::from(0)), 64, ast::attr::Repr::Lumina);
+
+        let point = MonoTypeKey(1);
+        let tuple = MonoTypeKey(2);
+        let pointr = M(m, key::Record(0));
+
+        // type Point { x: (Self, Self), y: (Self, Self) }
+        assert_eq!(
+            point,
+            records.get_or_make_record(
+                pointr,
+                vec![tuple.into()],
+                [tuple.into(), tuple.into()].into(),
+            )
+        );
+
+        assert_eq!(
+            tuple,
+            records.get_or_make_tuple(vec![point.into(), point.into()])
+        );
+
+        let mut structs = Structs::new(&records.types);
+
+        let point_struct = structs.get_or_make(point);
+        assert_eq!(point_struct.align, 8);
+        assert_eq!(structs.size_of(&point.into()), 8 * 2);
+
+        let tuple_struct = structs.get_or_make(tuple);
+        assert_eq!(tuple_struct.align, 8);
+        assert_eq!(structs.size_of(&tuple.into()), 8 * 4);
+    }
 }

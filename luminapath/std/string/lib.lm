@@ -81,9 +81,6 @@ pub fn contains_char c str as u8, string -> bool =
 impl ToString for string
   fn show str = str
 
-// TODO: we are gonna want `match` desugaring sugar for strings as well. 
-//
-// But I'm not sure how that'd look like. We could just use the List stuff but maybe we can be fancier? 
 pub fn split_first str as string -> Maybe (u8, string) =
   str.inner . split
   . map #(\(c, xs) -> (c, { string | inner = xs }))

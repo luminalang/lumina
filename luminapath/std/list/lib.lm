@@ -40,7 +40,7 @@ impl Listable a for List a
       split left 
       . map #(\(v, leftright) -> (v, leftright ++ right))
 
-pub fn ++ left right as List a, List a -> List a =
+pub fn ++ left right as List a, List a -> [a] =
   match left
   | Nil -> right
   | _   -> 

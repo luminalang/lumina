@@ -253,6 +253,16 @@ impl Blocks {
         self.assign(entry, ty)
     }
 
+    pub fn variant(&mut self, var: key::Variant, params: Vec<Value>, ty: MonoTypeKey) -> Value {
+        let entry = Entry::Variant(var, params);
+        self.assign(entry, MonoType::Monomorphised(ty))
+    }
+
+    pub fn tag_of(&mut self, sum: Value, tagsize: IntSize) -> Value {
+        let entry = Entry::TagFromSum { of: sum };
+        self.assign(entry, MonoType::Int(tagsize))
+    }
+
     pub fn copy(&mut self, value: Value, ty: MonoType) -> Value {
         let entry = Entry::Copy(value);
         self.assign(entry, ty)
@@ -326,8 +336,8 @@ impl Blocks {
         let entry = Entry::Field { of, key, field };
         self.assign(entry, ty)
     }
-    pub fn cast_from_payload(&mut self, of: Value, tuple: MonoType) -> Value {
-        let entry = Entry::CastFromSumPayload { of };
+    pub fn cast_payload(&mut self, of: Value, tuple: MonoType) -> Value {
+        let entry = Entry::CastFromSum { of };
         self.assign(entry, tuple)
     }
 
@@ -503,6 +513,7 @@ pub enum Entry {
     // Value Manipulation
     Copy(Value),
     Construct(Vec<Value>),
+    Variant(key::Variant, Vec<Value>),
 
     RefStaticVal(M<key::Val>),
 
@@ -511,7 +522,10 @@ pub enum Entry {
         key: MonoTypeKey,
         field: key::Field,
     },
-    CastFromSumPayload {
+    CastFromSum {
+        of: Value,
+    },
+    TagFromSum {
         of: Value,
     },
 
@@ -643,6 +657,14 @@ impl fmt::Display for Entry {
             Entry::BlockParam(param) => write!(f, "{} {param}", "fparam".keyword()),
             Entry::Deref(v) => write!(f, "{} {v}", "deref".keyword()),
             Entry::Construct(elems) => ParamFmt::new(&"construct".keyword(), elems).fmt(f),
+            Entry::Variant(var, elems) => {
+                write!(
+                    f,
+                    "{} {var} ({})",
+                    "variant".keyword(),
+                    elems.iter().format(" ")
+                )
+            }
             Entry::IntCmpInclusive(left, cmp, right, _) => {
                 let header = match cmp {
                     std::cmp::Ordering::Less => "lt",
@@ -656,8 +678,11 @@ impl fmt::Display for Entry {
             Entry::Alloc => write!(f, "{}", "alloc".keyword(),),
             Entry::Dealloc { ptr } => write!(f, "{} {ptr}", "dealloc".keyword()),
             Entry::Field { of, field, .. } => write!(f, "{} {of} {field}", "field".keyword(),),
-            Entry::CastFromSumPayload { of } => {
-                write!(f, "{} {of}", "cast-payload".keyword(),)
+            Entry::CastFromSum { of } => {
+                write!(f, "{} {of}", "cast-payload".keyword())
+            }
+            Entry::TagFromSum { of } => {
+                write!(f, "{} {of}", "cast-tag".keyword())
             }
             Entry::IntAdd(v, n) => write!(f, "{} {v} {n}", "add".keyword()),
             Entry::IntSub(v, n) => write!(f, "{} {v} {n}", "sub".keyword()),

@@ -131,20 +131,18 @@ impl<'a> Debugger<'a> {
                         self.params(params, ptypes.iter());
                         assert_eq!(exp, &*ret);
                     }
-                    MonoType::Monomorphised(mkey)
-                        if self
-                            .lir
-                            .mono
-                            .types
-                            .as_trait_object(mkey)
-                            .map(|key| self.mir.name_of_type(key))
-                            == Some("Closure") =>
-                    {
-                        let ty = self.lir.mono.types.as_closure_get_fnptr(mkey);
-                        let (ptypes, ret) = ty.as_fnptr();
-                        self.params(params, ptypes.iter());
-                        assert_eq!(exp, ret);
-                    }
+                    MonoType::Monomorphised(mkey) => match &self.lir.mono.types[mkey] {
+                        MonoTypeData::DynTraitObject { trait_, vtable }
+                            if self.mir.name_of_type(*trait_) == "Closure" =>
+                        {
+                            let (ptypes, ret) = vtable.as_fnptr();
+                            self.params(params, ptypes.iter());
+                            assert_eq!(exp, ret);
+                        }
+                        _ => {
+                            panic!("CallValue for non-closure: {}", self.tfmt(&called))
+                        }
+                    },
                     ty => panic!(
                         "CallValue for non-closure or non-fnpointer: {}",
                         self.tfmt(&ty)
@@ -153,29 +151,51 @@ impl<'a> Debugger<'a> {
             }
             Entry::Copy(v) => assert_eq!(exp, &self.lir.type_of_value(self.mfunc, *v)),
             Entry::Construct(values) => match exp {
-                MonoType::SumDataCast => {}
-                MonoType::Monomorphised(mk) => {
-                    let fields = self.lir.mono.fields(*mk);
-                    self.params(
-                        values,
-                        fields.map(|field| &self.lir.mono.types[*mk].fields[field]),
-                    );
-                }
+                MonoType::Monomorphised(mk) => match &self.lir.mono.types[*mk] {
+                    MonoTypeData::Record { fields, .. } => self.params(values, fields.values()),
+                    MonoTypeData::DynTraitObject { vtable, .. } => {
+                        self.params(values, [&MonoType::u8_pointer(), vtable].into_iter());
+                    }
+                    _ => {
+                        panic!("invalid type for construct: {exp:?}")
+                    }
+                },
                 ty => panic!("cannot construct non-record: {}", self.tfmt(ty)),
             },
+            Entry::TagFromSum { of } => {
+                let ty = self.lir.type_of_value(self.mfunc, *of);
+                let _ = self.lir.mono.types[ty.as_key()].as_sum();
+                self.as_int(exp, "tag");
+            }
+            Entry::Variant(var, elems) => {
+                let (_, variants) = self.lir.mono.types[exp.as_key()].as_sum();
+                self.params(
+                    elems,
+                    self.lir.mono.types[variants[*var]].as_record().values(),
+                );
+            }
             Entry::RefStaticVal(val) => {
                 let ty = &self.lir.vals[*val];
                 assert_eq!(exp, &MonoType::pointer(ty.clone()));
             }
             Entry::Field { of, key, field } => {
                 assert_eq!(self.lir.type_of_value(self.mfunc, *of).as_key(), *key);
-                let ty = &self.lir.mono.types[*key].fields[*field];
-                assert_eq!(exp, ty);
+                match &self.lir.mono.types[*key] {
+                    MonoTypeData::Record { fields, .. } => assert_eq!(exp, &fields[*field]),
+                    MonoTypeData::DynTraitObject { vtable, .. } => match field {
+                        key::Field(0) => assert_eq!(exp, &MonoType::u8_pointer()),
+                        key::Field(1) => assert_eq!(exp, vtable),
+                        field => panic!("{field}: dyn objects only have two fields"),
+                    },
+                    other => panic!("field of non-record: {other:?}"),
+                }
             }
-            Entry::CastFromSumPayload { of } => {
+            Entry::CastFromSum { of } => {
                 let of = self.lir.type_of_value(self.mfunc, *of);
                 match of {
-                    MonoType::SumDataCast => {}
+                    MonoType::Monomorphised(mkey) => {
+                        let (_, _) = self.lir.mono.types[mkey].as_sum();
+                    }
                     _ => panic!("SumField of non-opaque sum data: {}", self.tfmt(&of)),
                 }
             }

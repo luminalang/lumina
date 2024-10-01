@@ -80,14 +80,16 @@ impl TypeRepr {
     fn insert<K: Into<key::TypeKind>>(&mut self, key: M<K>, repr: ast::attr::Repr) {
         self.0.insert(key.map(K::into), repr);
     }
-}
 
-impl<K: Into<key::TypeKind>> std::ops::Index<M<K>> for TypeRepr {
-    type Output = ast::attr::Repr;
-
-    fn index(&self, key: M<K>) -> &Self::Output {
+    pub fn get<K: Into<key::TypeKind>>(&self, key: M<K>) -> ast::attr::Repr {
         let key = key.map(K::into);
-        self.0.get(&key).unwrap_or(&ast::attr::Repr::Lumina)
+        self.0.get(&key).copied().unwrap_or_else(|| match key.1 {
+            lumina_key::TypeKind::Sum(_) => {
+                let default_tag_size = lumina_typesystem::IntSize::new(false, 16);
+                ast::attr::Repr::Enum(default_tag_size)
+            }
+            _ => ast::attr::Repr::Lumina,
+        })
     }
 }
 

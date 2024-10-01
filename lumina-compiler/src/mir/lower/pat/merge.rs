@@ -97,6 +97,9 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
             DecTree::List { next, .. } => match pat.value {
                 Pattern::Cons(values, _) => self.merge_cmp_var(next, LIST_CONS, &**values),
                 Pattern::Nil(_) => self.merge_cmp_var(next, LIST_NIL, &[]),
+                Pattern::Constructor(sum, _, _) if sum.map(key::TypeKind::Sum) == self.list => {
+                    panic!("concrete variants used for sugared list type");
+                }
                 _ => reachable_as_poison!(pat),
             },
             DecTree::Ints { intsize, next } => {

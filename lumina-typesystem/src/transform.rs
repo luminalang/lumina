@@ -376,6 +376,6 @@ impl<T: fmt::Display> fmt::Display for GenericMapper<T> {
 
 impl<T: fmt::Display> fmt::Debug for GenericMapper<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{self}",)
+        write!(f, "{self}")
     }
 }

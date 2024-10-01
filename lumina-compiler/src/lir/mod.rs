@@ -6,6 +6,7 @@
 
 use crate::prelude::*;
 use crate::{ProjectInfo, Target};
+use ast::attr::Repr;
 use either::Either;
 use lumina_collections::map_key_impl;
 use lumina_typesystem::{Generic, GenericKind, GenericMapper, ImplIndex, IntSize, Static, Type};
@@ -37,8 +38,8 @@ mod mono;
 mod reflect;
 mod ssa;
 pub use mono::{
-    fmt as ty_fmt, BitOffset, MonoFormatter, MonoType, MonoTypeKey, MonomorphisedRecord, Records,
-    TypeMap,
+    fmt as ty_fmt, MonoFormatter, MonoType, MonoTypeData, MonoTypeKey, MonomorphisedTypes, TypeMap,
+    Types,
 };
 pub use ssa::{Block, Blocks, ControlFlow, Entry, Value, V};
 mod dyn_dispatch;
@@ -57,7 +58,7 @@ pub struct Output {
 
     pub read_only_table: MMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
 
-    pub types: Records,
+    pub types: Types,
 
     pub func_names: MMap<key::Func, String>,
     pub module_names: Map<key::Module, String>,
@@ -208,7 +209,8 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
 
     let mainfunc = &mir.funcs[info.main].as_done();
 
-    let mut mono = mono::MonomorphisedTypes::new(info.closure, target.int_size() as u32);
+    let mut mono =
+        mono::MonomorphisedTypes::new(info.closure, target.int_size() as u32, Repr::Lumina);
 
     fn to_morphization<'a>(
         mir: &'a mir::MIR,
@@ -375,7 +377,7 @@ impl LIR {
                 let entryblock = ssa::Block::entry();
                 let mut bindmap = HashMap::new();
 
-                // Add an implicit capture record as the first parameter if this is a lambda
+                // Implicitly add parameters for the captures if this is a lambda
                 let mut ssa = if let Some(captures) = captures.as_ref() {
                     info!(
                         "setting up captures [{}]",
@@ -498,7 +500,7 @@ impl<'a> FuncLower<'a> {
         &mut self.lir.functions[self.current.mfkey].blocks
     }
 
-    fn types(&self) -> &Records {
+    fn types(&self) -> &Types {
         &self.lir.mono.types
     }
 
@@ -580,7 +582,7 @@ impl<'a> FuncLower<'a> {
         var: key::Variant,
     ) -> MonoFunc {
         let data = &self.lir.mono.types[ty];
-        let Some(M(module, key::TypeKind::Sum(key))) = data.original else {
+        let Some(M(module, key::TypeKind::Sum(key))) = data.original() else {
             panic!();
         };
         let sum = key.inside(module);
@@ -929,7 +931,7 @@ impl<'a> FuncLower<'a> {
                 self.ty_symbol(&ret)
             ),
             MonoType::Unreachable => format!("!"),
-            MonoType::Monomorphised(mk) => match self.lir.mono.types[*mk].original {
+            MonoType::Monomorphised(mk) => match self.lir.mono.types[*mk].original() {
                 Some(key) => format!("{}>{mk}", self.mir.name_of_type(key)),
                 None => mk.to_string(),
             },
@@ -948,7 +950,7 @@ fn func_symbol(mir: &mir::MIR, key: MonoFunc, origin: &FuncOrigin) -> String {
     let module = origin.module();
     let mname = &mir.module_names[module];
     let fname = origin.name(mir);
-    format!("{module}:{mname}:{fname}:{key}")
+    format!("m{}::{mname}::{fname}::{key}", module.0)
 }
 
 // Convenience access to the mono functions for the `string` langitem's implementation of `Stringable`

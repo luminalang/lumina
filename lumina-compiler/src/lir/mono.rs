@@ -1,6 +1,5 @@
 use super::{FuncOrigin, MonoTyping, UNIT};
 use crate::prelude::*;
-use crate::VTABLE_FIELD;
 use ast::attr::Repr;
 use derive_more::{Deref, DerefMut};
 use lumina_collections::map_key_impl;
@@ -9,35 +8,15 @@ use lumina_typesystem::{
     Container, Forall, Generic, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty, Type,
 };
 use lumina_util::Highlighting;
-use std::collections::HashSet;
 use std::fmt;
-
-// pub const TAG_SIZE: IntSize = IntSize::new(false, 32);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MonoTypeKey(pub u32);
-map_key_impl!(MonoTypeKey(u32), "mtkey");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BitOffset(pub u32);
-map_key_impl!(BitOffset(u32), "offset");
-
-impl From<IntSize> for BitOffset {
-    fn from(value: IntSize) -> Self {
-        BitOffset(value.bits() as u32)
-    }
-}
-
-impl From<u32> for BitOffset {
-    fn from(value: u32) -> Self {
-        BitOffset(value as u32)
-    }
-}
+map_key_impl!(MonoTypeKey(u32), "mr");
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum MonoType {
     Int(IntSize),
-    SumDataCast,
     Pointer(Box<Self>),
     FnPointer(Vec<Self>, Box<Self>),
     Float,
@@ -52,57 +31,82 @@ impl From<MonoTypeKey> for MonoType {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct Records {
-    #[deref_mut]
+pub struct Types {
     #[deref]
-    types: Map<MonoTypeKey, MonomorphisedRecord>,
-    pub pointer_size: u32,
+    #[deref_mut]
+    records: Map<MonoTypeKey, MonoTypeData>,
+
+    pub pointer_bits: u32,
 }
 
 pub struct MonomorphisedTypes {
     resolve: HashMap<(M<key::TypeKind>, Vec<MonoType>), MonoTypeKey>,
     tuples: HashMap<Vec<MonoType>, MonoTypeKey>,
 
-    pub types: Records,
+    pub types: Types,
 
     closure: M<key::Trait>,
+    default_repr: Repr,
 }
 
-// #[derive(Debug)]
-pub struct MonomorphisedRecord {
-    pub repr: Repr,
+#[derive(Debug)]
+pub enum MonoTypeData {
+    Record {
+        repr: Repr,
+        key: Option<M<key::Record>>,
+        fields: Map<key::Field, MonoType>,
+    },
+    Sum {
+        tag: IntSize,
+        key: M<key::Sum>,
+        variants: Map<key::Variant, MonoTypeKey>,
+    },
+    DynTraitObject {
+        trait_: M<key::Trait>,
+        vtable: MonoType,
+    },
 
-    pub fields: Map<key::Field, MonoType>,
-    pub autoboxed: HashSet<key::Field>,
-
-    // Used to detect circular structure that need indirection
-    pub original: Option<M<key::TypeKind>>,
-
-    is_placeholder: bool,
+    // Used for stoppping infinite recursion on depth-first monomorphisation of recursive types.
+    Placeholder,
 }
 
-impl MonomorphisedRecord {
-    // When creating a record, we first insert it's placeholder and edge-case a check for whether
-    // a type we use is the placeholder. This way we can detect circular types without further analysis.
-    fn placeholder() -> Self {
-        Self {
-            repr: Repr::Lumina,
-            fields: Map::new(),
-            autoboxed: HashSet::new(),
-            original: None,
-
-            is_placeholder: true,
+impl MonoTypeData {
+    pub fn original(&self) -> Option<M<key::TypeKind>> {
+        match self {
+            MonoTypeData::Record { key, .. } => key.map(|m| m.map(Into::into)),
+            MonoTypeData::Sum { key, .. } => Some(key.map(Into::into)),
+            MonoTypeData::DynTraitObject { trait_, .. } => Some(trait_.map(Into::into)),
+            MonoTypeData::Placeholder => None,
         }
     }
 
-    /// Gets the number of explicitly defined fields in this record
-    pub fn fields(&self) -> usize {
-        self.fields.len()
+    #[track_caller]
+    pub fn as_record(&self) -> &Map<key::Field, MonoType> {
+        match self {
+            MonoTypeData::Record { fields, .. } => fields,
+            other => panic!("not a record: {other:?}"),
+        }
+    }
+
+    #[track_caller]
+    pub fn as_sum(&self) -> (IntSize, &Map<key::Variant, MonoTypeKey>) {
+        match self {
+            MonoTypeData::Sum { tag, variants, .. } => (*tag, variants),
+            other => panic!("not a record: {other:?}"),
+        }
+    }
+
+    #[track_caller]
+    pub fn as_dyn_trait(&self) -> (M<key::Trait>, &MonoType) {
+        match self {
+            MonoTypeData::DynTraitObject { trait_, vtable } => (*trait_, vtable),
+            other => panic!("not a record: {other:?}"),
+        }
     }
 }
 
 pub struct MonoFormatter<'a, T> {
-    pub types: &'a Map<MonoTypeKey, MonomorphisedRecord>,
+    pub types: &'a Map<MonoTypeKey, MonoTypeData>,
     pub v: T,
 }
 
@@ -113,7 +117,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &lir::Function> {
             "{} {} {} {} =\n{}",
             "fn".keyword(),
             self.v.symbol,
-            "as".keyword(),
+            "returning".keyword(),
             fmt(&self.types, &self.v.returns),
             fmt(&self.types, &self.v.blocks)
         )
@@ -139,7 +143,6 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoType> {
             MonoType::Float => "float".fmt(f),
             MonoType::Unreachable => "!".fmt(f),
             MonoType::Monomorphised(key) => fmt(self.types, *key).fmt(f),
-            MonoType::SumDataCast => write!(f, "<sum_data>"),
         }
     }
 }
@@ -147,16 +150,25 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoType> {
 impl<'a, 't> fmt::Display for MonoFormatter<'a, MonoTypeKey> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let data = &self.types[self.v];
-        write!(
-            f,
-            "{{{}{}}}",
-            match data.original {
-                Some(key) => format!("{} ", key),
-                None => "".into(),
+        match data {
+            MonoTypeData::Record { fields, .. } => write!(
+                f,
+                "({})",
+                fields.values().map(|ty| format!("{ty:?}")).format(" * ")
+            ),
+            MonoTypeData::Sum { variants, tag, .. } => write!(
+                f,
+                "({tag} * {})",
+                variants
+                    .values()
+                    .map(|params| format!("({})", params))
+                    .format(" | ")
+            ),
+            MonoTypeData::DynTraitObject { vtable, trait_ } => {
+                write!(f, "(dyn {trait_} {})", fmt(&self.types, vtable))
             }
-            .keyword(),
-            data.fields.values().map(|v| fmt(self.types, v)).format(" ")
-        )
+            MonoTypeData::Placeholder => write!(f, "???"),
+        }
     }
 }
 
@@ -164,7 +176,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoTyping> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "fn {} as ({} -> {})",
+            "fn {} as {} -> {}",
             self.v.origin,
             self.v
                 .params
@@ -187,100 +199,29 @@ impl<'a, 't, T: fmt::Display> fmt::Display for MonoFormatter<'a, (T, &'t [MonoTy
     }
 }
 
-pub fn fmt<'a, T>(types: &'a Map<MonoTypeKey, MonomorphisedRecord>, v: T) -> MonoFormatter<'_, T> {
+pub fn fmt<'a, T>(types: &'a Map<MonoTypeKey, MonoTypeData>, v: T) -> MonoFormatter<'_, T> {
     MonoFormatter { v, types }
 }
 
-impl Records {
-    pub fn as_sum_type(&self, mk: MonoTypeKey) -> Option<IntSize> {
-        if self[mk].fields.len() != 2 {
-            return None;
-        }
-
-        let tag = &self[mk].fields[key::Field(0)];
-        let tag_size = match tag {
-            MonoType::Int(intsize) => intsize,
-            _ => return None,
-        };
-
-        let data = &self[mk].fields[key::Field(1)];
-        match data {
-            MonoType::SumDataCast => Some(*tag_size),
-            _ => None,
-        }
-    }
-
-    pub fn as_trait_object(&self, mk: MonoTypeKey) -> Option<M<key::Trait>> {
-        match self[mk].original {
-            Some(M(module, key::TypeKind::Trait(tr))) => Some(tr.inside(module)),
-            _ => None,
-        }
-    }
-
-    /// Returns the VTable associated to an object
-    pub fn as_closure_get_fnptr(&self, mk: MonoTypeKey) -> MonoType {
-        assert_eq!(
-            MonoType::u8_pointer(),
-            self.type_of_field(mk, key::Field(0))
-        );
-        self.type_of_field(mk, key::Field(1))
-    }
-
-    fn field_is_recursive(&self, key: M<key::TypeKind>, ty: &MonoType) -> bool {
-        match ty {
-            MonoType::Monomorphised(mk) if self[*mk].original == Some(key) => true,
-            MonoType::Monomorphised(mk) => self[*mk]
-                .fields
-                .values()
-                .any(|ty| self.field_is_recursive(key, ty)),
-            _ => false,
-        }
-    }
-
-    pub fn type_of_field(&self, ty: MonoTypeKey, field: key::Field) -> MonoType {
-        self[ty].fields[field].clone()
-    }
-
-    pub fn vtable_of_object(&self, object: MonoTypeKey) -> MonoTypeKey {
-        self.type_of_field(object, VTABLE_FIELD).deref().as_key()
-    }
-
-    pub fn get_dyn_method<F: FromIterator<MonoType>>(
-        &self,
-        table: MonoTypeKey,
-        method: key::Method,
-    ) -> (F, MonoType) {
-        match &self[table].fields[key::Field(method.0)] {
-            MonoType::FnPointer(ptypes, returns) => {
-                (ptypes.iter().cloned().collect(), (**returns).clone())
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn has_field(&self, ty: MonoTypeKey, field: key::Field) -> bool {
-        self[ty].fields.has(field)
-    }
-}
-
 impl MonomorphisedTypes {
-    pub fn new(closure: M<key::Trait>, pointer_size: u32) -> Self {
+    pub fn new(closure: M<key::Trait>, pointer_size: u32, default: Repr) -> Self {
         let mut types = Self {
             closure,
             resolve: HashMap::new(),
             tuples: HashMap::new(),
-            types: Records { types: Map::new(), pointer_size },
+            types: Types { records: Map::new(), pointer_bits: pointer_size },
+            default_repr: default,
         };
         assert_eq!(UNIT, types.get_or_make_tuple(vec![]));
         types
     }
 
-    pub fn into_records(self) -> Records {
+    pub fn into_records(self) -> Types {
         self.types
     }
 
     pub fn fmt<T>(&self, v: T) -> MonoFormatter<'_, T> {
-        MonoFormatter { v, types: &self.types }
+        MonoFormatter { v, types: &self.types.records }
     }
 
     pub fn get_or_make_tuple(&mut self, elems: Vec<MonoType>) -> MonoTypeKey {
@@ -288,24 +229,41 @@ impl MonomorphisedTypes {
             return key;
         }
 
-        let record = MonomorphisedRecord {
-            repr: Repr::Lumina,
-            autoboxed: HashSet::new(),
+        let record = MonoTypeData::Record {
+            repr: self.default_repr,
             fields: elems.iter().cloned().collect(),
-            original: None,
-
-            is_placeholder: false,
+            key: None,
         };
 
-        let key = self.types.push(record);
+        let key = self.types.records.push(record);
         self.tuples.insert(elems, key);
 
         key
     }
 
-    pub fn fields(&self, ty: MonoTypeKey) -> impl Iterator<Item = key::Field> + 'static {
-        self.types[ty].fields.keys()
+    #[cfg(test)]
+    pub fn get_or_make_record(
+        &mut self,
+        rkey: M<key::Record>,
+        params: Vec<MonoType>,
+        fields: Map<key::Field, MonoType>,
+    ) -> MonoTypeKey {
+        let key = (rkey.map(key::Record::into), params);
+        if let Some(mk) = self.resolve.get(&key).copied() {
+            return mk;
+        }
+
+        let record = MonoTypeData::Record { repr: self.default_repr, fields, key: Some(rkey) };
+
+        let mk = self.types.records.push(record);
+        self.resolve.insert(key, mk);
+
+        mk
     }
+
+    // pub fn fields(&self, ty: MonoRecord) -> impl Iterator<Item = key::Field> + 'static {
+    //     self.types[ty].fields.keys()
+    // }
 }
 
 impl MonoType {
@@ -412,10 +370,10 @@ impl<'a> Monomorphization<'a> {
         kind: M<impl Into<key::TypeKind>>,
         params: &[Type],
         gkind: GenericKind,
-        or: impl FnOnce(&mut Self, Repr, TypeMap) -> MonomorphisedRecord,
+        or: impl FnOnce(&mut Self, Repr, TypeMap) -> MonoTypeData,
     ) -> MonoTypeKey {
         let kind = kind.map(Into::into);
-        let repr = self.type_repr[kind];
+        let repr = self.type_repr.get(kind);
 
         let (mut tmap, mparams) = self.new_type_map_by(params, gkind);
 
@@ -424,38 +382,17 @@ impl<'a> Monomorphization<'a> {
         match self.mono.resolve.get(&key) {
             Some(key) => *key,
             None => {
-                let mk = self.mono.types.push(MonomorphisedRecord::placeholder());
+                let mk = self.mono.types.records.push(MonoTypeData::Placeholder);
                 self.mono.resolve.insert(key, mk);
                 tmap.set_self(
                     Type::defined(kind, params.to_vec()),
                     MonoType::Monomorphised(mk),
                 );
                 let record = or(self, repr, tmap);
-                assert!(self.mono.types[mk].is_placeholder);
                 self.mono.types[mk] = record;
                 mk
             }
         }
-    }
-
-    fn construct<K: Into<key::TypeKind>>(
-        &mut self,
-        original: Option<M<K>>,
-        fields: Map<key::Field, MonoType>,
-        repr: Repr,
-    ) -> MonomorphisedRecord {
-        let original = original.map(|k| k.map(Into::into));
-        let autoboxed = original
-            .map(|key| {
-                fields
-                    .iter()
-                    .filter_map(|(field, ty)| {
-                        self.mono.types.field_is_recursive(key, ty).then_some(field)
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(HashSet::new);
-        MonomorphisedRecord { repr, is_placeholder: false, fields, original, autoboxed }
     }
 
     pub fn defined(&mut self, M(module, kind): M<key::TypeKind>, params: &[Type]) -> MonoTypeKey {
@@ -473,32 +410,28 @@ impl<'a> Monomorphization<'a> {
         self.get_or_monomorphise(key, params, GenericKind::Entity, |this, repr, mut tmap| {
             let fields = &this.field_types[key];
             let fields = fork!(this, &mut tmap).applys(fields.values().map(|t| &t.value));
-
-            this.construct(Some(key), fields, repr)
+            MonoTypeData::Record { key: Some(key), fields, repr }
         })
     }
 
-    // Sumtypes are lowered into a record containing a tag and an array of bytes sized
-    // by the largest variant.
-    //
-    // Those arrays of bytes are then casted into the appropriate types dynamically in
-    // the switch onto the tag.
-    //
-    //  (^ the above is planned but not currently true. For convenience sake we just always heap
-    //  allocate sumtype data payloads so that we can use pointer offsets. Which is terrible)
     pub fn sum(&mut self, key: M<key::Sum>, params: &[Type]) -> MonoTypeKey {
-        self.get_or_monomorphise(key, params, GenericKind::Entity, |this, repr, _| {
+        self.get_or_monomorphise(key, params, GenericKind::Entity, |this, repr, mut tmap| {
             let tag = match repr {
                 Repr::Enum(size) => size,
                 Repr::Align(bytes) => IntSize::new(false, bytes * 8),
                 _ => IntSize::new(false, 16),
             };
 
-            let fields = [MonoType::Int(tag), MonoType::SumDataCast]
-                .into_iter()
+            let variants = &this.variant_types[key];
+            let variants = variants
+                .values()
+                .map(|params| {
+                    let elems = fork!(this, &mut tmap).applys(params.iter().map(|t| &t.value));
+                    this.mono.get_or_make_tuple(elems)
+                })
                 .collect();
 
-            this.construct(Some(key), fields, repr)
+            MonoTypeData::Sum { tag, variants, key }
         })
     }
 
@@ -521,13 +454,13 @@ impl<'a> Monomorphization<'a> {
         }
 
         // Reserve in case one of the methods contain the same trait object
-        let reserved = self.mono.types.push(MonomorphisedRecord::placeholder());
+        let reserved = self.mono.types.records.push(MonoTypeData::Placeholder);
         self.mono.resolve.insert(key.clone(), reserved);
 
         ptypes.insert(0, MonoType::u8_pointer());
         let vtable = MonoType::fn_pointer(ptypes, ret);
 
-        self.trait_object_from_vtable(trait_, reserved, vtable);
+        self.mono.types[reserved] = MonoTypeData::DynTraitObject { vtable, trait_ };
 
         reserved
     }
@@ -540,7 +473,7 @@ impl<'a> Monomorphization<'a> {
         }
 
         // Reserve in case one of the methods contain the same trait object
-        let reserved = self.mono.types.push(MonomorphisedRecord::placeholder());
+        let reserved = self.mono.types.records.push(MonoTypeData::Placeholder);
         self.mono.resolve.insert(key.clone(), reserved);
 
         // For closures we convert `call {a} {b, c}` into `call {a} b c` because it makes partial
@@ -551,9 +484,8 @@ impl<'a> Monomorphization<'a> {
             let mut ptypes = vec![MonoType::u8_pointer()];
 
             let param_tuple = key.1[0].as_key();
-            for field in self.mono.fields(param_tuple) {
-                let ty = self.mono.types.type_of_field(param_tuple, field);
-                ptypes.push(ty);
+            for (_, ty) in self.mono.types.records[param_tuple].as_record() {
+                ptypes.push(ty.clone());
             }
 
             let ret = key.1[1].clone();
@@ -592,24 +524,9 @@ impl<'a> Monomorphization<'a> {
             }
         };
 
-        self.trait_object_from_vtable(trait_, reserved, vtable);
+        self.mono.types[reserved] = MonoTypeData::DynTraitObject { vtable, trait_ };
 
         reserved
-    }
-
-    // Declare the trait object to be a record of `*u8 + *vtable`
-    fn trait_object_from_vtable(&mut self, key: M<key::Trait>, dst: MonoTypeKey, vtable: MonoType) {
-        let mut object_fields = Map::new();
-        object_fields.push(MonoType::u8_pointer());
-        object_fields.push(vtable);
-
-        self.mono.types[dst] = MonomorphisedRecord {
-            repr: Repr::Lumina,
-            fields: object_fields,
-            autoboxed: HashSet::new(),
-            original: Some(key.map(key::TypeKind::Trait)),
-            is_placeholder: false,
-        };
     }
 
     pub fn apply(&mut self, ty: &Type) -> MonoType {
@@ -756,7 +673,6 @@ impl fmt::Debug for MonoType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             MonoType::Int(intsize) => write!(f, "{intsize}"),
-            MonoType::SumDataCast => write!(f, "<sum_data>"),
             MonoType::Pointer(ty) => write!(f, "*{ty:?}"),
             MonoType::FnPointer(params, ret) => {
                 write!(

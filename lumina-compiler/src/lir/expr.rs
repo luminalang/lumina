@@ -68,7 +68,7 @@ impl<'a> FuncLower<'a> {
                 let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
                 let mk = morph.record(*record, types);
 
-                let ty = self.lir.mono.types.type_of_field(mk, *field);
+                let ty = self.types()[mk].as_record()[*field].clone();
                 self.ssa().field(value, mk, *field, ty)
             }
             mir::Expr::Record(record, types, fields) => {
@@ -277,15 +277,7 @@ impl<'a> FuncLower<'a> {
                 let v = self.ssa().val_to_ref(key, ty.clone());
                 self.ssa().deref(v, ty)
             }
-            Callable::Sum { var, ty, .. } => {
-                let parameters = self.ssa().construct(params, MonoType::SumDataCast);
-
-                let tag_size = self.lir.mono.types.as_sum_type(ty).unwrap();
-                let tag = Value::Int(var.0 as i128, tag_size);
-
-                self.ssa()
-                    .construct(vec![tag, parameters.into()], MonoType::Monomorphised(ty))
-            }
+            Callable::Sum { var, ty, .. } => self.ssa().variant(var, params, ty),
             Callable::Local(to_call) => {
                 let ty = self.type_of_value(to_call);
                 match ty {
@@ -333,17 +325,14 @@ impl<'a> FuncLower<'a> {
     }
 
     pub fn call_closure(&mut self, objty: MonoTypeKey, obj: Value, params: Vec<Value>) -> Value {
-        let dataptr_type = self
-            .lir
-            .mono
-            .types
-            .type_of_field(objty, TRAIT_OBJECT_DATA_FIELD);
-        assert_eq!(MonoType::u8_pointer(), dataptr_type);
+        let lir::MonoTypeData::DynTraitObject { vtable, .. } = &self.types()[objty] else {
+            panic!("attempted to call non-closure as closure");
+        };
 
-        let fnptr_type = self.lir.mono.types.type_of_field(objty, VTABLE_FIELD);
+        let dataptr_type = MonoType::u8_pointer();
+
+        let fnptr_type = vtable.clone();
         let ret = fnptr_type.as_fnptr().1.clone();
-
-        debug_assert_eq!(MonoType::u8_pointer(), dataptr_type);
 
         let objptr = self
             .ssa()

@@ -9,7 +9,7 @@ pub fn errno_location as *i32
 pub fn getenv as *u8 -> *u8
 
 @[extern "exit", platform ["linux-gnu", "linux-musl"]]
-pub fn exit code as int -> ()
+pub fn exit code as i32 -> ()
 
 @[extern "write", platform ["linux-gnu", "linux-musl"]]
 pub fn write as i32, *u8, int -> int

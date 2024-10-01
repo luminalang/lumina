@@ -253,7 +253,7 @@ impl<'a> Context<'a> {
                     AbiParam::new(types::I32),              // argc
                     AbiParam::new(self.isa.pointer_type()), // **argv
                 ];
-                builder.func.signature.returns = vec![AbiParam::new(types::I64)]; // exit code
+                builder.func.signature.returns = vec![AbiParam::new(types::I32)]; // exit code
                 builder.append_block_params_for_function_params(entryblock);
                 let id = self
                     .objmodule
@@ -270,7 +270,7 @@ impl<'a> Context<'a> {
                 // Call the lumina main function
                 builder.ins().call(lumina_main, &[]);
 
-                let exit_code = builder.ins().iconst(types::I64, 0);
+                let exit_code = builder.ins().iconst(types::I32, 0);
                 builder.ins().return_(&[exit_code]);
 
                 info!("main:\n{}", builder.func);

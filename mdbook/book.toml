@@ -4,3 +4,4 @@ language = "en"
 multilingual = false
 src = "src"
 title = "Lumina Showcase"
+git-repository-url = "https://github.com/luminalang/lumina"

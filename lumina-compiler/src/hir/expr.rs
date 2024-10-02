@@ -236,6 +236,13 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 assert!(params.is_empty());
                 self.callable(apath.as_ref(), params, Expr::Pass)
             }
+            // #handlers.f
+            parser::Expr::FieldAccess(object, name) => {
+                let object = self.expr((**object).as_ref());
+                let rvar = self.vars().var(object.span);
+                let access = Expr::Access(rvar, Box::new(object), *name);
+                Expr::PassExpr(Box::new(access.tr(to_pass.span)))
+            }
             // ##...
             parser::Expr::Pass(inner) => {
                 let inner = self.pass((**inner).as_ref());
@@ -282,76 +289,76 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
     fn dotpipe(&mut self, left: Tr<&parser::Expr<'s>>, right: Tr<&parser::Expr<'s>>) -> Expr<'s> {
         match right.value {
             parser::Expr::Call(apath, params) => {
+                let mut params = self.exprs(params);
                 let left = self.expr(left);
+                params.push(left);
 
                 let path = apath.path.as_slice();
 
-                if path.len() == 1 {
-                    match path[0] {
-                        "true" | "false" => panic!("ET: invalid"),
-                        "_" => panic!("ET: usage of `_` is not allowed"),
-                        name => {
-                            if let Some(bind) = self.bindings.resolve(name) {
-                                let mut params = self.exprs(params);
-                                params.push(left);
-                                self.forbid_type_annotation(&apath.for_segments);
-                                return Expr::Call(bind.into(), TypeAnnotation::new(), params);
-                            }
-
-                            let mut params = self.exprs(params);
-                            params.push(left);
-
-                            let type_annotation = self.type_annotation(apath, None);
-
-                            if let Some(i) = self
-                                .where_binds
-                                .iter()
-                                .position(|decl| *decl.header.name == name)
-                            {
-                                let lkey = key::Lambda::from(i);
-                                self.bindings.reference_lambda(lkey);
-                                let c = Callable::Lambda(lkey);
-                                return Expr::Call(c, type_annotation, params);
-                            }
-
-                            Expr::Call(Callable::TypeDependentLookup(name), type_annotation, params)
+                match path {
+                    ["true"] | ["false"] | ["builtin", ..] => self.emit_invalid_pipe(right.span),
+                    [name] => match self.try_resolve_local(&apath.path) {
+                        Some((c, to_anot)) => {
+                            let tanot = self.type_annotation_if_allowed(&apath, to_anot);
+                            Expr::Call(c, tanot, params)
                         }
-                    }
-                } else {
-                    self.callable(apath.as_ref(), params, |callable, tanot, mut params| {
-                        params.push(left);
-                        Expr::Call(callable, tanot, params)
-                    })
+                        None => {
+                            let tanot = self.type_annotation(apath, None);
+                            Expr::Call(Callable::TypeDependentLookup(*name), tanot, params)
+                        }
+                    },
+
+                    _ => self
+                        .try_resolve_foreign(right.span, &apath.path)
+                        .map(|(c, to_anot)| {
+                            let tanot = self.type_annotation_if_allowed(&apath, to_anot);
+                            Expr::Call(c, tanot, params)
+                        })
+                        .unwrap_or(Expr::Poison),
                 }
             }
+            // 1 . handlers.f
+            // --------------
+            // let _ = #handlers.f in _ 1
+            parser::Expr::FieldAccess(..) => {
+                let yielded_function = self.pass(right).tr(right.span);
+                let intermediate = self.bindings.declare_nameless();
+                let param = self.expr(left);
+                self.bind_and_call(yielded_function, intermediate, vec![param])
+            }
             // 1 . (returns_function 0)
-            // lowers to
+            // ------------------------
             // let _ = #(returns_function 0) in _ 1
             parser::Expr::Group(inner) => {
                 let yielded_function = self.expr((&**inner).tr(right.span));
                 let intermediate = self.bindings.declare_nameless();
-                let param = self.expr(left);
-                Expr::let_bind(
-                    yielded_function,
-                    Pattern::Bind(intermediate, Box::new(Pattern::Any)).tr(left.span),
-                    Expr::Call(intermediate.into(), TypeAnnotation::new(), vec![param])
-                        .tr(right.span),
-                )
+                let param = self.expr(left); // TODO: Isn't this supposed to go *before* the rest?
+                self.bind_and_call(yielded_function, intermediate, vec![param])
             }
-            _ => {
-                self.ast
-                    .sources
-                    .error("invalid pipe operator")
-                    .m(self.module)
-                    .eline(
-                        right.span,
-                        "dot pipes may only be used to applicate functions",
-                    )
-                    .emit();
-
-                Expr::Poison
-            }
+            _ => self.emit_invalid_pipe(right.span),
         }
+    }
+
+    fn bind_and_call(
+        &mut self,
+        f: Tr<Expr<'s>>,
+        bind: key::Bind,
+        params: Vec<Tr<Expr<'s>>>,
+    ) -> Expr<'s> {
+        let pat = Pattern::Bind(bind, Box::new(Pattern::Any)).tr(f.span);
+        let and_then = Expr::Call(bind.into(), TypeAnnotation::new(), params).tr(f.span);
+        Expr::let_bind(f, pat, and_then)
+    }
+
+    fn emit_invalid_pipe(&self, span: Span) -> Expr<'s> {
+        self.ast
+            .sources
+            .error("invalid pipe operator")
+            .m(self.module)
+            .eline(span, "dot pipes may only be used to applicate functions")
+            .emit();
+
+        Expr::Poison
     }
 
     fn lambda(
@@ -528,12 +535,10 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
 
         let params = self.exprs(params);
 
-        self.resolve_callable(apath.span, &apath.path)
+        self.try_resolve_local(&apath.path)
+            .or_else(|| self.try_resolve_foreign(apath.span, &apath.path))
             .map(|(callable, to_anot)| {
-                let tanot = match to_anot {
-                    ToAnnotate::Some(in_) => self.type_annotation(&apath, in_),
-                    ToAnnotate::None => TypeAnnotation::new(),
-                };
+                let tanot = self.type_annotation_if_allowed(&apath, to_anot);
                 to_out(callable, tanot, params)
             })
             .unwrap_or(Expr::Poison)
@@ -574,6 +579,17 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             .m(module)
             .eline(span, "type annotations not allowed in this context")
             .emit();
+    }
+
+    fn type_annotation_if_allowed(
+        &mut self,
+        apath: &AnnotatedPath<'s>,
+        to_anot: ToAnnotate,
+    ) -> TypeAnnotation<'s> {
+        match to_anot {
+            ToAnnotate::Some(in_) => self.type_annotation(&apath, in_),
+            ToAnnotate::None => TypeAnnotation::new(),
+        }
     }
 
     pub fn type_annotation(

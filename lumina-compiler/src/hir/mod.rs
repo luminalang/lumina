@@ -814,12 +814,8 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         ty::TypeLower::new(self.module, self.ast, int_size, self.type_info)
     }
 
-    fn resolve_callable(
-        &mut self,
-        span: Span,
-        ident: &Identifier<'s>,
-    ) -> Option<(Callable<'s>, ToAnnotate)> {
-        if let Some(name) = ident.as_name() {
+    fn try_resolve_local(&mut self, ident: &Identifier<'s>) -> Option<(Callable<'s>, ToAnnotate)> {
+        ident.as_name().and_then(|name| {
             if let Some(bind) = self.bindings.resolve(name) {
                 return Some((Callable::Binding(bind), ToAnnotate::None));
             }
@@ -833,10 +829,17 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 self.bindings.reference_lambda(lkey);
                 return Some((Callable::Lambda(lkey), ToAnnotate::Some(None)));
             }
-        }
 
+            None
+        })
+    }
+
+    fn try_resolve_foreign(
+        &mut self,
+        span: Span,
+        ident: &Identifier<'s>,
+    ) -> Option<(Callable<'s>, ToAnnotate)> {
         let path = ident.as_slice();
-
         match self.ast.lookups.resolve_func(self.module, path) {
             Ok(entity) => match entity.key {
                 ast::Entity::Func(nfunc) => {

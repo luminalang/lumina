@@ -353,14 +353,14 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             // Is this safe to do? Feels risky somehow
             //
             // maybe we should also have a `left.can_return_function()`
-            (t, _) if t.is_valid_start_of_expr_param() => {
-                self.expr_params(left.span, |params| match left.value {
+            (t, _) if t.is_valid_start_of_expr_param() => self
+                .expr_params(left.span, |params| match left.value {
                     Expr::Lambda(patterns, p, body) if p.is_empty() => {
                         Expr::Lambda(patterns, params, body)
                     }
                     other => Expr::CallExpr(Box::new(other.tr(left.span)), params),
                 })
-            }
+                .and_then(|new| self.expr_followup(new)),
 
             _ => Some(left),
         }

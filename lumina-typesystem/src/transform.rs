@@ -354,7 +354,7 @@ impl<'a, 's> Transformer<Inference> for CircularInst<'a, 's, Inference> {
 
 impl<'a, 's> CircularInst<'a, 's, Inference> {
     pub fn finalize(self) -> (GenericMapper<Inference>, Vec<Span>) {
-        todo!();
+        (self.mapper, self.failures)
     }
 }
 

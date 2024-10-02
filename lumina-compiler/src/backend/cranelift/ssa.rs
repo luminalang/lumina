@@ -985,8 +985,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 self.memcpy_struct(dst, src, inner_struct_size);
             }
             &VEntry::SumPayloadStackPointer { largest, ptr } => {
-                let nptr = self.heap_alloc(largest as i128);
-                self.memcpy_struct(nptr, ptr, largest as i64);
+                let nptr = self.memcpy_to_heap(ptr, largest as i64, true);
                 self.ins().store(MemFlags::trusted(), nptr, dst, 0);
             }
             VEntry::StructFlat(key, flat) => self.write_fields_to_structptr(*key, &flat, dst),
@@ -1321,12 +1320,49 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 }
 
                 &VEntry::SumPayloadStackPointer { largest, ptr } => {
-                    let nptr = self.heap_alloc(largest as i128);
-                    self.memcpy_struct(nptr, ptr, largest as i64);
+                    let nptr = self.memcpy_to_heap(ptr, largest as i64, true);
                     dst.push(nptr);
                 }
             }
         }
+    }
+
+    fn memcpy_to_heap(&mut self, src: Value, size: i64, check_null: bool) -> Value {
+        if !check_null {
+            return self.memcpy_to_heap_unchecked(src, size);
+        }
+
+        let continuation = self.f.builder.create_block();
+        let out = self
+            .f
+            .builder
+            .append_block_param(continuation, self.ctx.ptr());
+
+        let is_null = self.ins().icmp_imm(IntCC::Equal, src, 0);
+        let [identity, allocate] = [(), ()].map(|_| self.f.builder.create_block());
+        self.ins().brif(is_null, identity, &[], allocate, &[]);
+
+        for block in [identity, allocate] {
+            self.f.builder.seal_block(block)
+        }
+
+        self.f.builder.switch_to_block(identity);
+        self.ins().jump(continuation, &[src]);
+
+        self.f.builder.switch_to_block(allocate);
+        let nptr = self.memcpy_to_heap_unchecked(src, size);
+        self.ins().jump(continuation, &[nptr]);
+
+        self.f.builder.seal_block(continuation);
+        self.f.builder.switch_to_block(continuation);
+
+        out
+    }
+
+    fn memcpy_to_heap_unchecked(&mut self, src: Value, size: i64) -> Value {
+        let nptr = self.heap_alloc(size as i128);
+        self.memcpy_struct(nptr, src, size as i64);
+        return nptr;
     }
 
     fn return_(&mut self, entry: VEntry) {

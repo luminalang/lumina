@@ -92,3 +92,8 @@ fn example_modules() {
 fn example_ffi() {
     run("examples/ffi", "");
 }
+
+#[test]
+fn example_raw_fn_pointers() {
+    run("examples/raw-function-pointers", "5\n");
+}

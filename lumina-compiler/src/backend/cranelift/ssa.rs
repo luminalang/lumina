@@ -981,11 +981,16 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     fn write_entry_to_ptr(&mut self, dst: Value, entry: &VEntry) {
         match entry {
             &VEntry::StructStackPointer(key, src) | &VEntry::StructHeapPointer(key, src) => {
-                let inner_struct_size = self.ctx.structs.size_of(&key.into()) as i64;
-                self.memcpy_struct(dst, src, inner_struct_size);
+                let (size, align) = self.ctx.structs.size_and_align_of(&key.into());
+                self.memcpy_struct(dst, src, size as u64, align as u8);
             }
             &VEntry::SumPayloadStackPointer { largest, ptr } => {
-                let nptr = self.memcpy_to_heap(ptr, largest as i64, true);
+                // TODO: I think this can cause undefined behavior as we do not know the exact
+                // alignment of the underlying struct.
+                //
+                // We probably need to set alignment of *all* varaint param tuple to that of
+                // the *largest*.
+                let nptr = self.memcpy_to_heap(ptr, largest as u64, 8, true);
                 self.ins().store(MemFlags::trusted(), nptr, dst, 0);
             }
             VEntry::StructFlat(key, flat) => self.write_fields_to_structptr(*key, &flat, dst),
@@ -997,12 +1002,12 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         }
     }
 
-    fn memcpy_struct(&mut self, dst: Value, src: Value, size: i64) {
-        let size_t = self.ctx.ptr();
-
-        let size = self.ins().iconst(size_t, size);
+    fn memcpy_struct(&mut self, dst: Value, src: Value, size: u64, align: u8) {
         let config = self.ctx.isa.frontend_config();
-        self.f.builder.call_memcpy(config, dst, src, size);
+        let flags = MemFlags::trusted();
+        self.f
+            .builder
+            .emit_small_memory_copy(config, dst, src, size, align, align, true, flags);
     }
 
     fn heap_alloc(&mut self, size: i128) -> Value {
@@ -1320,16 +1325,21 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 }
 
                 &VEntry::SumPayloadStackPointer { largest, ptr } => {
-                    let nptr = self.memcpy_to_heap(ptr, largest as i64, true);
+                    // TODO: I think this can cause undefined behavior as we do not know the exact
+                    // alignment of the underlying struct.
+                    //
+                    // We probably need to set alignment of *all* varaint param tuple to that of
+                    // the *largest*.
+                    let nptr = self.memcpy_to_heap(ptr, largest as u64, 8, true);
                     dst.push(nptr);
                 }
             }
         }
     }
 
-    fn memcpy_to_heap(&mut self, src: Value, size: i64, check_null: bool) -> Value {
+    fn memcpy_to_heap(&mut self, src: Value, size: u64, align: u8, check_null: bool) -> Value {
         if !check_null {
-            return self.memcpy_to_heap_unchecked(src, size);
+            return self.memcpy_to_heap_unchecked(src, size, align);
         }
 
         let continuation = self.f.builder.create_block();
@@ -1350,7 +1360,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         self.ins().jump(continuation, &[src]);
 
         self.f.builder.switch_to_block(allocate);
-        let nptr = self.memcpy_to_heap_unchecked(src, size);
+        let nptr = self.memcpy_to_heap_unchecked(src, size, align);
         self.ins().jump(continuation, &[nptr]);
 
         self.f.builder.seal_block(continuation);
@@ -1359,9 +1369,9 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         out
     }
 
-    fn memcpy_to_heap_unchecked(&mut self, src: Value, size: i64) -> Value {
+    fn memcpy_to_heap_unchecked(&mut self, src: Value, size: u64, align: u8) -> Value {
         let nptr = self.heap_alloc(size as i128);
-        self.memcpy_struct(nptr, src, size as i64);
+        self.memcpy_struct(nptr, src, size, align);
         return nptr;
     }
 

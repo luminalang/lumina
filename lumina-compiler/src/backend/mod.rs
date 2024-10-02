@@ -47,11 +47,11 @@ pub fn link_native_binary(
                 Command::new(bindir.join("ld.lld"))
             };
 
+            linker.arg("-o").arg(output).arg(&objectfile);
+
             for arg in config.linker_args {
                 linker.arg(arg);
             }
-
-            linker.arg("-o").arg(output).arg(&objectfile);
 
             iter_objects(&sublinuxdir, &["o", "a"], |path| {
                 linker.arg(path);

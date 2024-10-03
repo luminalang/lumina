@@ -4,17 +4,16 @@ use crate::target::{Arch, LinuxPlatform, Platform};
 use crate::Target;
 use cranelift::codegen::ir;
 use cranelift::prelude::*;
-use cranelift_module::{FuncId, Linkage, Module};
+use cranelift_module::{DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use owo_colors::OwoColorize;
+use std::sync::Arc;
 use tracing::info_span;
 
-mod abi;
-mod ctx;
-use ctx::Context;
+mod layout;
 mod ssa;
-// mod structs;
-// use structs::Struct;
+
+use layout::{FType, PassBy};
 
 impl Target {
     fn isa(&self) -> isa::Builder {
@@ -43,7 +42,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
     .unwrap();
     let mut objmodule = ObjectModule::new(objbuilder);
 
-    let mut structs = abi::Structs::new(&lir.types);
+    let mut structs = layout::Structs::new(&lir.types);
 
     let vals = lir.val_types.map(|val, ty| {
         let size = structs.size_of(ty) as usize;
@@ -77,7 +76,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
             let mut typing = structs.records.get_abi_typing(&func.params, &func.returns);
             typing.conv = isa.default_call_conv();
 
-            let sig = structs.signature(typing.conv, &typing.params, &typing.ret);
+            let sig = structs.signature(&typing);
             let id = objmodule
                 .declare_function(&func.symbol, Linkage::Import, &sig)
                 .unwrap();
@@ -102,7 +101,7 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
                 &func.returns,
             );
 
-            let sig = structs.signature(typing.conv, &typing.params, &typing.ret);
+            let sig = structs.signature(&typing);
 
             assert!(!func.symbol.is_empty());
             let id = objmodule
@@ -140,7 +139,62 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
     product.emit().unwrap()
 }
 
+#[derive(new)]
+pub struct Context<'a> {
+    isa: Arc<dyn isa::TargetIsa>,
+    val_to_globals: &'a MMap<key::Val, DataId>,
+    lir: &'a lir::Output,
+    structs: layout::Structs<'a>,
+    objmodule: ObjectModule,
+    funcmap: Map<lir::MonoFunc, FuncHeader>,
+    externmap: HashMap<M<key::Func>, FuncHeader>,
+    rotable: MMap<key::ReadOnly, DataId>,
+}
+
 impl<'a> Context<'a> {
+    pub fn size_t(&self) -> Type {
+        let triple = self.isa.triple();
+        Type::triple_pointer_type(triple)
+    }
+
+    fn declare_block_from_lir(
+        &mut self,
+        builder: &mut FunctionBuilder,
+        func: &lir::Function,
+        block: lir::Block,
+    ) -> (Block, ssa::Predecessors) {
+        let clblock = builder.create_block();
+        let size_t = self.size_t();
+
+        func.blocks.params(block).for_each(|v| {
+            let t = func.blocks.type_of(v);
+
+            match self.structs.ftype(t) {
+                FType::StructZST => {}
+                FType::Scalar(scalar) => {
+                    builder.append_block_param(clblock, scalar.point);
+                }
+                FType::Struct(PassBy::Pointer, _) => {
+                    builder.append_block_param(clblock, size_t);
+                }
+                FType::Struct(PassBy::Value, mk) => {
+                    self.structs.iter_s_stable_fields(mk, &mut |scalar| {
+                        builder.append_block_param(clblock, scalar.point);
+                    });
+                }
+            }
+        });
+
+        if block == lir::Block::entry() {
+            // Attach the structret pointer as a parameter if needed
+            if let FType::Struct(PassBy::Pointer, _) = self.structs.ftype(&func.returns) {
+                builder.append_block_param(clblock, size_t);
+            }
+        }
+
+        (clblock, 0)
+    }
+
     // Declares a function that runs all the val initialisers, and writes their return types to the
     // global variable mapped to that initialiser.
     fn declare_val_run_and_store(&mut self) -> FuncId {
@@ -174,41 +228,36 @@ impl<'a> Context<'a> {
                 .declare_data_in_func(dataid, &mut builder.func);
             let ptr = builder.ins().symbol_value(types::I64, data);
 
+            let ret_ftype = self.structs.ftype(&header.typing.ret);
+
             // Attach the struct-return pointer as last parameter if needed
-            let params = match &header.typing.ret {
-                abi::Return::Struct(key)
-                    if self.structs.pass_mode(*key) == abi::PassBy::Pointer =>
-                {
-                    vec![ptr]
-                }
+            let params = match &ret_ftype {
+                FType::Struct(PassBy::Pointer, _) => vec![ptr],
                 _ => vec![],
             };
 
             let ret = builder.ins().call(init, &params);
 
-            match header.typing.ret {
-                abi::Return::Struct(key) => match self.structs.pass_mode(key) {
-                    abi::PassBy::Value => {
-                        let align = self.structs.get(key).align;
-                        let mut offset = 0;
+            match ret_ftype {
+                FType::Struct(PassBy::Value, key) => {
+                    let align = self.structs.get(key).align;
+                    let mut offset = 0;
 
-                        for v in builder.inst_results(ret).to_vec() {
-                            let size = builder.func.dfg.value_type(v).bytes();
+                    for v in builder.inst_results(ret).to_vec() {
+                        let size = builder.func.dfg.value_type(v).bytes();
 
-                            builder.ins().store(MemFlags::trusted(), v, ptr, offset);
+                        builder.ins().store(MemFlags::trusted(), v, ptr, offset);
 
-                            let padding = (align - size % align) % align;
-                            offset += padding as i32 + size as i32;
-                        }
+                        let padding = (align - size % align) % align;
+                        offset += padding as i32 + size as i32;
                     }
-                    // already done as we passed the data as struct return directly
-                    abi::PassBy::Pointer => {}
-                },
-                abi::Return::Scalar(_) => {
+                }
+                FType::Scalar(_) => {
                     let r = builder.inst_results(ret)[0];
                     builder.ins().store(MemFlags::trusted(), r, ptr, 0);
                 }
-                abi::Return::ZST => {}
+                // already done as we passed the data as struct return directly
+                FType::Struct(PassBy::Pointer, _) | FType::StructZST => {}
             }
         }
 
@@ -333,5 +382,5 @@ impl<'a> Context<'a> {
 #[derive(Clone, Debug)]
 struct FuncHeader {
     id: FuncId,
-    typing: abi::Typing,
+    typing: layout::Typing,
 }

@@ -3,6 +3,7 @@ use crate::lir::{MonoType, MonoTypeKey};
 use crate::prelude::*;
 use cranelift::codegen::ir::ArgumentPurpose;
 use cranelift::prelude::*;
+use either::Either;
 use lumina_collections::{map_key_impl, KeysIter};
 use std::cell::RefCell;
 
@@ -22,10 +23,6 @@ map_key_impl!(Field(u32), "afield");
 #[derive(Clone, Debug, new)]
 pub struct Struct {
     pub align: u32,
-
-    // Whether this struct can be passed as inlined scalars or is implicitly put behind a pointer.
-    // Applies for both parameter and return position.
-    // pub passing_mode: PassBy,
 
     // CL lower is allowed to reorder fields for optimal alignment.
     //
@@ -49,6 +46,12 @@ pub enum FieldV {
     SumPayloadInline(Type),
 }
 
+pub enum FType<T> {
+    StructZST,
+    Struct(PassBy, MonoTypeKey),
+    Scalar(Scalar<T>),
+}
+
 impl Struct {
     fn is_lowered(&self) -> bool {
         self.align != u32::MAX
@@ -60,50 +63,12 @@ impl lir::Types {
     where
         I: IntoIterator<Item = &'t MonoType>,
     {
+        // TODO: Internally this can be represented as `Key(MonoFunc) | ([MonoType], Type)` instead
+        // which would be much more efficient.
         Typing {
-            params: self.get_abi_params(params),
-            ret: self.get_abi_return(ret),
+            params: params.into_iter().cloned().collect(),
+            ret: ret.clone(),
             conv: isa::CallConv::Fast,
-        }
-    }
-
-    pub(super) fn get_abi_params<'t>(
-        &self,
-        params: impl IntoIterator<Item = &'t MonoType>,
-    ) -> Map<key::Param, Param> {
-        params.into_iter().map(|ty| self.abi_param(ty)).collect()
-    }
-
-    pub(super) fn abi_param(&self, ty: &MonoType) -> Param {
-        match ty {
-            MonoType::Int(bitsize) => {
-                Param::Scalar(Scalar::direct(Type::int(bitsize.bits() as u16).unwrap()))
-            }
-            MonoType::Pointer(inner) => Param::Scalar(Scalar {
-                point: Type::int(self.pointer_bits as u16).unwrap(),
-                kind: ScalarKind::Pointer((**inner).clone()),
-            }),
-            MonoType::FnPointer(params, ret) => {
-                let typing = self.get_abi_typing(params, ret);
-                Param::Scalar(Scalar::fn_pointer(
-                    Type::int(self.pointer_bits as u16).unwrap(),
-                    typing,
-                ))
-            }
-            MonoType::Float => Param::Scalar(Scalar::direct(types::F64)),
-            MonoType::Unreachable => Param::ZST,
-            MonoType::Monomorphised(mk) => match &self[*mk] {
-                lir::MonoTypeData::Record { fields, .. } if fields.is_empty() => Param::ZST,
-                _ => Param::Struct(*mk),
-            },
-        }
-    }
-
-    pub(super) fn get_abi_return(&self, ty: &MonoType) -> Return {
-        match self.abi_param(ty) {
-            Param::Struct(key) => Return::Struct(key),
-            Param::Scalar(scalar) => Return::Scalar(scalar),
-            Param::ZST => Return::ZST,
         }
     }
 }
@@ -241,6 +206,7 @@ impl<'a> Structs<'a> {
         self.get(key)
     }
 
+    // Whether this struct should be passed as inlined scalars or is implicitly put behind a pointer.
     pub fn pass_mode(&self, key: MonoTypeKey) -> PassBy {
         match &self.records[key] {
             lir::MonoTypeData::Record { key: _, .. } => match self.c_class_of_aggregate(key) {
@@ -620,8 +586,8 @@ enum SystemVClass {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Typing {
     pub conv: isa::CallConv,
-    pub params: Map<key::Param, Param>,
-    pub ret: Return,
+    pub params: Map<key::Param, MonoType>,
+    pub ret: MonoType,
 }
 
 /// A singular S_Stable hardware value with attached metadata
@@ -652,6 +618,9 @@ impl<T> Scalar<T> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScalarKind {
     Direct,
+
+    // TODO: We want to re-use signatures, currently we create a new signature each time this
+    // function pointer is invoked.
     FuncPointer(Box<Typing>),
 
     // Since we stack-allocate large payloads by default; we cannot treat the payload differently
@@ -665,73 +634,81 @@ pub enum ScalarKind {
     AutoBoxed(MonoType),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Param {
-    Struct(MonoTypeKey),
-    Scalar(Scalar<types::Type>),
-    ZST,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Return {
-    Struct(MonoTypeKey),
-    Scalar(Scalar<types::Type>),
-    ZST,
-}
-
 impl<'a> Structs<'a> {
-    pub fn signature(
-        &mut self,
-        conv: isa::CallConv,
-        abiparams: &Map<key::Param, Param>,
-        abiret: &Return,
-    ) -> Signature {
-        let mut sig = Signature::new(conv);
-        sig.call_conv = conv;
+    pub fn scalar_or_struct(&self, ty: &MonoType) -> Either<Scalar<Type>, MonoTypeKey> {
+        let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
 
-        for p in abiparams.values() {
-            match p {
-                Param::Struct(mk) => {
-                    let size = self.size_of(&(*mk).into());
-                    let purpose = ArgumentPurpose::StructArgument(size);
-                    self.struct_to_abi_param(purpose, *mk, &mut sig);
+        match ty {
+            MonoType::Int(intsize) => {
+                let ty = Type::int(intsize.bits() as u16).unwrap();
+                Either::Left(Scalar::direct(ty))
+            }
+            MonoType::Pointer(inner) => Either::Left(Scalar::pointer(size_t, &**inner)),
+            MonoType::FnPointer(params, ret) => {
+                let typing = self.records.get_abi_typing(params, ret);
+                Either::Left(Scalar::fn_pointer(size_t, typing))
+            }
+            MonoType::Float => Either::Left(Scalar::direct(types::F64)),
+            MonoType::Unreachable => unreachable!(),
+            MonoType::Monomorphised(mk) => Either::Right(*mk),
+        }
+    }
+
+    pub fn signature(&mut self, typing: &Typing) -> Signature {
+        let mut sig = Signature::new(typing.conv);
+
+        let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
+
+        let normal = AbiParam::new;
+
+        for ty in typing.params.values() {
+            // self.ty_to_abi_param(false, ty, &mut sig);
+            match self.ftype(ty) {
+                FType::StructZST => {}
+                FType::Struct(PassBy::Value, mk) => self
+                    .iter_s_stable_fields(mk, &mut |scalar| sig.params.push(normal(scalar.point))),
+                FType::Struct(PassBy::Pointer, mk) => {
+                    let purpose = match sig.call_conv {
+                        isa::CallConv::AppleAarch64
+                        | isa::CallConv::SystemV
+                        | isa::CallConv::WindowsFastcall => {
+                            let size = self.size_of(&mk.into());
+                            ArgumentPurpose::StructArgument(size)
+                        }
+                        _ => ArgumentPurpose::Normal,
+                    };
+
+                    sig.params.push(AbiParam::special(size_t, purpose));
                 }
-                Param::Scalar(scalar) => sig.params.push(AbiParam::new(scalar.point)),
-                Param::ZST => {}
+                FType::Scalar(scalar) => sig.params.push(normal(scalar.point)),
             }
         }
 
-        match abiret {
-            Return::Struct(mk) => {
-                let purpose = ArgumentPurpose::StructReturn;
-                self.struct_to_abi_param(purpose, *mk, &mut sig);
+        match self.ftype(&typing.ret) {
+            FType::StructZST => {}
+            FType::Struct(PassBy::Value, mk) => {
+                self.iter_s_stable_fields(mk, &mut |scalar| sig.returns.push(normal(scalar.point)))
             }
-            Return::Scalar(scalar) => sig.returns.push(AbiParam::new(scalar.point)),
-            Return::ZST => {}
+            FType::Struct(PassBy::Pointer, _) => {
+                sig.params
+                    .push(AbiParam::special(size_t, ArgumentPurpose::StructReturn));
+            }
+            FType::Scalar(scalar) => sig.returns.push(normal(scalar.point)),
         }
 
         sig
     }
 
-    fn struct_to_abi_param(
-        &mut self,
-        purpose: ArgumentPurpose,
-        mk: MonoTypeKey,
-        sig: &mut Signature,
-    ) {
-        let ptr = Type::int(self.records.pointer_bits as u16).unwrap();
-
-        match self.pass_mode(mk) {
-            PassBy::Pointer => sig.params.push(AbiParam::special(ptr, purpose)),
-            PassBy::Value => {
-                let buf = if purpose == ArgumentPurpose::StructReturn {
-                    &mut sig.returns
-                } else {
-                    &mut sig.params
-                };
-                self.iter_s_stable_fields(mk, &mut |scalar| buf.push(AbiParam::new(scalar.point)));
-            }
+    pub fn ftype(&self, ty: &MonoType) -> FType<Type> {
+        match self.scalar_or_struct(ty) {
+            Either::Left(scalar) => FType::Scalar(scalar),
+            Either::Right(mk) if self.is_zst(mk) => FType::StructZST,
+            Either::Right(mk) => FType::Struct(self.pass_mode(mk), mk),
         }
+    }
+
+    pub fn is_zst(&self, mk: MonoTypeKey) -> bool {
+        self.size_of(&mk.into()) == 0
     }
 }
 

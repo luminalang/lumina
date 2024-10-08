@@ -63,6 +63,8 @@ pub enum Token {
     OpenList,
     #[token("]")]
     CloseList,
+    #[token(";")]
+    SemiColon,
     #[token("}")]
     CloseCurly,
     #[token(",")]
@@ -176,6 +178,7 @@ impl Token {
             T::CloseCurly => "`}`",
             T::OpenList => "`[`",
             T::CloseList => "`]`",
+            T::SemiColon => ";",
             T::Comma => "comma",
             T::Arrow => "arrow",
             T::Let => "start of let binding",

@@ -174,7 +174,7 @@ impl<'a> Context<'a> {
                 FType::Scalar(scalar) => {
                     builder.append_block_param(clblock, scalar.point);
                 }
-                FType::Struct(PassBy::Pointer, _) => {
+                FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) => {
                     builder.append_block_param(clblock, size_t);
                 }
                 FType::Struct(PassBy::Value, mk) => {
@@ -187,8 +187,11 @@ impl<'a> Context<'a> {
 
         if block == lir::Block::entry() {
             // Attach the structret pointer as a parameter if needed
-            if let FType::Struct(PassBy::Pointer, _) = self.structs.ftype(&func.returns) {
-                builder.append_block_param(clblock, size_t);
+            match self.structs.ftype(&func.returns) {
+                FType::Struct(PassBy::Pointer, _) | FType::ArrayPointer(..) => {
+                    builder.append_block_param(clblock, size_t);
+                }
+                _ => {}
             }
         }
 
@@ -257,7 +260,7 @@ impl<'a> Context<'a> {
                     builder.ins().store(MemFlags::trusted(), r, ptr, 0);
                 }
                 // already done as we passed the data as struct return directly
-                FType::Struct(PassBy::Pointer, _) | FType::StructZST => {}
+                FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) | FType::StructZST => {}
             }
         }
 

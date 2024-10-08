@@ -69,6 +69,13 @@ impl<'a> CurlyValue<'a> for Pattern<'a> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum ListLength<'a> {
+    Name(Tr<&'a str>),
+    Exact(Tr<u64>),
+    None,
+}
+
 pub type Fields<'a, T> = Vec<Field<'a, T>>;
 
 #[derive(Clone, Debug)]
@@ -291,17 +298,17 @@ impl<'a> Parser<'a> {
         start: Span,
         mut f: F,
         poison: Option<T>,
-    ) -> Option<(Vec<T>, Span)>
+    ) -> Option<(Vec<T>, ListLength<'a>, Span)>
     where
         F: FnMut(&mut Parser<'a>) -> Option<T>,
     {
         let mut fields = vec![];
 
         if let Some(span) = self.next_is(|t| t == Token::CloseList) {
-            return Some((fields, span));
+            return Some((fields, ListLength::None, span));
         }
 
-        let recovery = [Token::CloseList, Token::Comma];
+        let recovery = [Token::CloseList, Token::Comma, Token::SemiColon];
 
         loop {
             match f(self) {
@@ -311,11 +318,7 @@ impl<'a> Parser<'a> {
                     }
 
                     match self.recover_for(recovery, false) {
-                        Token::Comma => self.progress(),
-                        Token::CloseList => {
-                            let (_, end) = self.lexer.peek();
-                            break Some((fields, end));
-                        }
+                        Token::Comma | Token::SemiColon | Token::CloseList => {}
                         _ => {
                             self.err_unmatched(start, "the list");
                             return None;
@@ -329,10 +332,31 @@ impl<'a> Parser<'a> {
                 Token::Comma => {
                     // allow trailing comma
                     if let Some(span) = self.next_is(|t| t == Token::CloseList) {
-                        break Some((fields, span))
+                        break Some((fields, ListLength::None, span))
                     };
                 },
-                Token::CloseList => break Some((fields, span)),
+                Token::SemiColon => {
+                    let length = match self.lexer.next() {
+                        (Token::Int, nspan) => {
+                            let num = self.take(nspan).parse::<u64>().unwrap().tr(nspan);
+                            ListLength::Exact(num)
+                        }
+                        (Token::Path, nspan) if !self.take(nspan).contains(":") => {
+                            let name = self.taken(nspan);
+                            ListLength::Name(name)
+                        },
+                        (Token::CloseList, _) => break Some((fields, ListLength::None, span)),
+                        got => {
+                            self.err_unexpected_token(got, "array size");
+                            self.recover_for([Token::CloseList], false);
+                            ListLength::None
+                        }
+                    };
+
+                    self.expect(Token::CloseList)?;
+                    break Some((fields, length, span));
+                },
+                Token::CloseList => break Some((fields, ListLength::None, span)),
             }
         }
     }
@@ -450,6 +474,16 @@ impl<'a> fmt::Display for CurlyInit<'a> {
             CurlyInit::None => Ok(()),
             CurlyInit::Modify(expr) => write!(f, "{expr} {} ", '~'.symbol()),
             CurlyInit::Construct(type_) => write!(f, "{} {} ", type_.type_(), '|'.symbol()),
+        }
+    }
+}
+
+impl<'a> fmt::Display for ListLength<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ListLength::Name(name) => write!(f, "; {name}"),
+            ListLength::Exact(n) => write!(f, "; {n}"),
+            ListLength::None => Ok(()),
         }
     }
 }

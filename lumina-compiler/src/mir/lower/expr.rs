@@ -3,7 +3,8 @@ use crate::prelude::*;
 use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY, STRINGABLE_FROM_RAW_PARTS};
 use ast::NFunc;
 use lumina_typesystem::{
-    Constraint, Container, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty, Type, Var,
+    Constraint, Container, Generic, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty,
+    Type, Var,
 };
 use lumina_util::Highlighting;
 use std::fmt;
@@ -14,8 +15,12 @@ pub enum Expr {
     PartiallyApplicate(Callable, Vec<Self>),
     Yield(Callable),
 
+    TupleAccess(Box<Self>, usize),
     Access(Box<Self>, M<key::Record>, Vec<Type>, key::Field),
     Record(M<key::Record>, Vec<Type>, Vec<(key::Field, Span, Self)>),
+    Array(Vec<Self>, u64, Type),
+    GenericArray(Box<Self>, Generic, Type),
+    ArrayAccess(Box<[Self; 2]>),
 
     Int(IntSize, i128),
     Bool(bool),
@@ -28,6 +33,7 @@ pub enum Expr {
     IntCast(Box<Self>, IntSize, IntSize),
     ToFloatCast(Box<Self>, IntSize),
     FromFloatCast(Box<Self>, IntSize),
+    ArrayLen(Box<Self>),
 
     ObjectCast(Box<Self>, Type, M<key::Trait>, Vec<Type>),
     Deref(Box<Self>),
@@ -128,6 +134,8 @@ impl<'a, 's> Lower<'a, 's> {
                     "div_checked" => {
                         self.lower_builtin(params, |p| Expr::Num("div_checked", Box::new(p)))
                     }
+                    "array_len" => self.lower_builtin(params, |[p]| Expr::ArrayLen(Box::new(p))),
+                    "array_get" => self.lower_builtin(params, |p| Expr::ArrayAccess(Box::new(p))),
                     "iabs" => self.lower_builtin(params, |[p]| Expr::IntAbs(Box::new(p))),
                     "eq" => self.lower_builtin(params, |p| Expr::Cmp("eq", Box::new(p))),
                     "lt" => self.lower_builtin(params, |p| Expr::Cmp("lt", Box::new(p))),
@@ -215,6 +223,10 @@ impl<'a, 's> Lower<'a, 's> {
 
                 Expr::Access(Box::new(object), key, params, field)
             }
+            hir::Expr::TupleAccess(object, i) => {
+                let object = self.lower_expr((**object).as_ref());
+                Expr::TupleAccess(Box::new(object), **i)
+            }
             hir::Expr::Record(rvar, _, modified, fields) => {
                 let Some((key, params)) = self.transform_rvar(*rvar) else {
                     return Expr::Poison;
@@ -266,6 +278,10 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Expr::Lit(lit) => self.lower_literal(lit),
             hir::Expr::Tuple(elems) => Expr::Tuple(self.lower_exprs(elems)),
             hir::Expr::List(elems, var) => self.lower_list(elems, *var),
+            hir::Expr::Array(elems, arr) => self.lower_array(expr.span, elems, *arr),
+            hir::Expr::GenericArray(elems, generic) => {
+                self.lower_generic_array(expr.span, elems, *generic)
+            }
             hir::Expr::Match(on, branches) => {
                 self.lower_match(expr.span, (**on).as_ref(), branches)
             }
@@ -374,6 +390,48 @@ impl<'a, 's> Lower<'a, 's> {
                 self.errors.push(FinError::InvalidCast(ty_of_expr, to));
                 Expr::Poison
             }
+        }
+    }
+
+    fn lower_generic_array(
+        &mut self,
+        span: Span,
+        elems: &[Tr<hir::Expr<'s>>],
+        generic: Tr<Generic>,
+    ) -> Expr {
+        let mut elems = self.lower_exprs(elems);
+
+        if elems.len() == 1 {
+            let elem = elems.pop().unwrap();
+            let inner = self.current.casts_and_matches.pop_front().unwrap();
+            let inner = self.finalizer().transform(&inner);
+
+            Expr::GenericArray(Box::new(elem), *generic, inner)
+        } else {
+            let got = elems.len().tr(span);
+            self.errors.push(FinError::BadGenericArrayCount { got });
+            Expr::Poison
+        }
+    }
+
+    fn lower_array(&mut self, span: Span, elems: &[Tr<hir::Expr<'s>>], len: Tr<u64>) -> Expr {
+        if elems.len() as u64 == *len || elems.len() == 1 {
+            let elems = self.lower_exprs(elems);
+
+            let inner = self.current.casts_and_matches.pop_front().unwrap();
+            let inner = self.finalizer().transform(&inner);
+
+            Expr::Array(elems, *len, inner)
+        } else {
+            let espan = elems
+                .is_empty()
+                .then_some(span)
+                .unwrap_or_else(|| Span::from_params(elems, |elem| elem.span));
+
+            self.errors
+                .push(FinError::BadArrayCount { got: elems.len().tr(espan), exp: len });
+
+            Expr::Poison
         }
     }
 
@@ -520,6 +578,21 @@ impl fmt::Display for Expr {
                     .map(|(k, _, v)| format!("{k} {} {v}", '='.symbol()))
                     .format(", "),
             ),
+            Expr::TupleAccess(p, i) => {
+                write!(f, "{op}{} {} {}{cp}", "tuple_get".keyword(), &p, &i)
+            }
+            Expr::ArrayAccess(p) => {
+                write!(f, "{op}{} {} {}{cp}", "array_get".keyword(), &p[0], &p[1])
+            }
+            Expr::Array(elems, len, _) => {
+                write!(f, "[{}; {len}]", elems.iter().format(", "))
+            }
+            Expr::GenericArray(elem, generic, _) => {
+                write!(f, "[{elem}; {generic}]")
+            }
+            Expr::ArrayLen(p) => {
+                write!(f, "{op}{} {p}{cp}", "array_len".keyword())
+            }
             Expr::Int(intsize, n) => write!(f, "{n} {as_} {intsize}"),
             Expr::Bool(b) => b.fmt(f),
             Expr::Float(n) => n.fmt(f),

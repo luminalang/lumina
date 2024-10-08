@@ -432,6 +432,7 @@ impl<'s> Collector<'s> {
                 self.entities.field_names[rkey.inside(module)]
                     .iter()
                     .for_each(|(field, name)| {
+                        let rkey = rkey.inside(module);
                         self.lookups
                             .declare_accessor(module, vis, **name, rkey, field);
                     });
@@ -709,9 +710,11 @@ impl<'s> Collector<'s> {
                 let fnames = &self.entities.field_names[rkey.inside(ty.module)];
                 match members {
                     r#use::Members::All(_) => fnames.iter().for_each(|(field, n)| {
+                        let rkey = rkey.inside(ty.module);
                         self.lookups.declare_accessor(module, vis, **n, rkey, field)
                     }),
                     r#use::Members::Members(names) => {
+                        let rkey = rkey.inside(ty.module);
                         names
                             .iter()
                             .for_each(|name| match fnames.find(|n| *n == *name) {

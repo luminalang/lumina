@@ -86,7 +86,7 @@ impl<'a> Parser<'a> {
 
     fn exposing(&mut self, start: Span) -> Option<Vec<Tr<Exposed<'a>>>> {
         self.shared_list(start, Parser::exposed, None)
-            .map(|(elems, _)| elems)
+            .map(|(elems, _, _)| elems)
     }
 
     fn exposed(&mut self) -> Option<Tr<Exposed<'a>>> {

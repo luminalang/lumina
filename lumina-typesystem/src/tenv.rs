@@ -1,4 +1,4 @@
-use super::{Constraint, Forall, IType, Inference, Static};
+use super::{ConstGeneric, Constraint, Forall, IType, Inference, Static};
 use lumina_collections::{map_key_impl, Map, M};
 use lumina_util::{Span, Spanned, Tr};
 use tracing::trace;
@@ -20,6 +20,7 @@ pub struct VarInfo<'s> {
     pub(crate) span: Span,
     pub(crate) assignment: Option<Tr<IType>>,
     pub(crate) int_constraint: Option<IntConstraint>,
+    pub(crate) const_constraint: Option<ConstGeneric>,
     pub(crate) trait_constraints: Vec<Constraint<Inference>>,
     pub(crate) fields: Vec<(Tr<&'s str>, Var, Option<FieldMismatch>)>,
     pub(crate) field_of: Option<(Tr<&'s str>, Var)>,
@@ -42,6 +43,7 @@ impl<'s> VarInfo<'s> {
             span,
             assignment: None,
             int_constraint: None,
+            const_constraint: None,
             trait_constraints: vec![],
             fields: vec![],
             field_of: None,
@@ -55,12 +57,6 @@ impl<'s> TEnv<'s> {
     pub fn new() -> Self {
         Self { self_: None, vars: Map::new() }
     }
-
-    // Clever, but not sure if we'll need it.
-    // fn is_defaulted(&self, var: Var) -> bool {
-    //     let vinfo = &self[var];
-    //     Some(vinfo.span) == vinfo.assignment.as_ref().map(|tr| tr.span)
-    // }
 
     pub fn unify_forall(&mut self, span: Span, forall: &Forall<'s, Static>) -> Vec<IType> {
         forall
@@ -138,6 +134,7 @@ impl<'s> TEnv<'s> {
     pub fn merge_vars<const N: usize>(&mut self, span: Span, vars: [Var; N]) -> Var {
         let mut int_constraint = None;
         let mut trait_constraints = vec![];
+        let mut const_constraint = None;
         let mut fields = vec![];
         let mut field_of = None;
         let mut lift_to_generic = false;
@@ -168,6 +165,12 @@ impl<'s> TEnv<'s> {
                 }
                 (Some(_), None) => {}
             }
+
+            match (const_constraint, &vinfo.const_constraint) {
+                (None, Some(con)) => const_constraint = Some(con.clone()),
+                _ => {}
+            }
+
             trait_constraints.extend(std::mem::take(&mut vinfo.trait_constraints));
             fields.extend(std::mem::take(&mut vinfo.fields));
         }
@@ -176,6 +179,7 @@ impl<'s> TEnv<'s> {
             span,
             assignment: None,
             int_constraint,
+            const_constraint,
             trait_constraints,
             lift_to_generic,
             fields,

@@ -5,7 +5,8 @@ use derive_more::{Deref, DerefMut};
 use lumina_collections::map_key_impl;
 use lumina_key as key;
 use lumina_typesystem::{
-    Container, Forall, Generic, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty, Type,
+    ConstValue, Container, Forall, Generic, GenericKind, GenericMapper, IntSize, Static,
+    Transformer, Ty, Type,
 };
 use lumina_util::Highlighting;
 use std::fmt;
@@ -21,6 +22,8 @@ pub enum MonoType {
     FnPointer(Vec<Self>, Box<Self>),
     Float,
     Unreachable,
+    Const(ConstValue),
+    Array(u64, Box<Self>),
     Monomorphised(MonoTypeKey),
 }
 
@@ -140,8 +143,10 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoType> {
                     fmt(self.types, &**ret)
                 )
             }
+            MonoType::Const(const_) => const_.fmt(f),
             MonoType::Float => "float".fmt(f),
             MonoType::Unreachable => "!".fmt(f),
+            MonoType::Array(len, inner) => write!(f, "[{}; {len}]", fmt(self.types, &**inner)),
             MonoType::Monomorphised(key) => fmt(self.types, *key).fmt(f),
         }
     }
@@ -300,6 +305,14 @@ impl MonoType {
         match self {
             Self::Monomorphised(key) => *key,
             ty => panic!("not a monomorphised type: {ty:#?}"),
+        }
+    }
+
+    #[track_caller]
+    pub fn as_array(&self) -> (u64, MonoType) {
+        match self {
+            MonoType::Array(len, inner) => (*len, (**inner).clone()),
+            ty => panic!("not an array: {ty:?}"),
         }
     }
 
@@ -558,6 +571,14 @@ impl<'a> Monomorphization<'a> {
                     let inner = self.apply(&params[0]);
                     MonoType::pointer(inner)
                 }
+                Container::Array => {
+                    assert_eq!(params.len(), 2);
+                    let inner = self.apply(&params[0]);
+                    let MonoType::Const(ConstValue::Usize(len)) = self.apply(&params[1]) else {
+                        panic!("non-const-usize for array length post- type-checking");
+                    };
+                    MonoType::Array(len, Box::new(inner))
+                }
                 &Container::Defined(M(module, key), _) => match key {
                     key::TypeKind::Record(rkey) => {
                         let mk = self.record(rkey.inside(module), params);
@@ -576,6 +597,7 @@ impl<'a> Monomorphization<'a> {
                     }
                 },
             },
+            Ty::Const(const_) => MonoType::Const(const_.clone()),
             Ty::Generic(generic) => self.generic(*generic).clone(),
             Ty::Int(intsize) => MonoType::Int(*intsize),
             Ty::Simple("f64") => MonoType::Float,
@@ -674,6 +696,7 @@ impl fmt::Debug for MonoType {
         match self {
             MonoType::Int(intsize) => write!(f, "{intsize}"),
             MonoType::Pointer(ty) => write!(f, "*{ty:?}"),
+            MonoType::Const(const_) => write!(f, "{const_}"),
             MonoType::FnPointer(params, ret) => {
                 write!(
                     f,
@@ -683,6 +706,7 @@ impl fmt::Debug for MonoType {
             }
             MonoType::Float => write!(f, "f64"),
             MonoType::Unreachable => write!(f, "!"),
+            MonoType::Array(len, inner) => write!(f, "[{:?}; {len}]", inner),
             MonoType::Monomorphised(key) => write!(f, "{key}"),
         }
     }

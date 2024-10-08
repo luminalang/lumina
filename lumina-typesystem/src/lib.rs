@@ -25,7 +25,9 @@ mod intsize;
 pub use intsize::IntSize;
 
 mod generic;
-pub use generic::{Constraint, Forall, Generic, GenericData, GenericKind, IMPLICT_GENERIC_NAMES};
+pub use generic::{
+    ConstGeneric, Constraint, Forall, Generic, GenericData, GenericKind, IMPLICT_GENERIC_NAMES,
+};
 
 mod tenv;
 pub use tenv::{IntConstraint, TEnv, Var};
@@ -210,6 +212,8 @@ pub enum Ty<T> {
     Generic(Generic),
     Int(IntSize),
 
+    Const(ConstValue),
+
     // Types that are only equal to themselves
     Simple(&'static str),
 
@@ -217,12 +221,20 @@ pub enum Ty<T> {
     Special(T),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum ConstValue {
+    Usize(u64),
+    Bool(bool),
+    Char(char),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Container {
     FnPointer,
     Closure,
     Tuple,
     Pointer,
+    Array,
     Defined(M<key::TypeKind>, Ignored<Lang>),
 }
 
@@ -254,6 +266,14 @@ impl<T> Ty<T> {
     pub fn list<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
         let key = key.map(K::into);
         Self::Container(Container::Defined(key, Ignored::new(Lang::List)), params)
+    }
+    pub fn array(size: u64, inner: Self) -> Self {
+        let size = Ty::Const(ConstValue::Usize(size));
+        Self::Container(Container::Array, vec![inner, size])
+    }
+    pub fn const_array(generic: Generic, inner: Self) -> Self {
+        let size = Ty::Generic(generic);
+        Self::Container(Container::Array, vec![inner, size])
     }
     pub fn string<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
         let key = key.map(K::into);
@@ -338,6 +358,7 @@ impl Container {
             Container::Closure => Self::fmt_func("fn", elems, format, f),
             Container::Tuple => Self::fmt_tuple(elems, format, f),
             Container::Pointer => write!(f, "*{}", format(&elems[0])),
+            Container::Array => write!(f, "[{}; {}]", format(&elems[0]), format(&elems[1])),
             Container::Defined(_, Ignored { inner: Lang::String }) => write!(f, "string"),
             Container::Defined(_, Ignored { inner: Lang::List }) => {
                 write!(f, "[{}]", elems.iter().map(format).format(", "))
@@ -409,6 +430,7 @@ impl<T: fmt::Display> fmt::Display for Ty<T> {
         match self {
             Ty::Container(cont, params) => cont.fmt(params, |t| t.to_string(), f),
             Ty::Generic(generic) => write!(f, "{generic}"),
+            Ty::Const(const_) => write!(f, "{const_}"),
             Ty::Int(size) => write!(f, "{size}"),
             Ty::Simple(name) => name.fmt(f),
             Ty::Special(special) => special.fmt(f),
@@ -419,5 +441,15 @@ impl<T: fmt::Display> fmt::Display for Ty<T> {
 impl<T: fmt::Display> fmt::Debug for Ty<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+impl fmt::Display for ConstValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ConstValue::Usize(n) => n.fmt(f),
+            ConstValue::Bool(b) => b.fmt(f),
+            ConstValue::Char(c) => c.fmt(f),
+        }
     }
 }

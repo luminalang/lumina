@@ -96,6 +96,8 @@ pub enum FinError {
     UnreachablePattern(Span),
     MissingPatterns(Span, Vec<pat::MissingPattern>),
     InvalidCast(Tr<Type>, Type),
+    BadArrayCount { got: Tr<usize>, exp: Tr<u64> },
+    BadGenericArrayCount { got: Tr<usize> },
     DuplicateField(Tr<String>, Span),
 }
 
@@ -397,6 +399,20 @@ pub fn emit_fin_error<'s>(
                 })
                 .emit();
         }
+        FinError::BadArrayCount { got, exp } => sources
+            .error("incorrect array length")
+            .m(module)
+            .eline(got.span, format!("has {got} elements"))
+            .iline(exp.span, format!("expected {exp}"))
+            .emit(),
+        FinError::BadGenericArrayCount { got } => sources
+            .error("incorrect array length")
+            .m(module)
+            .eline(
+                got.span,
+                format!("arrays with generic length cannot be constructed with {got} elements",),
+            )
+            .emit(),
         FinError::InvalidCast(from, to) => {
             sources
                 .error("invalid cast")

@@ -60,19 +60,19 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         match self.ctx.structs.pass_mode(key) {
             PassBy::Pointer => {
                 let (size, align) = self.ctx.structs.size_and_align_of(&key.into());
-                let (slot, _) = self.create_struct_stack_slot(size, align as u8);
+                let slot = self.create_struct_stack_slot(size, align as u8);
                 let size_t = self.ctx.size_t();
                 let ptr = self.ins().stack_addr(size_t, slot, 0);
                 self.write_fields_to_structptr(key, fields, ptr);
                 dst.push(ptr);
             }
-            PassBy::Value => self.fields_to_fstable(fields, dst),
+            PassBy::Value => self.fields_to_fstable(fields.as_slice(), dst),
         }
     }
 
-    fn fields_to_fstable(&mut self, fields: &Map<layout::Field, VEntry>, dst: &mut Vec<Value>) {
+    fn fields_to_fstable(&mut self, fields: &[VEntry], dst: &mut Vec<Value>) {
         fields
-            .values()
+            .iter()
             .for_each(|entry| self.entry_to_fstable(true, entry, dst))
     }
 
@@ -84,10 +84,17 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
             VEntry::StructFlat(mk, inner_fields) => {
                 if embed {
-                    self.fields_to_fstable(inner_fields, dst)
+                    self.fields_to_fstable(inner_fields.as_slice(), dst)
                 } else {
                     // Difference is that this might append an implicit struct pointer to `dst` instead
                     self.struct_to_fstable(*mk, inner_fields, dst)
+                }
+            }
+            VEntry::ArrayFlat(_, inner_elems) => {
+                if embed {
+                    self.fields_to_fstable(inner_elems, dst)
+                } else {
+                    todo!("array_to_fstable");
                 }
             }
 
@@ -96,13 +103,13 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 match self.ctx.structs.pass_mode(inner) {
                     PassBy::Pointer => dst.push(ptr),
                     PassBy::Value => {
-                        self.deref_struct_into_raw(
-                            &mut |scalar| dst.push(scalar.point),
-                            inner,
-                            ptr,
-                        );
+                        self.deref_struct_into_raw(&mut |point| dst.push(point), inner, ptr);
                     }
                 }
+            }
+            VEntry::ArrayStackPointer(_, _, ptr) => {
+                dst.push(*ptr);
+                // self.deref_array_into_raw(&mut |point| dst.push(point), inner, *len, *ptr)
             }
 
             // Here we make the assumption that no sum-types which take inlined payloads will ever

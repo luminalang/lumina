@@ -50,7 +50,23 @@ impl<'a, 's> Verify<'a, 's> {
                     .iter()
                     .map(|p| self.type_check_pat(p.as_ref()).value)
                     .collect();
+
                 IType::tuple(types)
+            }
+
+            hir::Pattern::Array(elems, len) => {
+                let inner = self.type_check_same("array elements", None, elems, |this, elem| {
+                    this.type_check_pat(elem.as_ref())
+                });
+
+                IType::array(**len, inner.value)
+            }
+            hir::Pattern::GenericArray(elems, generic) => {
+                let inner = self.type_check_same("array elements", None, elems, |this, elem| {
+                    this.type_check_pat(elem.as_ref())
+                });
+
+                IType::const_array(**generic, inner.value)
             }
 
             // TODO: since we decided to desugar patterns early on; we can't use the same

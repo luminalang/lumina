@@ -253,6 +253,11 @@ impl Blocks {
         self.assign(entry, ty)
     }
 
+    pub fn replicate(&mut self, value: Value, times: u64, ty: MonoType) -> Value {
+        let entry = Entry::Replicate(value, times);
+        self.assign(entry, ty)
+    }
+
     pub fn variant(&mut self, var: key::Variant, params: Vec<Value>, ty: MonoTypeKey) -> Value {
         let entry = Entry::Variant(var, params);
         self.assign(entry, MonoType::Monomorphised(ty))
@@ -334,6 +339,10 @@ impl Blocks {
 
     pub fn field(&mut self, of: Value, key: MonoTypeKey, field: key::Field, ty: MonoType) -> Value {
         let entry = Entry::Field { of, key, field };
+        self.assign(entry, ty)
+    }
+    pub fn indice(&mut self, of: Value, indice: Value, ty: MonoType) -> Value {
+        let entry = Entry::Indice { of, indice };
         self.assign(entry, ty)
     }
     pub fn cast_payload(&mut self, of: Value, tuple: MonoType) -> Value {
@@ -513,6 +522,7 @@ pub enum Entry {
     // Value Manipulation
     Copy(Value),
     Construct(Vec<Value>),
+    Replicate(Value, u64),
     Variant(key::Variant, Vec<Value>),
 
     RefStaticVal(M<key::Val>),
@@ -527,6 +537,11 @@ pub enum Entry {
     },
     TagFromSum {
         of: Value,
+    },
+    // Overloaded for tuples and arrays, access element by indice
+    Indice {
+        of: Value,
+        indice: Value,
     },
 
     IntAdd(Value, Value),
@@ -657,6 +672,9 @@ impl fmt::Display for Entry {
             Entry::BlockParam(param) => write!(f, "{} {param}", "fparam".keyword()),
             Entry::Deref(v) => write!(f, "{} {v}", "deref".keyword()),
             Entry::Construct(elems) => ParamFmt::new(&"construct".keyword(), elems).fmt(f),
+            Entry::Replicate(elem, times) => {
+                write!(f, "{} {times} {elem}", "replicate".keyword())
+            }
             Entry::Variant(var, elems) => {
                 write!(
                     f,
@@ -678,6 +696,7 @@ impl fmt::Display for Entry {
             Entry::Alloc => write!(f, "{}", "alloc".keyword(),),
             Entry::Dealloc { ptr } => write!(f, "{} {ptr}", "dealloc".keyword()),
             Entry::Field { of, field, .. } => write!(f, "{} {of} {field}", "field".keyword(),),
+            Entry::Indice { of, indice } => write!(f, "{} {of} {indice}", "indice".keyword()),
             Entry::CastFromSum { of } => {
                 write!(f, "{} {of}", "cast-payload".keyword())
             }

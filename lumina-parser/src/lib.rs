@@ -14,7 +14,7 @@ pub mod pat;
 pub use pat::Pattern;
 mod recover;
 mod shared;
-pub use shared::{AnnotatedPath, CurlyInit, Field, Fields};
+pub use shared::{AnnotatedPath, CurlyInit, Field, Fields, ListLength};
 pub mod ty;
 pub use ty::Type;
 mod error;
@@ -214,7 +214,7 @@ impl<'a> Parser<'a> {
 
     fn attribute(&mut self, span: Span) -> Option<Vec<Tr<Expr<'a>>>> {
         self.shared_list(span, |parser| parser.expr(), None)
-            .map(|(elems, _)| elems)
+            .map(|(elems, _, _)| elems)
     }
 
     fn handle_default(&mut self, when: when::Constraints<'a>) -> Option<Declaration<'a>> {
@@ -247,6 +247,9 @@ impl<'a> Parser<'a> {
     }
     pub fn taken(&self, span: Span) -> Tr<&'a str> {
         self.take(span).tr(span)
+    }
+    pub fn at(&self, i: u32) -> char {
+        self.lexer.source()[i as usize..].chars().next().unwrap()
     }
 
     pub fn next_then<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {

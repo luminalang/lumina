@@ -1,4 +1,4 @@
-use super::{expr::ExprParser, select, CurlyInit, Error, Expr, Fields, Parser, Tr, T};
+use super::{expr::ExprParser, select, CurlyInit, Error, Expr, Fields, ListLength, Parser, Tr, T};
 use itertools::Itertools;
 use lumina_util::{Highlighting, Identifier, Span, Spanned};
 use std::fmt;
@@ -10,7 +10,7 @@ pub enum Pattern<'a> {
     String(&'a str, Vec<Tr<Self>>),
     Extractor(Box<Tr<Expr<'a>>>, Option<Tr<&'a str>>, Vec<Tr<Self>>),
     Fields(Box<CurlyInit<'a>>, Fields<'a, Self>),
-    List(Vec<Tr<Self>>),
+    List(Vec<Tr<Self>>, ListLength<'a>),
     Tuple(Vec<Tr<Self>>),
     Int([Bound; 2]),
     Float(f64),
@@ -192,13 +192,13 @@ impl<'a> Parser<'a> {
     }
 
     fn pat_list(&mut self, span: Span) -> Option<Tr<Pattern<'a>>> {
-        let (elems, end) = self.shared_list(
+        let (elems, ender, end) = self.shared_list(
             span,
             |parser| parser.pattern(true),
             Some(Pattern::Poison.tr(span)),
         )?;
 
-        Some(Pattern::List(elems).tr(span.extend(end)))
+        Some(Pattern::List(elems, ender).tr(span.extend(end)))
     }
 
     pub fn pat_params(&mut self, mut string_pats: bool) -> Option<Vec<Tr<Pattern<'a>>>> {
@@ -285,7 +285,9 @@ impl<'a> fmt::Display for Pattern<'a> {
             }
             Pattern::String(str, params) if params.is_empty() => write!(f, "\"{str}\""),
             Pattern::String(str, params) => write!(f, "\"{str}\" {}", params.iter().format(" ")),
-            Pattern::List(elems) => write!(f, "{ol}{}{cl}", elems.iter().format(", ")),
+            Pattern::List(elems, length) => {
+                write!(f, "{ol}{}{length}{cl}", elems.iter().format(", "))
+            }
             Pattern::Fields(init, fields) => {
                 write!(f, "{oc} {init}{} {cc}", fields.iter().format(", "))
             }

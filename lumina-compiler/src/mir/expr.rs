@@ -48,6 +48,10 @@ impl<'a, 's> Verify<'a, 's> {
                 self.type_check_and_emit(objty.as_ref(), exp.as_ref());
                 IType::infer(fieldvar)
             }
+            hir::Expr::TupleAccess(object, i) => {
+                let objty = self.type_check_expr((**object).as_ref());
+                self.check_tuple_index(objty.as_ref(), *i)
+            }
             hir::Expr::Record(var, ty, modify, fields) => {
                 let fvars = fields
                     .iter()
@@ -112,21 +116,31 @@ impl<'a, 's> Verify<'a, 's> {
 
                 match_eval_ty.value
             }
+            hir::Expr::Array(elems, len) => {
+                let inner = self.type_check_same("list elements", None, elems, |this, elem| {
+                    this.type_check_expr(elem.as_ref())
+                });
+
+                self.current.casts_and_matches.push_back(inner.clone());
+
+                IType::array(**len, inner.value)
+            }
+            hir::Expr::GenericArray(elems, generic) => {
+                let inner = self.type_check_same("list elements", None, elems, |this, elem| {
+                    this.type_check_expr(elem.as_ref())
+                });
+
+                self.current.casts_and_matches.push_back(inner.clone());
+
+                IType::const_array(**generic, inner.value)
+            }
             hir::Expr::List(elems, ivar) => {
                 let list = self.items.list_default;
 
-                let mut checker = SameAsCheck::new("list elements");
-                if elems.is_empty() {}
-
-                for elem in elems {
-                    let ty = self.type_check_expr(elem.as_ref());
-                    checker.include(self.type_system(), ty);
-                }
-
-                // Include the inner typevar to make sure it's assigned post this point
-                checker.include(self.type_system(), IType::infer(*ivar).tr(expr.span));
-
-                let inner = checker.finalize(self.module(), self.ty_formatter(), &self.hir.sources);
+                let ivar = Some((*ivar).tr(expr.span));
+                let inner = self.type_check_same("list elements", ivar, elems, |this, elem| {
+                    this.type_check_expr(elem.as_ref())
+                });
 
                 IType::list(list, vec![inner.value])
             }

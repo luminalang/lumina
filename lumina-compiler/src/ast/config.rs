@@ -82,14 +82,14 @@ impl ProjectConfig {
 
     fn parse_str_list(&mut self, expr: Tr<parser::Expr>) -> Result<Vec<String>, Error> {
         match expr.value {
-            parser::Expr::List(elems) => elems.into_iter().map(|elem| name(elem)).collect(),
+            parser::Expr::List(elems, _) => elems.into_iter().map(|elem| name(elem)).collect(),
             _ => Err(Error::Expected(expr.span, "list")),
         }
     }
 
     fn parse_deps(&mut self, expr: Tr<parser::Expr>) -> Result<(), Error> {
         match expr.value {
-            parser::Expr::List(deps) => deps.into_iter().try_for_each(|expr| match expr.value {
+            parser::Expr::List(deps, _) => deps.into_iter().try_for_each(|expr| match expr.value {
                 parser::Expr::Record { fields, .. } => {
                     let mut dep = Dependency {
                         name: String::new(),

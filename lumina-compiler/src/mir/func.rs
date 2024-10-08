@@ -410,6 +410,16 @@ impl<'a, 's> Verify<'a, 's> {
                             .format(" or ")
                     ))
                     .emit(),
+                ConstraintError::BadConstType(generic, ty) => self
+                    .error("constraint not met")
+                    .eline(
+                        ty.span,
+                        format!(
+                            "type `{}` is not a valid constant for `{generic}`",
+                            self.ty_formatter().fmt(&*ty)
+                        ),
+                    )
+                    .emit(),
             }
         }
     }
@@ -681,6 +691,17 @@ impl<'a, 's> Verify<'a, 's> {
                     let ptypes = vec![any.clone(), any.clone()];
                     let ret = Ty::tuple(vec![any, Ty::bool()]);
                     InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
+                }
+                "array_len" => {
+                    let any = Ty::infer(self.vars().var(span));
+                    let ptypes = vec![any];
+                    let ret = Ty::Int(self.target.uint());
+                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
+                }
+                "array_get" => {
+                    let [arr, any] = [(); 2].map(|_| self.vars().var(span)).map(Ty::infer);
+                    let ptypes = vec![Ty::Int(self.target.uint()), arr];
+                    InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
                 }
                 "iabs" => {
                     let any = Ty::infer(self.vars().var(span));

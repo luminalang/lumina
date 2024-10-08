@@ -6,9 +6,9 @@ use ast::{Entity, Mod, NFunc};
 use derive_more::Display;
 use derive_more::From;
 use lumina_parser as parser;
-use lumina_typesystem::{Forall, IType, TEnv, Var};
+use lumina_typesystem::{Forall, Generic, IType, TEnv, Var};
 use lumina_util::Highlighting;
-use parser::AnnotatedPath;
+use parser::{AnnotatedPath, ListLength};
 use std::fmt;
 use tracing::trace;
 
@@ -21,6 +21,7 @@ pub enum Expr<'s> {
     PassExpr(Box<Tr<Self>>),
 
     Access(Var, Box<Tr<Self>>, Tr<&'s str>),
+    TupleAccess(Box<Tr<Self>>, Tr<usize>),
     Record(
         Var,
         Option<Tr<IType>>,
@@ -30,6 +31,8 @@ pub enum Expr<'s> {
     Lit(Literal<'s>),
     Tuple(Vec<Tr<Self>>),
     List(Vec<Tr<Self>>, Var),
+    Array(Vec<Tr<Self>>, Tr<u64>),
+    GenericArray(Vec<Tr<Self>>, Tr<Generic>),
     Match(Box<Tr<Self>>, Vec<(Tr<Pattern<'s>>, Tr<Self>)>),
     Cast(Box<Tr<Self>>, Tr<IType>),
     Poison,
@@ -108,18 +111,17 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 let params = self.exprs(params);
 
                 let bind = self.bindings.declare_nameless();
-                let pat = Pattern::Bind(bind, Box::new(Pattern::Any)).tr(inner.span);
-
-                let and_then =
-                    hir::Expr::Call(bind.into(), TypeAnnotation::new(), params).tr(expr.span);
-
-                Expr::let_bind(value, pat, and_then)
+                self.bind_and_call(value, bind, params)
             }
             parser::Expr::Operators { init, ops } => self.operators((**init).as_ref(), ops),
             parser::Expr::FieldAccess(object, name) => {
                 let object = self.expr((**object).as_ref());
                 let rvar = self.vars().var(object.span);
                 Expr::Access(rvar, Box::new(object), *name)
+            }
+            parser::Expr::TupleAccess(object, i) => {
+                let object = self.expr((**object).as_ref());
+                Expr::TupleAccess(Box::new(object), *i)
             }
             parser::Expr::DotPipe(elems) => {
                 let [left, right] = &**elems;
@@ -142,12 +144,23 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
 
                 Expr::Match(Box::new(on), branches)
             }
-            parser::Expr::List(elems) => {
+            parser::Expr::List(elems, ListLength::None) => {
                 let elems = self.exprs(elems);
                 let ivar = self
                     .vars()
                     .var(elems.get(0).map(|elem| elem.span).unwrap_or(expr.span));
                 Expr::List(elems, ivar)
+            }
+            parser::Expr::List(elems, ListLength::Exact(end)) => {
+                let elems = self.exprs(elems);
+                Expr::Array(elems, *end)
+            }
+            parser::Expr::List(elems, ListLength::Name(name)) => {
+                let elems = self.exprs(elems);
+                self.to_type_lower()
+                    .resolve_array_generic(*name)
+                    .map(|generic| Expr::GenericArray(elems, generic.tr(name.span)))
+                    .unwrap_or(Expr::Poison)
             }
             parser::Expr::Tuple(elems) => {
                 let elems = self.exprs(elems);
@@ -192,6 +205,18 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             parser::Expr::Poison => Expr::Poison,
         }
         .tr(expr.span)
+    }
+
+    // Declare a bind for `value` and then lower `and_then` with that bind in scope
+    fn bind_and_then<F>(&mut self, value: Tr<Expr<'s>>, and_then: F) -> Expr<'s>
+    where
+        F: FnOnce(&mut Self, Tr<key::Bind>, Tr<Expr<'s>>) -> Tr<Expr<'s>>,
+    {
+        let span = value.span;
+        let bind = self.bindings.declare_nameless();
+        let pat = Pattern::Bind(bind, Box::new(Pattern::Any)).tr(span);
+        let and_then = and_then(self, bind.tr(span), Expr::callable(bind).tr(span));
+        Expr::let_bind(value, pat, and_then)
     }
 
     fn pass(&mut self, to_pass: Tr<&parser::Expr<'s>>) -> Expr<'s> {
@@ -659,18 +684,10 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                         let fields = self.record_fields(fields, Some(modified));
                         Expr::Record(var, None, Some(modified), fields)
                     }
-                    _ => {
-                        let modpoint = self.bindings.declare_nameless();
-                        let modspan = modified.span;
-
-                        let fields = self.record_fields(fields, Some(modpoint.tr(modspan)));
-
-                        Expr::let_bind(
-                            modified,
-                            Pattern::Bind(modpoint, Box::new(Pattern::Any)).tr(modspan),
-                            Expr::Record(var, None, Some(modpoint.tr(modspan)), fields).tr(span),
-                        )
-                    }
+                    _ => self.bind_and_then(modified, |this, bind, _| {
+                        let fields = this.record_fields(fields, Some(bind));
+                        Expr::Record(var, None, Some(bind), fields).tr(span)
+                    }),
                 }
             }
             parser::CurlyInit::None => {
@@ -846,6 +863,7 @@ impl<'s> fmt::Display for Expr<'s> {
                 write!(f, "{op}{call}{anot:?} {}{cp}", params.iter().format(" "))
             }
             Expr::Access(_, object, field) => write!(f, "{object}.{field}"),
+            Expr::TupleAccess(object, i) => write!(f, "{object}.{i}"),
 
             Expr::Record(_, _, Some(a), fields) => write!(
                 f,
@@ -873,6 +891,10 @@ impl<'s> fmt::Display for Expr<'s> {
             Expr::Lit(lit) => write!(f, "{lit:?}"),
             Expr::Tuple(elems) => write!(f, "{op}{}{cp}", elems.iter().format(", ")),
             Expr::List(elems, _) => write!(f, "[{}]", elems.iter().format(", ")),
+            Expr::Array(elems, n) => write!(f, "[{}; {n}]", elems.iter().format(", ")),
+            Expr::GenericArray(elems, generic) => {
+                write!(f, "[{}; {generic}]", elems.iter().format(", "))
+            }
             Expr::Match(on, branches) if branches.len() == 1 => {
                 write!(
                     f,

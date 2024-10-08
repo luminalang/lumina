@@ -14,6 +14,7 @@ use lumina_typesystem::IntSize;
 use lumina_util::Highlighting;
 use std::cmp::Ordering;
 
+mod array;
 mod call;
 mod num;
 mod pointer;
@@ -68,10 +69,12 @@ enum VEntry {
 
     // F_Stable
     StructStackPointer(MonoTypeKey, Value), // Struct by-value which is implicitly passed as a pointer.
+    ArrayStackPointer(MonoType, u64, Value),
     SumPayloadStackPointer { largest: u32, ptr: Value },
 
     // Unstable
     StructFlat(MonoTypeKey, Map<layout::Field, VEntry>),
+    ArrayFlat(MonoType, Vec<VEntry>),
 }
 
 impl VEntry {
@@ -218,11 +221,28 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
             lir::Entry::Construct(values) => match ty {
                 MonoType::Monomorphised(mk) => self.construct_record(*mk, values),
+                MonoType::Array(len, inner) => {
+                    assert_eq!(values.len() as u64, *len);
+                    self.construct_array(values, inner)
+                }
                 _ => panic!("cannot construct: {ty:?}"),
+            },
+            lir::Entry::Replicate(value, times) => match ty {
+                MonoType::Monomorphised(_) => todo!("replicating to construct struct/tuple"),
+                MonoType::Array(len, inner) => {
+                    assert_eq!(*times, *len);
+                    self.replicate_array(*value, inner, *times)
+                }
+                _ => panic!("cannot replicate into: {ty:?}"),
             },
             lir::Entry::Field { of, field, .. } => {
                 let entry = self.value_to_entry(*of);
                 self.field_of_entry(entry, *field)
+            }
+            lir::Entry::Indice { of, indice } => {
+                let entry = self.value_to_entry(*of);
+                let indice = self.value_to_entry(*indice).as_direct();
+                self.indice_of_entry(entry, indice)
             }
 
             lir::Entry::Variant(var, values) => match ty {
@@ -399,7 +419,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let ret = self.ctx.structs.ftype(&self.f.func.returns);
 
         match ret {
-            FType::Struct(PassBy::Pointer, _) => {
+            FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) => {
                 let dst = self
                     .f
                     .builder
@@ -414,12 +434,12 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 VEntry::StructHeapPointer(key, ptr) | VEntry::StructStackPointer(key, ptr) => {
                     assert_eq!(key, mk);
                     let mut buf = vec![];
-                    self.deref_struct_into_raw(&mut |scalar| buf.push(scalar.point), mk, ptr);
+                    self.deref_struct_into_raw(&mut |point| buf.push(point), mk, ptr);
                     self.ins().return_(&buf);
                 }
                 VEntry::StructFlat(mk_, values) if mk == mk_ => {
                     let mut flat = Vec::with_capacity(values.len());
-                    self.fields_to_sstable(&values, &mut flat);
+                    self.fields_to_sstable(values.as_slice(), &mut flat);
                     self.ins().return_(&flat);
                 }
                 _ => unreachable!(),
@@ -444,13 +464,17 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             }
             FType::StructZST => VEntry::ZST,
             FType::Struct(PassBy::Value, mk) => self.fparam_fields_to_ventry(mk, input),
+            FType::Struct(PassBy::Pointer, mk) if embed => self.fparam_fields_to_ventry(mk, input),
             FType::Struct(PassBy::Pointer, mk) => {
-                if embed {
-                    self.fparam_fields_to_ventry(mk, input)
-                } else {
-                    let ptr = next_value(input);
-                    VEntry::StructStackPointer(mk, ptr)
-                }
+                let ptr = next_value(input);
+                VEntry::StructStackPointer(mk, ptr)
+            }
+            FType::ArrayPointer(len, inner) if embed => {
+                self.fparam_elems_to_ventry(len, inner, input)
+            }
+            FType::ArrayPointer(len, inner) => {
+                let ptr = next_value(input);
+                VEntry::ArrayStackPointer(inner, len, ptr)
             }
         }
     }
@@ -466,6 +490,14 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             .collect();
 
         VEntry::StructFlat(mk, buf)
+    }
+
+    fn fparam_elems_to_ventry(&self, len: u64, inner: MonoType, input: &mut &[Value]) -> VEntry {
+        let buf = (0..len)
+            .map(|_| self.fparam_to_ventry(true, &inner, input))
+            .collect();
+
+        VEntry::ArrayFlat(inner, buf)
     }
 
     fn abi_field_to_ventry(&self, field: &FieldV, input: &mut &[Value]) -> VEntry {
@@ -514,12 +546,16 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 let ptr = slot.unwrap().1;
                 VEntry::StructStackPointer(mk, ptr)
             }
+            FType::ArrayPointer(len, inner) => {
+                let ptr = slot.unwrap().1;
+                VEntry::ArrayStackPointer(inner, len, ptr)
+            }
         }
     }
 
-    fn create_struct_stack_slot(&mut self, size: u32, align: u8) -> (ir::StackSlot, u32) {
+    fn create_struct_stack_slot(&mut self, size: u32, align: u8) -> ir::StackSlot {
         let slotdata = StackSlotData::new(StackSlotKind::ExplicitSlot, size, align as u8);
-        (self.f.builder.create_sized_stack_slot(slotdata), size)
+        self.f.builder.create_sized_stack_slot(slotdata)
     }
 
     fn append_rptr_if_needed(
@@ -529,9 +565,18 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     ) -> Option<(ir::StackSlot, Value)> {
         match self.ctx.structs.ftype(ret) {
             FType::Struct(PassBy::Pointer, mk) => {
+                let size_t = self.ctx.size_t();
                 let (size, align) = self.ctx.structs.size_and_align_of(&mk.into());
-                let (slot, _) = self.create_struct_stack_slot(size, align as u8);
-                let ptr = self.ins().stack_addr(types::I64, slot, 0);
+                let slot = self.create_struct_stack_slot(size, align as u8);
+                let ptr = self.ins().stack_addr(size_t, slot, 0);
+                params.push(ptr);
+                Some((slot, ptr))
+            }
+            FType::ArrayPointer(len, inner) => {
+                let size_t = self.ctx.size_t();
+                let (size, _, align) = self.ctx.structs.size_and_align_of_array(&inner, len);
+                let slot = self.create_struct_stack_slot(size, align as u8);
+                let ptr = self.ins().stack_addr(size_t, slot, 0);
                 params.push(ptr);
                 Some((slot, ptr))
             }
@@ -553,10 +598,12 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
     fn transmute(&mut self, v: lir::Value, ty: &MonoType) -> VEntry {
         match self.value_to_entry(v) {
-            VEntry::StructFlat(_, _)
+            VEntry::ArrayFlat(..)
+            | VEntry::ArrayStackPointer(..)
+            | VEntry::StructFlat(_, _)
             | VEntry::StructStackPointer(_, _)
             | VEntry::StructHeapPointer(_, _) => {
-                unimplemented!("transmuting structs");
+                unimplemented!("transmuting structs or arrays");
             }
             VEntry::Scalar(scalar) => self.cast_value_to_scalar(ty, scalar.point),
             VEntry::SumPayloadStackPointer { ptr, .. } => self.cast_value_to_scalar(ty, ptr),
@@ -679,21 +726,27 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         self.ins().symbol_value(size_t, data)
     }
 
-    fn fields_to_sstable(&mut self, fields: &Map<layout::Field, VEntry>, dst: &mut Vec<Value>) {
-        for (_, entry) in fields {
+    fn fields_to_sstable(&mut self, fields: &[VEntry], dst: &mut Vec<Value>) {
+        for entry in fields {
             match entry {
                 // All scalars are assumed to be S_Stable
                 VEntry::Scalar(scalar) => dst.push(scalar.point),
                 VEntry::ZST => {}
 
                 VEntry::StructFlat(_, inner_fields) => {
-                    self.fields_to_sstable(inner_fields, dst);
+                    self.fields_to_sstable(inner_fields.as_slice(), dst);
+                }
+                VEntry::ArrayFlat(_, elems) => {
+                    self.fields_to_sstable(elems.as_slice(), dst);
                 }
 
                 // A `Struct` which we've implicitly been passing around as a pointer.
                 &VEntry::StructHeapPointer(inner, ptr)
                 | &VEntry::StructStackPointer(inner, ptr) => {
-                    self.deref_struct_into_raw(&mut |scalar| dst.push(scalar.point), inner, ptr);
+                    self.deref_struct_into_raw(&mut |point| dst.push(point), inner, ptr);
+                }
+                VEntry::ArrayStackPointer(inner, len, ptr) => {
+                    self.deref_array_into_raw(&mut |point| dst.push(point), inner, *len, *ptr)
                 }
 
                 &VEntry::SumPayloadStackPointer { largest, ptr } => {

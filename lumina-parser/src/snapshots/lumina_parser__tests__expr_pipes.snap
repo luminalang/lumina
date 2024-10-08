@@ -1,5 +1,5 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"1 >> add 2 >> (\\\\n -> add n << 3)\"; format! (\"\\n{}\", ast) }"
+expression: "{ \"1 . add 2 . (\\\\n -> add n . 3)\"; format! (\"\\n{}\", ast) }"
 ---
-1 >> add 2 >> ((\n -> add n << 3))
+1 . add 2 . ((\n -> add n . 3))

@@ -138,12 +138,13 @@ expr!(
 expr!(expr_multiple_accessors, "a.b.c.d");
 expr!(expr_multiple_accessors_as_param, "f a.b.c.d 0");
 
-expr!(expr_pipe_lambda, "1 >> (\\n -> 1)");
-expr!(expr_pipe_eval_of_lambda, "1 >> ((\\ -> 0))");
-expr!(expr_pipe_eval_of_fn, "1 >> (f 0)");
-expr!(expr_pipe_fn, "1 >> f 0");
-expr!(expr_pipe_left, "f 0 << f 1 << f 2");
-expr!(expr_pipes, "1 >> add 2 >> (\\n -> add n << 3)");
+expr!(expr_pipe_lambda, "1 . (\\n -> 1)");
+expr!(expr_pipe_eval_of_lambda, "1 . ((\\ -> 0))");
+expr!(expr_pipe_eval_of_fn, "1 . (f 0)");
+expr!(expr_pipe_fn, "1 . f 0");
+expr!(expr_pipe_left, "f 0 . f 1 . f 2");
+expr!(expr_pipes, "1 . add 2 . (\\n -> add n . 3)");
+expr!(expr_pipe_field, "a.b . c.d . e");
 
 expr!(expr_pass_fn, "map #inc");
 expr!(expr_pass_partial, "map #(add 1)");

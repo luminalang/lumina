@@ -3,8 +3,8 @@ use crate::lir::{MonoType, MonoTypeKey};
 use crate::prelude::*;
 use cranelift::codegen::ir::ArgumentPurpose;
 use cranelift::prelude::*;
-use either::Either;
 use lumina_collections::{map_key_impl, KeysIter};
+use lumina_typesystem::ConstValue;
 use std::cell::RefCell;
 
 pub struct Structs<'a> {
@@ -49,6 +49,7 @@ pub enum FieldV {
 pub enum FType<T> {
     StructZST,
     Struct(PassBy, MonoTypeKey),
+    ArrayPointer(u64, MonoType),
     Scalar(Scalar<T>),
 }
 
@@ -169,6 +170,12 @@ impl<'a> Structs<'a> {
                 f(Scalar::fn_pointer(ptr(), typing))
             }
             MonoType::Float => f(Scalar::direct(types::F64)),
+            MonoType::Const(v) => f(Scalar::direct(self.const_to_ty(v))),
+            MonoType::Array(len, inner) => {
+                for _ in 0..*len {
+                    self.scalars_of_ty(&**inner, f);
+                }
+            }
             MonoType::Unreachable => unreachable!(),
             MonoType::Monomorphised(key) => self.iter_s_stable_fields(*key, f),
         }
@@ -204,6 +211,17 @@ impl<'a> Structs<'a> {
     fn get_or_make(&mut self, key: MonoTypeKey) -> &Struct {
         self.make(key);
         self.get(key)
+    }
+
+    pub fn arr_pass_mode(&self, len: u64, inner: &MonoType) -> PassBy {
+        if len > 2 {
+            return PassBy::Pointer;
+        }
+
+        match self.c_class_of(inner) {
+            SystemVClass::Integer => PassBy::Value,
+            SystemVClass::Memory => PassBy::Pointer,
+        }
     }
 
     // Whether this struct should be passed as inlined scalars or is implicitly put behind a pointer.
@@ -265,6 +283,15 @@ impl<'a> Structs<'a> {
             MonoType::Int(intsize) => (1, intsize.bytes() as u32),
             MonoType::Pointer(_) | MonoType::FnPointer(_, _) => (1, ptr()),
             MonoType::Float => (1, 8),
+            MonoType::Const(const_) => match const_ {
+                lumina_typesystem::ConstValue::Usize(_) => (1, self.records.pointer_bits / 8),
+                lumina_typesystem::ConstValue::Bool(_) => (1, 1),
+                lumina_typesystem::ConstValue::Char(_) => (1, 4),
+            },
+            MonoType::Array(len, inner) => {
+                let (c, s) = self.variant_inline_size(inner);
+                (c * *len as usize, s * *len as u32)
+            }
             MonoType::Monomorphised(inner) => self.variant_inline_size_of_struct(*inner),
             MonoType::Unreachable => unreachable!(),
         }
@@ -427,6 +454,7 @@ impl<'a> Structs<'a> {
     fn calculate_align_of(&mut self, ty: &MonoType) -> u32 {
         match ty {
             MonoType::Monomorphised(key) => self.get_or_make(*key).align,
+            MonoType::Array(_, inner) => self.calculate_align_of(inner),
             _ => {
                 let (size, align) = self.size_and_align_of(ty);
                 assert_eq!(size, align);
@@ -483,8 +511,14 @@ impl<'a> Structs<'a> {
                 let end_padding = (align - offset % align) % align;
                 let size = offset + end_padding;
 
-                // trace!("size={size} align={align} for {mk}");
-
+                (size, align)
+            }
+            MonoType::Const(const_) => {
+                let size = self.const_to_ty(const_).bytes();
+                (size, size)
+            }
+            MonoType::Array(len, inner) => {
+                let (size, _, align) = self.size_and_align_of_array(inner, *len);
                 (size, align)
             }
             MonoType::Int(intsize) => (intsize.bytes() as u32, intsize.bytes() as u32),
@@ -498,6 +532,16 @@ impl<'a> Structs<'a> {
         (size, align)
     }
 
+    fn const_to_ty(&self, const_: &ConstValue) -> Type {
+        match const_ {
+            lumina_typesystem::ConstValue::Usize(_) => {
+                Type::int(self.records.pointer_bits as u16).unwrap()
+            }
+            lumina_typesystem::ConstValue::Bool(_) => types::I8,
+            lumina_typesystem::ConstValue::Char(_) => types::I32,
+        }
+    }
+
     pub fn size_and_align_of_field(&self, f: &FieldV) -> (u32, u32) {
         match f {
             FieldV::Flat(ty) => self.size_and_align_of(ty),
@@ -507,6 +551,19 @@ impl<'a> Structs<'a> {
                 (ptr, ptr)
             }
         }
+    }
+
+    pub fn size_and_align_of_array(&self, inner: &MonoType, times: u64) -> (u32, u32, u32) {
+        let (elem_size, align) = self.size_and_align_of(inner);
+
+        if times == 0 {
+            return (0, elem_size, 0);
+        }
+
+        let padding = (align - elem_size % align) % align;
+
+        let total_size = (elem_size + padding) * times as u32;
+        (total_size, elem_size, align)
     }
 
     pub fn size_of(&self, ty: &MonoType) -> u32 {
@@ -564,12 +621,30 @@ impl<'a> Structs<'a> {
         }
     }
 
+    fn c_class_of_array(&self, len: u64, inner: &MonoType) -> SystemVClass {
+        let eightbyte = self.records.pointer_bits / 8;
+        let (size, _, _) = self.size_and_align_of_array(inner, len);
+
+        if size > (eightbyte * 8) {
+            SystemVClass::Memory
+        } else {
+            let class = self.c_class_of(inner);
+
+            if size > (eightbyte * 2) {
+                SystemVClass::Memory
+            } else {
+                class
+            }
+        }
+    }
+
     fn c_class_of(&self, ty: &MonoType) -> SystemVClass {
         match ty {
             MonoType::FnPointer(_, _) | MonoType::Pointer(_) | MonoType::Int(_) => {
                 SystemVClass::Integer
             }
             MonoType::Monomorphised(mk) => self.c_class_of_aggregate(*mk),
+            MonoType::Array(len, inner) => self.c_class_of_array(*len, inner),
             _ => panic!("unsupported type in repr C struct: {ty:?}"),
         }
     }
@@ -634,23 +709,43 @@ pub enum ScalarKind {
     AutoBoxed(MonoType),
 }
 
+pub enum ScalarOrAggr<T> {
+    Scalar(Scalar<T>),
+    Mono(MonoTypeKey),
+    Array(u64, MonoType),
+}
+
+impl<T> ScalarOrAggr<T> {
+    pub fn map_scalar<U>(self, f: impl FnOnce(Scalar<T>) -> Scalar<U>) -> ScalarOrAggr<U> {
+        match self {
+            ScalarOrAggr::Scalar(scalar) => ScalarOrAggr::Scalar(f(scalar)),
+            ScalarOrAggr::Mono(mk) => ScalarOrAggr::Mono(mk),
+            ScalarOrAggr::Array(len, inner) => ScalarOrAggr::Array(len, inner),
+        }
+    }
+}
+
 impl<'a> Structs<'a> {
-    pub fn scalar_or_struct(&self, ty: &MonoType) -> Either<Scalar<Type>, MonoTypeKey> {
+    pub fn scalar_or_aggr(&self, ty: &MonoType) -> ScalarOrAggr<Type> {
         let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
 
         match ty {
             MonoType::Int(intsize) => {
                 let ty = Type::int(intsize.bits() as u16).unwrap();
-                Either::Left(Scalar::direct(ty))
+                ScalarOrAggr::Scalar(Scalar::direct(ty))
             }
-            MonoType::Pointer(inner) => Either::Left(Scalar::pointer(size_t, &**inner)),
+            MonoType::Pointer(inner) => ScalarOrAggr::Scalar(Scalar::pointer(size_t, &**inner)),
+            MonoType::Const(const_) => {
+                ScalarOrAggr::Scalar(Scalar::direct(self.const_to_ty(const_)))
+            }
             MonoType::FnPointer(params, ret) => {
                 let typing = self.records.get_abi_typing(params, ret);
-                Either::Left(Scalar::fn_pointer(size_t, typing))
+                ScalarOrAggr::Scalar(Scalar::fn_pointer(size_t, typing))
             }
-            MonoType::Float => Either::Left(Scalar::direct(types::F64)),
+            MonoType::Float => ScalarOrAggr::Scalar(Scalar::direct(types::F64)),
             MonoType::Unreachable => unreachable!(),
-            MonoType::Monomorphised(mk) => Either::Right(*mk),
+            MonoType::Array(len, inner) => ScalarOrAggr::Array(*len, (**inner).clone()),
+            MonoType::Monomorphised(mk) => ScalarOrAggr::Mono(*mk),
         }
     }
 
@@ -662,22 +757,29 @@ impl<'a> Structs<'a> {
         let normal = AbiParam::new;
 
         for ty in typing.params.values() {
+            let struct_purpose = |conv, size| match conv {
+                isa::CallConv::AppleAarch64
+                | isa::CallConv::SystemV
+                | isa::CallConv::WindowsFastcall => {
+                    // let size = self.size_of(&mk.into());
+                    ArgumentPurpose::StructArgument(size)
+                }
+                _ => ArgumentPurpose::Normal,
+            };
+
             // self.ty_to_abi_param(false, ty, &mut sig);
             match self.ftype(ty) {
                 FType::StructZST => {}
+                FType::ArrayPointer(len, inner) => {
+                    let (size, _, _) = self.size_and_align_of_array(&inner, len);
+                    let purpose = struct_purpose(sig.call_conv, size);
+                    sig.params.push(AbiParam::special(size_t, purpose));
+                }
                 FType::Struct(PassBy::Value, mk) => self
                     .iter_s_stable_fields(mk, &mut |scalar| sig.params.push(normal(scalar.point))),
                 FType::Struct(PassBy::Pointer, mk) => {
-                    let purpose = match sig.call_conv {
-                        isa::CallConv::AppleAarch64
-                        | isa::CallConv::SystemV
-                        | isa::CallConv::WindowsFastcall => {
-                            let size = self.size_of(&mk.into());
-                            ArgumentPurpose::StructArgument(size)
-                        }
-                        _ => ArgumentPurpose::Normal,
-                    };
-
+                    let size = self.size_of(&mk.into());
+                    let purpose = struct_purpose(sig.call_conv, size);
                     sig.params.push(AbiParam::special(size_t, purpose));
                 }
                 FType::Scalar(scalar) => sig.params.push(normal(scalar.point)),
@@ -686,6 +788,10 @@ impl<'a> Structs<'a> {
 
         match self.ftype(&typing.ret) {
             FType::StructZST => {}
+            FType::ArrayPointer(..) => {
+                sig.params
+                    .push(AbiParam::special(size_t, ArgumentPurpose::StructReturn));
+            }
             FType::Struct(PassBy::Value, mk) => {
                 self.iter_s_stable_fields(mk, &mut |scalar| sig.returns.push(normal(scalar.point)))
             }
@@ -700,10 +806,11 @@ impl<'a> Structs<'a> {
     }
 
     pub fn ftype(&self, ty: &MonoType) -> FType<Type> {
-        match self.scalar_or_struct(ty) {
-            Either::Left(scalar) => FType::Scalar(scalar),
-            Either::Right(mk) if self.is_zst(mk) => FType::StructZST,
-            Either::Right(mk) => FType::Struct(self.pass_mode(mk), mk),
+        match self.scalar_or_aggr(ty) {
+            ScalarOrAggr::Scalar(scalar) => FType::Scalar(scalar),
+            ScalarOrAggr::Mono(mk) if self.is_zst(mk) => FType::StructZST,
+            ScalarOrAggr::Mono(mk) => FType::Struct(self.pass_mode(mk), mk),
+            ScalarOrAggr::Array(len, inner) => FType::ArrayPointer(len, inner),
         }
     }
 

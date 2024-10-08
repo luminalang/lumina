@@ -3,7 +3,8 @@ use ast::Entity;
 use lumina_parser as parser;
 use lumina_parser::func::{Header as FuncHeader, Typing as ParserTyping};
 use lumina_typesystem::{
-    Constraint, Forall, Generic, GenericKind, IType, Inference, IntSize, Static, TEnv, Ty, Var,
+    ConstGeneric, Constraint, Forall, Generic, GenericKind, IType, Inference, IntSize, Static,
+    TEnv, Ty, Var,
 };
 use lumina_util::{Spanned, Tr};
 use smallvec::SmallVec;
@@ -100,19 +101,18 @@ impl<'s> TypeEnvInfo<'s> {
         self.iforalls.pop().unwrap().0
     }
 
-    pub fn declare_generic(&mut self, name: &'s str, plen: usize) -> Option<Generic> {
+    pub fn declare_generic(&mut self, name: &'s str, con: Option<ConstGeneric>) -> Option<Generic> {
         match self.iforalls.last_mut() {
             Some((forall, kind)) => {
                 let gkey = forall.push(name);
+                forall[gkey].const_ = con;
                 let generic = Generic::new(gkey, *kind);
-                forall[generic.key].set_params(plen);
                 return Some(generic);
             }
             None => {
                 if let Some((forall, kind)) = self.cforalls.last_mut() {
                     let gkey = forall.push(name);
                     let generic = Generic::new(gkey, *kind);
-                    forall[generic.key].set_params(plen);
                     return Some(generic);
                 }
             }
@@ -208,7 +208,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                 let elems = self.tys(elems);
                 Ty::tuple(elems)
             }
-            parser::Type::List(inner) => {
+            parser::Type::List(inner, arr) => {
                 if inner.len() != 1 {
                     self.ast
                         .sources
@@ -219,8 +219,15 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
 
                     Ty::poison()
                 } else {
-                    let params = self.tys(inner);
-                    Ty::list(self.type_info.list, params)
+                    let inner = self.ty(inner[0].as_ref());
+                    match arr {
+                        parser::ListLength::Name(name) => self
+                            .resolve_array_generic(*name)
+                            .map(|generic| Ty::const_array(generic, inner))
+                            .unwrap_or_else(Ty::poison),
+                        parser::ListLength::Exact(len) => Ty::array(**len, inner),
+                        parser::ListLength::None => Ty::list(self.type_info.list, vec![inner]),
+                    }
                 }
             }
             parser::Type::Poison => Ty::poison(),
@@ -237,6 +244,23 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
         F: FromIterator<Tr<Ty<T>>>,
     {
         ty.iter().map(|ty| self.ty_spanned(ty.as_ref())).collect()
+    }
+
+    pub fn resolve_array_generic(&mut self, name: Tr<&'s str>) -> Option<Generic> {
+        let usize_ = IntSize::new(false, self.default_int_size);
+        self.try_generic(*name, 0, Some(ConstGeneric::Int(usize_)))
+            .inspect_err(|_| {
+                self.ast
+                    .sources
+                    .error("unknown const generic")
+                    .m(self.module)
+                    .eline(
+                        name.span,
+                        format!("no const generic named {name} declared in scope"),
+                    )
+                    .emit()
+            })
+            .ok()
     }
 
     fn defined<T: FromVar>(
@@ -329,7 +353,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
                     return self.forbid_params(span, int, params);
                 }
             }
-            [name] => match self.try_generic(name, params.len()) {
+            [name] => match self.try_generic(name, params.len(), None) {
                 Ok(gen) => {
                     return self.forbid_params(span, Ty::Generic(gen), params);
                 }
@@ -437,26 +461,35 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
             .emit();
     }
 
-    fn try_generic(&mut self, name: &'s str, plen: usize) -> Result<Generic, GenericError> {
+    pub fn try_generic(
+        &mut self,
+        name: &'s str,
+        plen: usize,
+        const_: Option<ConstGeneric>,
+    ) -> Result<Generic, GenericError> {
         for (forall, kind) in self.type_info.iforalls.iter_mut().rev() {
             if let Some(generic) = forall.find(name) {
-                check_param_len(&mut forall[generic].params, plen)
-                    .map_err(GenericError::InconsistentHKT)?;
-                return Ok(Generic::new(generic, *kind));
+                return if plen != 0 {
+                    Err(GenericError::InconsistentHKT(plen))
+                } else {
+                    Ok(Generic::new(generic, *kind))
+                };
             }
         }
 
         for (forall, kind) in self.type_info.cforalls.iter_mut().rev() {
             if let Some(generic) = forall.find(name) {
-                check_param_len(&mut forall[generic].params, plen)
-                    .map_err(GenericError::InconsistentHKT)?;
-                return Ok(Generic::new(generic, *kind));
+                return if plen != 0 {
+                    Err(GenericError::InconsistentHKT(plen))
+                } else {
+                    Ok(Generic::new(generic, *kind))
+                };
             }
         }
 
         // Implicitly declare if able
-        if name.len() == 1 && self.type_info.declare_generics {
-            if let Some(generic) = self.type_info.declare_generic(name, plen) {
+        if name.len() == 1 && self.type_info.declare_generics && plen == 0 {
+            if let Some(generic) = self.type_info.declare_generic(name, const_) {
                 return Ok(generic);
             }
         }
@@ -500,18 +533,9 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
     }
 }
 
-fn check_param_len(exp: &mut usize, got: usize) -> Result<(), usize> {
-    if *exp == usize::MAX {
-        *exp = got;
-        Ok(())
-    } else {
-        (got == *exp).then_some(()).ok_or(*exp)
-    }
-}
-
 pub struct NotATrait;
 
-enum GenericError {
+pub enum GenericError {
     NotFound,
     InconsistentHKT(usize),
 }

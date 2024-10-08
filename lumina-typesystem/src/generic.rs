@@ -1,4 +1,4 @@
-use super::Ty;
+use super::{IntSize, Ty};
 use derive_more::{Index, IndexMut};
 use itertools::Itertools;
 use lumina_key as key;
@@ -29,17 +29,21 @@ pub enum GenericKind {
 #[derive(Clone)]
 pub struct GenericData<'s, T> {
     pub name: &'s str,
-    pub params: usize,
     pub trait_constraints: Vec<Constraint<T>>,
+    pub const_: Option<ConstGeneric>,
+}
+
+/// Mainly exists so we can have proper array types in the stdlib
+#[derive(Clone, Copy)]
+pub enum ConstGeneric {
+    Int(IntSize),
+    Bool,
+    Char,
 }
 
 impl<'s, T> GenericData<'s, T> {
     pub fn new(name: &'s str) -> Self {
-        Self { name, params: 0, trait_constraints: vec![] }
-    }
-
-    pub fn set_params(&mut self, n: usize) {
-        self.params = n;
+        Self { name, const_: None, trait_constraints: vec![] }
     }
 
     pub fn map<'o, O>(
@@ -49,7 +53,7 @@ impl<'s, T> GenericData<'s, T> {
     ) -> GenericData<'o, O> {
         GenericData {
             name: rename(self.name),
-            params: self.params,
+            const_: self.const_,
             trait_constraints: self
                 .trait_constraints
                 .iter()
@@ -206,6 +210,16 @@ impl<'s, T: fmt::Display> fmt::Display for Forall<'s, T> {
                 "∀{} . ",
                 self.generics.keys().format_with(" ", |key, f| f(&key))
             )
+        }
+    }
+}
+
+impl fmt::Display for ConstGeneric {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ConstGeneric::Int(size) => write!(f, "const {size}"),
+            ConstGeneric::Bool => write!(f, "const bool"),
+            ConstGeneric::Char => write!(f, "const char"),
         }
     }
 }

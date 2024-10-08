@@ -151,16 +151,30 @@ impl<'a> Debugger<'a> {
             }
             Entry::Copy(v) => assert_eq!(exp, &self.lir.type_of_value(self.mfunc, *v)),
             Entry::Construct(values) => match exp {
+                MonoType::Array(len, inner) => {
+                    assert_eq!(*len, values.len() as u64);
+                    for p in values {
+                        assert_eq!(self.lir.type_of_value(self.mfunc, *p), **inner);
+                    }
+                }
                 MonoType::Monomorphised(mk) => match &self.lir.mono.types[*mk] {
                     MonoTypeData::Record { fields, .. } => self.params(values, fields.values()),
                     MonoTypeData::DynTraitObject { vtable, .. } => {
                         self.params(values, [&MonoType::u8_pointer(), vtable].into_iter());
                     }
                     _ => {
-                        panic!("invalid type for construct: {exp:?}")
+                        panic!("invalid type for construct: {}", self.tfmt(exp))
                     }
                 },
-                ty => panic!("cannot construct non-record: {}", self.tfmt(ty)),
+                _ => panic!("cannot construct non-record: {}", self.tfmt(exp)),
+            },
+            Entry::Replicate(value, times) => match exp {
+                MonoType::Array(len, inner) => {
+                    assert_eq!(times, len);
+                    assert_eq!(self.lir.type_of_value(self.mfunc, *value), **inner);
+                }
+                MonoType::Monomorphised(_) => todo!(),
+                _ => panic!("cannot replicate non-aggregate: {}", self.tfmt(exp)),
             },
             Entry::TagFromSum { of } => {
                 let ty = self.lir.type_of_value(self.mfunc, *of);
@@ -188,6 +202,20 @@ impl<'a> Debugger<'a> {
                         field => panic!("{field}: dyn objects only have two fields"),
                     },
                     other => panic!("field of non-record: {other:?}"),
+                }
+            }
+            Entry::Indice { of, indice } => {
+                let of_ty = self.lir.type_of_value(self.mfunc, *of);
+                let indice_ty = self.lir.type_of_value(self.mfunc, *indice);
+
+                self.as_int(&indice_ty, "array/tuple indice");
+
+                match of_ty {
+                    MonoType::Array(_, inner) => {
+                        assert_eq!(&*inner, exp);
+                    }
+                    MonoType::Monomorphised(_) => {}
+                    _ => panic!("indice of non- array or tuple"),
                 }
             }
             Entry::CastFromSum { of } => {

@@ -1,4 +1,4 @@
-use super::{func, r#impl, select, AnnotatedPath, Expr, Parser, T};
+use super::{func, r#impl, select, AnnotatedPath, Expr, ListLength, Parser, T};
 use itertools::Itertools;
 use lumina_key as key;
 use lumina_key::Map;
@@ -56,7 +56,7 @@ pub enum Type<'a> {
     Pointer(Box<Tr<Self>>),
     Defined(AnnotatedPath<'a>, Vec<Tr<Self>>),
     Tuple(Vec<Tr<Self>>),
-    List(Vec<Tr<Self>>),
+    List(Vec<Tr<Self>>, ListLength<'a>),
     Poison,
 }
 
@@ -266,7 +266,7 @@ impl<'a> Parser<'a> {
             |parser| parser.type_with_params().map(|a| a),
             Some(Type::Poison.tr(start)),
         )
-        .map(|(elems, end)| Type::List(elems).tr(start.extend(end)))
+        .map(|(elems, ender, end)| Type::List(elems, ender).tr(start.extend(end)))
     }
 
     fn pointer(
@@ -579,7 +579,7 @@ impl<'a> fmt::Display for Type<'a> {
             Type::Defined(path, params) if params.is_empty() => path.fmt(f),
             Type::Defined(path, params) => write!(f, "({} {})", path, params.iter().format(" ")),
             Type::Tuple(elems) => write!(f, "({})", elems.iter().format(", ")),
-            Type::List(elems) => write!(f, "[{}]", elems.iter().format(", ")),
+            Type::List(elems, length) => write!(f, "[{}{length}]", elems.iter().format(", ")),
         }
     }
 }

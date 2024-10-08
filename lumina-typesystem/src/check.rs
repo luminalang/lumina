@@ -1,7 +1,7 @@
 use super::{
-    tenv::FieldMismatch, Compatibility as C, Constraint, Container, Forall, GetForall, GetImplData,
-    IType, ImplIndex, IntConstraint, IntSize, Static, Transformer, Ty, Type, TypeSystem, Upgrade,
-    Var,
+    tenv::FieldMismatch, Compatibility as C, ConstGeneric, ConstValue, Constraint, Container,
+    Forall, GetForall, GetImplData, IType, ImplIndex, IntConstraint, IntSize, Static, Transformer,
+    Ty, Type, TypeSystem, Upgrade, Var,
 };
 use key::M;
 use lumina_key as key;
@@ -59,6 +59,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
             (Ty::Int(g), Ty::Int(e)) => g == e,
             (Ty::Simple("poison"), _) | (_, Ty::Simple("poison")) => true,
             (Ty::Simple(g), Ty::Simple(e)) => g == e,
+            (Ty::Const(g), Ty::Const(e)) => g == e,
             (Ty::Special(g), Ty::Special(e)) if g == e => true,
             (Ty::Special(var), exp) => self.unify_into_var(u, false, *var, exp),
             (got, Ty::Special(var)) => self.unify_into_var(u, true, *var, got),
@@ -152,14 +153,18 @@ impl<'a, 's> TypeSystem<'a, 's> {
         }
 
         if let Some(intcon) = self.env.vars[var].int_constraint {
-            let span = self.env.vars[var].span;
-            let size = intcon.to_default_type(self.default_int_size);
-            let ty = Ty::Int(size).tr(span);
-            self.env.assign(var, ty.clone());
-            return Some(ty);
+            return Some(self.default_int(var, intcon));
         }
 
         None
+    }
+
+    fn default_int(&mut self, var: Var, con: IntConstraint) -> Tr<IType> {
+        let span = self.env.vars[var].span;
+        let size = con.to_default_type(self.default_int_size);
+        let ty = Ty::Int(size).tr(span);
+        self.env.assign(var, ty.clone());
+        ty
     }
 
     pub fn call_as_function(
@@ -186,9 +191,7 @@ impl<'a, 's> TypeSystem<'a, 's> {
                         Some(intcon) => {
                             // To improve the error of trying to call an int, force inference to
                             // avoid showing tvars in user-facing messages.
-                            let intsize = intcon.to_default_type(self.default_int_size);
-                            let ty = IType::Int(intsize).tr(vdata.span);
-                            self.env.vars[*var].assignment = Some(ty);
+                            self.default_int(*var, intcon);
                             None
                         }
                         None => {
@@ -203,6 +206,36 @@ impl<'a, 's> TypeSystem<'a, 's> {
                                 Some(Ty::closure(params.clone(), ret.clone()).tr(span));
 
                             Some((Container::Closure, params, ret))
+                        }
+                    },
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Checks whether the type is a tuple which can be access via an index.
+    ///
+    /// Returns the type resulting from accessing the index on the specified tuple.
+    pub fn check_tuple_index(&mut self, ty: Tr<&IType>, i: usize) -> Option<IType> {
+        match ty.value {
+            Ty::Container(Container::Tuple, elems) => Some(elems[i].clone()),
+            Ty::Special(var) => {
+                if let Some((_, fty)) = self.try_get_field_if_is_field(*var) {
+                    return self.check_tuple_index((&fty).tr(ty.span), i);
+                }
+
+                let vdata = &self.env.vars[*var];
+                match vdata.assignment.clone() {
+                    Some(vty) => self.check_tuple_index((&vty.value).tr(ty.span), i),
+                    None => match vdata.int_constraint {
+                        Some(intcon) => {
+                            self.default_int(*var, intcon);
+                            None
+                        }
+                        None => {
+                            // TODO: to infer this properly; we'd need a tuple constraint.
+                            None
                         }
                     },
                 }
@@ -228,6 +261,7 @@ pub enum ConstraintError {
     },
     RecordNotFound(Vec<Tr<String>>),
     RecordAmbigous(Span, Vec<M<key::Record>>, Vec<Tr<String>>),
+    BadConstType(ConstGeneric, Tr<Type>),
 }
 
 impl<'e, 's> TypeSystem<'e, 's> {
@@ -253,6 +287,16 @@ impl<'e, 's> TypeSystem<'e, 's> {
                 if let Some(iconstr) = vdata.int_constraint {
                     if let Err(err) = self.check_int_constraint(vdata.span, &ty, iconstr) {
                         errors.push(err);
+                    }
+                }
+
+                // Check const constraint
+                if let Some(con) = vdata.const_constraint {
+                    match (con, &ty) {
+                        (ConstGeneric::Int(_), Ty::Const(ConstValue::Usize(_))) => {}
+                        (ConstGeneric::Bool, Ty::Const(ConstValue::Bool(_))) => {}
+                        (ConstGeneric::Char, Ty::Const(ConstValue::Char(_))) => {}
+                        _ => errors.push(ConstraintError::BadConstType(con, ty.clone().tr(tyspan))),
                     }
                 }
 

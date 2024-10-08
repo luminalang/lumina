@@ -33,6 +33,10 @@ pub enum DecTree<Tail> {
         elems: usize,
         next: Box<Self>,
     },
+    Array {
+        elems: u64,
+        next: Box<Self>,
+    },
 
     // Branching chains
     Sum {
@@ -121,6 +125,7 @@ impl<Tail> DecTree<Tail> {
             DecTree::Wildcard { next, .. } => next.for_each_tail_mut(f),
             DecTree::Record { next, .. } => next.for_each_tail_mut(f),
             DecTree::Tuple { next, .. } => next.for_each_tail_mut(f),
+            DecTree::Array { next, .. } => next.for_each_tail_mut(f),
             DecTree::Sum { next, .. } => next.for_each_tail_mut(f),
             DecTree::Bools(next) => next.for_each_tail_mut(f),
             DecTree::Opaque { next, .. } => next.for_each_tail_mut(f),
@@ -142,6 +147,7 @@ impl<Tail> DecTree<Tail> {
             DecTree::Wildcard { next, .. } => next.for_each_tail(f),
             DecTree::Record { next, .. } => next.for_each_tail(f),
             DecTree::Tuple { next, .. } => next.for_each_tail(f),
+            DecTree::Array { next, .. } => next.for_each_tail(f),
             DecTree::Sum { next, .. } => next.for_each_tail(f),
             DecTree::Bools(next) => next.for_each_tail(f),
             DecTree::Opaque { next, .. } => next.for_each_tail(f),
@@ -225,6 +231,13 @@ impl<Tail: std::fmt::Display> std::fmt::Display for DecTree<Tail> {
                 write!(
                     f,
                     "tuple(len = {elems})\n  {}",
+                    next.to_string().lines().format("\n  ")
+                )
+            }
+            DecTree::Array { elems, next } => {
+                write!(
+                    f,
+                    "array(len = {elems})\n  {}",
                     next.to_string().lines().format("\n  ")
                 )
             }

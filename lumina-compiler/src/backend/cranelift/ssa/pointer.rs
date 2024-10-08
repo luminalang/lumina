@@ -1,4 +1,5 @@
 use super::*;
+use layout::ScalarOrAggr;
 
 impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     pub(super) fn alloc(&mut self, ty: &MonoType) -> VEntry {
@@ -33,18 +34,23 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
     pub(super) fn deref_type(&mut self, ptr: Value, offset: ByteOffset, ty: &MonoType) -> VEntry {
         match self.deref_scalar_or_getm(ptr, offset, ty) {
-            Either::Left(scalar) => VEntry::Scalar(scalar),
-            Either::Right(mk) => {
-                // Create a pointer to the inner struct
-                let innerp = if offset == ByteOffset(0) {
-                    ptr
-                } else {
-                    self.ins().iadd_imm(ptr, offset.0 as i64)
-                };
-
-                // Let's try just not dereferencing it here and let it happen lazily
+            ScalarOrAggr::Scalar(scalar) => VEntry::Scalar(scalar),
+            ScalarOrAggr::Mono(mk) => {
+                let innerp = self.ptr_offset(ptr, offset);
                 VEntry::StructStackPointer(mk, innerp)
             }
+            ScalarOrAggr::Array(len, inner) => {
+                let innerp = self.ptr_offset(ptr, offset);
+                VEntry::ArrayStackPointer(inner, len, innerp)
+            }
+        }
+    }
+
+    pub(super) fn ptr_offset(&mut self, ptr: Value, offset: ByteOffset) -> Value {
+        if offset == ByteOffset(0) {
+            ptr
+        } else {
+            self.ins().iadd_imm(ptr, offset.0 as i64)
         }
     }
 
@@ -53,8 +59,8 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         ptr: Value,
         offset: ByteOffset,
         ty: &MonoType,
-    ) -> Either<Scalar<Value>, MonoTypeKey> {
-        self.ctx.structs.scalar_or_struct(ty).map_left(|scalar| {
+    ) -> ScalarOrAggr<Value> {
+        self.ctx.structs.scalar_or_aggr(ty).map_scalar(|scalar| {
             let point = self.deref_scalar(ptr, offset, scalar.point);
             Scalar::new(point, scalar.kind)
         })
@@ -67,7 +73,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
     pub(super) fn deref_struct_into_raw(
         &mut self,
-        for_each: &mut dyn FnMut(Scalar<Value>),
+        for_each: &mut dyn FnMut(Value),
         key: MonoTypeKey,
         ptr: Value,
     ) {
@@ -76,36 +82,62 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             let offset = self.ctx.structs.offset_of(key, field);
 
             match self.ctx.structs.get(key).fields[field].clone() {
-                FieldV::Flat(fty) => match self.deref_scalar_or_getm(ptr, offset, &fty) {
-                    Either::Left(scalar) => for_each(scalar),
-                    Either::Right(field_mk) => {
-                        // Create a pointer to the inner struct
-                        let innerp = self.ins().iadd_imm(ptr, offset.0 as i64);
-
-                        // Then dereference fields from that inner struct
-                        self.deref_struct_into_raw(for_each, field_mk, innerp);
-                    }
-                },
+                FieldV::Flat(fty) => self.deref_flat_into_raw(for_each, ptr, offset, &fty),
 
                 // Since we're reading this from a pointer, we know that the sum pointer is S_Stable.
-                FieldV::SumPayloadPointer { sum } => {
-                    let largest = self.ctx.structs.sum_payload_alloca_size(sum);
+                FieldV::SumPayloadPointer { .. } => {
                     let point = self.deref_scalar(ptr, offset, size_t);
-                    let scalar = Scalar { point, kind: ScalarKind::HeapSumPointer { largest } };
-                    for_each(scalar);
+                    for_each(point);
                 }
                 FieldV::SumPayloadInline(clty) => {
                     let point = self.deref_scalar(ptr, offset, clty);
-                    let scalar = Scalar { point, kind: ScalarKind::SumInline(clty) };
-                    for_each(scalar);
+                    for_each(point);
                 }
 
-                FieldV::AutoBoxed(to) => {
+                FieldV::AutoBoxed(_) => {
                     let point = self.deref_scalar(ptr, offset, size_t);
-                    let scalar = Scalar::pointer(point, &to.into());
-                    for_each(scalar);
+                    for_each(point);
                 }
             }
+        }
+    }
+
+    fn deref_flat_into_raw(
+        &mut self,
+        for_each: &mut dyn FnMut(Value),
+        ptr: Value,
+        offset: ByteOffset,
+        fty: &MonoType,
+    ) {
+        match self.deref_scalar_or_getm(ptr, offset, &fty) {
+            ScalarOrAggr::Scalar(scalar) => for_each(scalar.point),
+            ScalarOrAggr::Mono(field_mk) => {
+                let innerp = self.ptr_offset(ptr, offset);
+                // Then dereference fields from that inner struct
+                self.deref_struct_into_raw(for_each, field_mk, innerp);
+            }
+            ScalarOrAggr::Array(len, inner) => {
+                let innerp = self.ptr_offset(ptr, offset);
+                self.deref_array_into_raw(for_each, &inner, len, innerp);
+            }
+        }
+    }
+
+    pub(super) fn deref_array_into_raw(
+        &mut self,
+        for_each: &mut dyn FnMut(Value),
+        inner: &MonoType,
+        len: u64,
+        ptr: Value,
+    ) {
+        let (_, elem_size, align) = self.ctx.structs.size_and_align_of_array(inner, len);
+
+        let mut offset = ByteOffset(0);
+
+        for _ in 0..len {
+            self.deref_flat_into_raw(for_each, ptr, offset, inner);
+            let padding = (align - offset.0 % align) % align;
+            offset.0 += elem_size + padding;
         }
     }
 
@@ -115,6 +147,10 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             &VEntry::StructStackPointer(key, src) | &VEntry::StructHeapPointer(key, src) => {
                 let (size, align) = self.ctx.structs.size_and_align_of(&key.into());
                 self.memcpy_struct(dst, src, size as u64, align as u8);
+            }
+            VEntry::ArrayStackPointer(inner, len, src) => {
+                let (size, _, align) = self.ctx.structs.size_and_align_of_array(inner, *len);
+                self.memcpy_struct(dst, *src, size as u64, align as u8)
             }
             &VEntry::SumPayloadStackPointer { largest, ptr } => {
                 // TODO: I think this can cause undefined behavior as we do not know the exact
@@ -126,11 +162,33 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 self.ins().store(MemFlags::trusted(), nptr, dst, 0);
             }
             VEntry::StructFlat(key, flat) => self.write_fields_to_structptr(*key, &flat, dst),
+            VEntry::ArrayFlat(inner, flat) => self.write_elems_to_arrayptr(inner, flat, dst),
             VEntry::Scalar(scalar) => {
                 self.ins().store(MemFlags::trusted(), scalar.point, dst, 0);
             }
 
             VEntry::ZST => {}
+        }
+    }
+
+    pub(super) fn write_elems_to_arrayptr(
+        &mut self,
+        inner: &MonoType,
+        flat: &[VEntry],
+        ptr: Value,
+    ) {
+        let (_, elem_size, align) = self
+            .ctx
+            .structs
+            .size_and_align_of_array(inner, flat.len() as u64);
+
+        let mut offset = 0;
+
+        for entry in flat {
+            let ptr = self.ptr_offset(ptr, ByteOffset(offset));
+            self.write_entry_to_ptr(ptr, entry);
+            let padding = (align - offset % align) % align;
+            offset += elem_size + padding;
         }
     }
 
@@ -142,11 +200,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     ) {
         for (field, entry) in fields.iter() {
             let offset = self.ctx.structs.offset_of(key, field);
-            let ptr = if offset != ByteOffset(0) {
-                self.ins().iadd_imm(ptr, offset.0 as i64)
-            } else {
-                ptr
-            };
+            let ptr = self.ptr_offset(ptr, offset);
             self.write_entry_to_ptr(ptr, entry);
         }
     }

@@ -45,6 +45,54 @@ impl<'a, 's> Verify<'a, 's> {
         ok
     }
 
+    pub fn check_tuple_index(&mut self, object: Tr<&IType>, i: Tr<usize>) -> IType {
+        let env = &mut self.tenvs[self.current.fkey];
+        let fields = &self.field_lookup[self.current.fkey.0];
+        let mut ts = self.hir.type_system(env, self.target, fields);
+        match ts.check_tuple_index(object, *i) {
+            Some(ty) => ty,
+            None => {
+                self.error("type mismatch")
+                    .m(self.module())
+                    .eline(
+                        i.span,
+                        format!(
+                            "attempted to access tuple field of non-tuple type {}",
+                            self.ty_formatter().fmt(object.value)
+                        ),
+                    )
+                    .emit();
+
+                IType::poison()
+            }
+        }
+    }
+
+    pub fn type_check_same<T, F>(
+        &mut self,
+        name: &'static str,
+        ivar: Option<Tr<lumina_typesystem::Var>>,
+        elems: &[T],
+        mut f: F,
+    ) -> Tr<IType>
+    where
+        F: FnMut(&mut Self, &T) -> Tr<IType>,
+    {
+        let mut checker = SameAsCheck::new(name);
+
+        for elem in elems {
+            let ty = f(self, elem);
+            checker.include(self.type_system(), ty);
+        }
+
+        if let Some(ivar) = ivar {
+            // Include the inner typevar to make sure it's assigned post this point
+            checker.include(self.type_system(), ivar.map(IType::infer));
+        }
+
+        checker.finalize(self.module(), self.ty_formatter(), &self.hir.sources)
+    }
+
     pub fn type_check_and_emit_application(
         &mut self,
         span: Span,

@@ -1,5 +1,6 @@
 use super::*;
 use crate::{TRAIT_OBJECT_DATA_FIELD, VTABLE_FIELD};
+use lumina_typesystem::ConstValue;
 use ssa::Value;
 use std::cmp::Ordering;
 
@@ -86,6 +87,58 @@ impl<'a> FuncLower<'a> {
                     .collect();
 
                 self.ssa().construct(sorted, ty)
+            }
+            mir::Expr::Array(elems, len, inner) => {
+                let inner =
+                    to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(inner);
+                let arrayt = MonoType::Array(*len, Box::new(inner));
+
+                if elems.len() as u64 != *len {
+                    let value = self.expr_to_value(&elems[0]);
+                    assert_eq!(elems.len(), 1);
+                    self.ssa().replicate(value, *len, arrayt)
+                } else {
+                    let values = elems
+                        .iter()
+                        .map(|expr| self.expr_to_value(expr))
+                        .collect::<Vec<Value>>();
+
+                    self.ssa().construct(values, arrayt)
+                }
+            }
+            mir::Expr::GenericArray(elem, generic, inner) => {
+                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
+                let &MonoType::Const(ConstValue::Usize(len)) = morph.generic(*generic) else {
+                    panic!("non-const-usize given as instantiation of const generic");
+                };
+                let inner = morph.apply(inner);
+                let arrayt = MonoType::Array(len, Box::new(inner));
+
+                let value = self.expr_to_value(elem);
+                self.ssa().replicate(value, len, arrayt)
+            }
+            mir::Expr::ArrayLen(arr) => {
+                let arr = self.expr_to_value(arr);
+                let MonoType::Array(len, _) = self.type_of_value(arr) else {
+                    panic!("not an array: {arr}");
+                };
+                Value::Int(len as i128, self.lir.target.uint())
+            }
+            mir::Expr::TupleAccess(tuple, i) => {
+                let tuple = self.expr_to_value(tuple);
+                let key = self.type_of_value(tuple).as_key();
+                let field = key::Field(*i as u32);
+                let fty = self.types()[key].as_record()[field].clone();
+                self.ssa().field(tuple, key, field, fty)
+            }
+            mir::Expr::ArrayAccess(params) => {
+                let i = self.expr_to_value(&params[0]);
+                let arr = self.expr_to_value(&params[1]);
+                let ty = match self.type_of_value(arr) {
+                    MonoType::Array(_, inner) => *inner,
+                    _ => panic!("not an array"),
+                };
+                self.ssa().indice(arr, i, ty)
             }
             mir::Expr::Int(intsize, n) => Value::Int(*n, *intsize),
             mir::Expr::Bool(b) => Value::Int(*b as u8 as i128, IntSize::new(false, 8)),

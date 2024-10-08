@@ -1,4 +1,6 @@
-use super::{select, AnnotatedPath, CurlyInit, Fields, Parser, Pattern, Token, Type, T};
+use super::{
+    select, AnnotatedPath, CurlyInit, Fields, ListLength, Parser, Pattern, Token, Type, T,
+};
 use itertools::Itertools;
 use lumina_util::{Highlighting, Identifier, Span, Spanned, Tr};
 use std::fmt;
@@ -14,6 +16,7 @@ pub enum Expr<'a> {
 
     DotPipe(Box<[Tr<Self>; 2]>),             // a . b
     FieldAccess(Box<Tr<Self>>, Tr<&'a str>), // a.b
+    TupleAccess(Box<Tr<Self>>, Tr<usize>),   // a.0
 
     Lambda(Vec<Tr<Pattern<'a>>>, Vec<Tr<Self>>, Box<Tr<Expr<'a>>>),
     CallExpr(Box<Tr<Self>>, Vec<Tr<Self>>),
@@ -25,7 +28,7 @@ pub enum Expr<'a> {
 
     CastAs(Box<Tr<Self>>, Tr<Type<'a>>),
 
-    List(Vec<Tr<Self>>),
+    List(Vec<Tr<Self>>, ListLength<'a>),
     Tuple(Vec<Tr<Self>>),
     Record {
         init: Box<CurlyInit<'a>>,
@@ -267,6 +270,15 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         }
     }
 
+    fn preceeded_by(&self, span: Span, any: &str) -> bool {
+        let at = self.parser.at(span.indice - 1);
+        any.chars().any(|c| c == at)
+    }
+    fn followed_by(&self, span: Span, any: &str) -> bool {
+        let at = self.parser.at(span.indice + span.length as u32);
+        any.chars().any(|c| c == at)
+    }
+
     fn expr_followup(&mut self, left: Tr<Expr<'a>>) -> Option<Tr<Expr<'a>>> {
         match self.parser.lexer.peek() {
             (T::Operator, span) => {
@@ -295,48 +307,18 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                 }
             }
 
-            (T::Dot, span) => {
+            (T::Dot, span) if self.followed_by(span, " \t\n") => {
                 self.parser.progress();
+                let rhs = self.expr_without_followup()?;
+                let span = left.span.extend(rhs.span);
+                let expr = Expr::DotPipe(Box::new([left, rhs])).tr(span);
+                self.expr_followup(expr)
+            }
 
-                // even if we edge-case `).a` here; we still have `#.ident` that needs to be edge-cased
-                let lspan = left.span;
-
-                match self.parser.take(Span::new(span.indice - 1, 1)) {
-                    " " | "\n" | "\t" => {
-                        let rhs = self.expr_without_followup()?;
-                        let span = lspan.extend(rhs.span);
-                        let expr = Expr::DotPipe(Box::new([left, rhs])).tr(span);
-                        self.expr_followup(expr)
-                    }
-                    "#" => unreachable!("this needs to be edge-cased in the parser for `Pass`"),
-                    _ => match self.parser.lexer.peek() {
-                        (T::Path, span) => {
-                            self.parser.progress();
-                            let expr = match Identifier::parse(self.parser.take(span))
-                                .unwrap()
-                                .as_name()
-                            {
-                                Some(name) => Expr::FieldAccess(Box::new(left), name.tr(span)),
-                                None => {
-                                    self.parser.err_expected_but_got(
-                                        span,
-                                        "a field name",
-                                        "a path",
-                                    );
-                                    Expr::Poison
-                                }
-                            };
-
-                            self.expr_followup(expr.tr(lspan.extend(span)))
-                        }
-                        (t, span) => {
-                            self.parser
-                                .err_expected_but_got(span, "a field name", t.describe());
-
-                            Some(Expr::Poison.tr(span))
-                        }
-                    },
-                }
+            (T::Dot, span) if !self.preceeded_by(span, " \t\n") => {
+                self.parser.progress();
+                self.expr_path_field_accessors(true, left)
+                    .and_then(|expr| self.expr_followup(expr))
             }
 
             (T::As, _) => {
@@ -403,7 +385,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         params: bool,
     ) -> Option<Tr<Expr<'a>>> {
         match self.parser.lexer.peek() {
-            (T::Dot, _) if self.parser.take(apath.span.end()) == "." => {
+            (T::Dot, span) if !self.preceeded_by(span, " \t\n") => {
                 self.parser.progress();
                 let aspan = apath.span;
                 return self.expr_path_field_accessors(true, Expr::Call(apath, vec![]).tr(aspan));
@@ -420,8 +402,10 @@ impl<'p, 'a> ExprParser<'p, 'a> {
     }
 
     fn expr_path_field_accessors(&mut self, init: bool, lhs: Tr<Expr<'a>>) -> Option<Tr<Expr<'a>>> {
-        match self.parser.lexer.peek() {
-            (T::Path, span) => match Identifier::parse(self.parser.take(span)).unwrap().as_name() {
+        let (kind, span) = self.parser.lexer.peek();
+
+        match kind {
+            T::Path => match Identifier::parse(self.parser.take(span)).unwrap().as_name() {
                 None => {
                     self.parser
                         .err_expected_but_got(span, "field name", "a path");
@@ -431,22 +415,34 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                     self.parser.progress();
                     let span = lhs.span.extend(span);
                     let expr = Expr::FieldAccess(Box::new(lhs), name.tr(span)).tr(span);
-
-                    match self.parser.lexer.peek() {
-                        (T::Dot, _) if self.parser.take(span.end()) == "." => {
-                            self.parser.progress();
-                            return self.expr_path_field_accessors(false, expr);
-                        }
-                        _ => Some(expr),
-                    }
+                    self.expr_path_field_accessors_next(expr)
                 }
             },
-            (t, span) if init => {
+            T::Int => {
+                self.parser.progress();
+                let n = self.parser.take(span).parse::<usize>().unwrap();
+                let span = lhs.span.extend(span);
+                let expr = Expr::TupleAccess(Box::new(lhs), n.tr(span));
+                self.expr_path_field_accessors_next(expr.tr(span))
+            }
+
+            _ if init => {
                 self.parser
-                    .err_expected_but_got(span, "field name", t.describe());
+                    .err_expected_but_got(span, "field name", kind.describe());
+
                 return Some(Expr::Poison.tr(span));
             }
             _ => return Some(lhs),
+        }
+    }
+
+    fn expr_path_field_accessors_next(&mut self, lhs: Tr<Expr<'a>>) -> Option<Tr<Expr<'a>>> {
+        match self.parser.lexer.peek() {
+            (T::Dot, span) if !self.preceeded_by(span, " \t\n") => {
+                self.parser.progress();
+                return self.expr_path_field_accessors(true, lhs);
+            }
+            _ => Some(lhs),
         }
     }
 
@@ -494,10 +490,10 @@ impl<'p, 'a> ExprParser<'p, 'a> {
     }
 
     fn expr_list(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
-        let (elems, end) =
+        let (elems, ender, end) =
             self.parser
                 .shared_list(span, Parser::expr, Some(Expr::Poison.tr(span)))?;
-        Some(Expr::List(elems).tr(span.extend(end)))
+        Some(Expr::List(elems, ender).tr(span.extend(end)))
     }
 
     fn expr_if(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
@@ -731,6 +727,7 @@ impl<'a> fmt::Display for Expr<'a> {
             }
             Expr::Group(inner) => write!(f, "{op}{inner}{cp}"),
             Expr::FieldAccess(object, field) => write!(f, "{object}.{field}"),
+            Expr::TupleAccess(object, i) => write!(f, "{object}.{i}"),
             Expr::DotPipe(elems) => write!(f, "{} . {}", elems[0], elems[1]),
             Expr::Operators { init, ops } => write!(
                 f,
@@ -825,7 +822,7 @@ impl<'a> fmt::Display for Expr<'a> {
             Expr::Pass(inner) => write!(f, "{}{}", "#".symbol(), inner),
             Expr::PassFptr(fkey) => write!(f, "{}{}", "#!".symbol(), fkey),
             Expr::Do(exprs) => write!(f, "{do_} {} {then_} {}", exprs[0], exprs[1]),
-            Expr::List(elems) => write!(f, "{ol}{}{cl}", elems.iter().format(", ")),
+            Expr::List(elems, length) => write!(f, "{ol}{}{length}{cl}", elems.iter().format(", ")),
             Expr::Tuple(elems) => write!(f, "{op}{}{cp}", elems.iter().format(", ")),
             Expr::CastAs(v, ty) => write!(f, "{op}{v} {} {ty}{cp}", "as".keyword()),
             Expr::Poison => "???".fmt(f),

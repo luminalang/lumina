@@ -2,8 +2,9 @@ use super::{Callable, Expr, FuncLower, IType, TypeAnnotation};
 use crate::prelude::*;
 use ast::{Entity, Mod, NFunc};
 use lumina_parser as parser;
-use lumina_typesystem::Var;
+use lumina_typesystem::{Generic, Var};
 use lumina_util::{Highlighting, Identifier, ParamFmt};
+use parser::ListLength;
 use std::fmt;
 use tracing::trace;
 
@@ -19,9 +20,10 @@ pub enum Pattern<'s> {
         Vec<(Tr<&'s str>, key::Bind, Tr<Self>)>,
     ),
     Tuple(Vec<Tr<Self>>),
-    // List(Vec<Tr<Self>>),
     Cons(Box<[Tr<Self>; 2]>, Var),
     Nil(Var),
+    Array(Vec<Tr<Self>>, Tr<u64>),
+    GenericArray(Vec<Tr<Self>>, Tr<Generic>),
     Bool(bool),
     String(Vec<StringPattern<'s>>),
     Poison,
@@ -79,7 +81,17 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 }
             }
             parser::Pattern::Fields(init, fields) => self.pat_record(pat.span, init, fields),
-            parser::Pattern::List(elems) => self.pat_list(pat.span, elems),
+            parser::Pattern::List(elems, ListLength::Exact(len)) => {
+                let elems = self.pats(elems);
+                Pattern::Array(elems, *len)
+            },
+            parser::Pattern::List(elems, ListLength::Name(name)) => {
+                let elems = self.pats(elems);
+                self.to_type_lower().resolve_array_generic(*name)
+                    .map(|generic| Pattern::GenericArray(elems, generic.tr(name.span)))
+                    .unwrap_or(Pattern::Poison)
+            },
+            parser::Pattern::List(elems, ListLength::None) => self.pat_list(pat.span, elems),
             parser::Pattern::Tuple(elems) => {
                 let params = self.pats(elems);
                 Pattern::Tuple(params)
@@ -338,26 +350,26 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             .iter()
             .filter_map(|field| match field {
                 parser::Field::Punned(names) => {
-                    let last = names[names.len()-1];
+                    let last = names[names.len() - 1];
                     let value = parser::Pattern::Name(Identifier::from_raw(*last), vec![]);
                     self.pat_handle_assignment(names, None, (&value).tr(last.span))
-                },
+                }
                 parser::Field::Value(v) => {
                     #[rustfmt::skip]
                     warn!("failing in HIR instead of parser due to outdated parser implementation of records");
-                    self.ast.sources
+
+                    self.ast
+                        .sources
                         .error("syntax error")
                         .m(self.module)
                         .eline(v.span, "expected field name")
                         .emit();
 
                     None
-                },
-                parser::Field::Assigned {
-                    field_path,
-                    bind,
-                    value,
-                } => self.pat_handle_assignment(field_path, *bind, value.as_ref()),
+                }
+                parser::Field::Assigned { field_path, bind, value } => {
+                    self.pat_handle_assignment(field_path, *bind, value.as_ref())
+                }
             })
             .collect()
     }
@@ -452,6 +464,10 @@ impl<'s> fmt::Display for Pattern<'s> {
                 )
             }
             Pattern::Tuple(elems) => write!(f, "({})", elems.iter().format(", ")),
+            Pattern::Array(elems, len) => write!(f, "[{}; {len}]", elems.iter().format(", ")),
+            Pattern::GenericArray(elems, generic) => {
+                write!(f, "[{}; {generic}]", elems.iter().format(", "))
+            }
             Pattern::Cons(elems, _) => write!(f, "Cons {} {}", elems[0], elems[1]),
             Pattern::Nil(_) => "Nil".fmt(f),
             Pattern::Bool(b) => b.fmt(f),

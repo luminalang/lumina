@@ -9,7 +9,7 @@ use lumina_util::{Spanned, Tr};
 use std::fmt;
 
 /// Transforms types by mapping generics to new types
-#[derive(Clone, PartialEq, Eq, Hash, new)]
+#[derive(Clone, PartialEq, Eq, new)]
 pub struct GenericMapper<T> {
     pub generics: Vec<(Generic, Ty<T>)>,
     pub self_: Option<Ty<T>>,
@@ -180,6 +180,7 @@ impl<'a, 's> ForeignInst<'a, 's, Inference> {
                 let con = DirectRecursion(&self.mapper).transform_constraint(con);
                 self.env.vars[var].trait_constraints.push(con);
             }
+            self.env.vars[var].const_constraint = gdata.const_;
         }
         self
     }
@@ -192,6 +193,7 @@ impl<'a, 's> ForeignInst<'a, 's, Inference> {
                 let con = (&self.mapper).transform_constraint(con);
                 self.env.vars[var].trait_constraints.push(con);
             }
+            self.env.vars[var].const_constraint = gdata.const_;
         }
         self
     }
@@ -218,6 +220,7 @@ pub trait Transformer<T> {
         match ty {
             Ty::Container(container, params) => Ty::Container(*container, self.transforms(params)),
             Ty::Int(size) => Ty::Int(*size),
+            Ty::Const(const_) => Ty::Const(const_.clone()),
             Ty::Simple("self") => self.self_(),
             Ty::Simple(name) => Ty::Simple(*name),
             Ty::Special(spec) => self.special(spec),

@@ -70,6 +70,17 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                     self.merge_params(next, pelems)
                 )
             }
+            DecTree::Array { next, elems } => {
+                expected!(Pattern::Array(pelems, len) if **len == *elems =>
+                    {
+                        if pelems.len() == 1 && *elems != 1 {
+                            unimplemented!("replicated array comparison in pattern");
+                        } else {
+                            self.merge_params(next, pelems)
+                        }
+                    }
+                )
+            }
             DecTree::Record { record, .. } if *record == self.string => {
                 panic!("string type given as Ty::defined instead of Ty::string");
             }
@@ -369,6 +380,10 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
             }
             DecTree::Tuple { elems, next } => {
                 let generated = vec![hir::Pattern::Any.tr(span); *elems];
+                self.merge_params(next, &generated)
+            }
+            DecTree::Array { elems, next } => {
+                let generated = vec![hir::Pattern::Any.tr(span); *elems as usize];
                 self.merge_params(next, &generated)
             }
             DecTree::Sum { sum, next, .. } => {

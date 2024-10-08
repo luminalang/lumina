@@ -33,7 +33,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             None => ssize,
         };
 
-        let (slot, _) = self.create_struct_stack_slot(size, align as u8);
+        let slot = self.create_struct_stack_slot(size, align as u8);
         let size_t = self.ctx.size_t();
 
         for (field, value) in values.iter().enumerate() {

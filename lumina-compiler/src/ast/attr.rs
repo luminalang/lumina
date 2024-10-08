@@ -277,7 +277,7 @@ fn num<'a, 's>(expr: Tr<&'a parser::Expr<'s>>) -> Result<u32, Error> {
 
 fn strings<'s>(exprs: &[Tr<parser::Expr<'s>>], exp: &'static str) -> Result<Vec<&'s str>, Error> {
     match exprs {
-        [Tr { value: parser::Expr::List(elems), .. }] => strings(elems, exp),
+        [Tr { value: parser::Expr::List(elems, _), .. }] => strings(elems, exp),
         _ => Ok(exprs
             .iter()
             .map(|expr| string(expr.as_ref(), exp))

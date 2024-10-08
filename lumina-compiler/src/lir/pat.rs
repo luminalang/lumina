@@ -92,6 +92,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         match tree {
             DecTree::Record { next, .. } => self.record(on, next),
             DecTree::Tuple { next, .. } => self.tuple(on, next),
+            DecTree::Array { next, .. } => self.array(on, next),
             DecTree::List { next, ty } => self.list(on, ty, next),
             DecTree::Ints { intsize, next } => self.ints(on, *intsize, next),
             DecTree::Bools(next) => self.bools(on, next),
@@ -226,6 +227,21 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                 let ty = self.f.types()[mk].as_record()[field].clone();
                 self.ssa().field(on, mk, field, ty)
             })
+            .collect();
+
+        self.constructors.push(constructor);
+
+        self.next(next)
+    }
+
+    fn array(&mut self, on: Value, next: &mir::DecTree) {
+        let (len, ity) = self.f.type_of_value(on).as_array();
+
+        let size_t = IntSize::new(false, self.f.lir.target.int_size());
+
+        let constructor = (0..len as usize)
+            .map(|i| Value::Int(i as i128, size_t))
+            .map(|i| self.ssa().indice(on, i, ity.clone()))
             .collect();
 
         self.constructors.push(constructor);

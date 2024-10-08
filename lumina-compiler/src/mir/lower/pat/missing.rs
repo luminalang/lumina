@@ -9,6 +9,7 @@ pub enum MissingPattern {
     Wildcard,
     Const(&'static str),
     Tuple(VecDeque<Self>),
+    Array(VecDeque<Self>),
     Sum(M<key::Sum>, key::Variant, VecDeque<Self>),
     Record(M<key::Record>, VecDeque<Self>),
 
@@ -108,6 +109,12 @@ impl<'a> MissingGeneration<'a> {
                 .tree(next)
                 .into_iter()
                 .map(|params| construct(MissingPattern::Tuple, *elems, params))
+                .collect(),
+
+            DecTree::Array { elems, next } => self
+                .tree(next)
+                .into_iter()
+                .map(|params| construct(MissingPattern::Array, *elems as usize, params))
                 .collect(),
 
             // TODO: edge-case high counts
@@ -265,6 +272,7 @@ impl<'a> fmt::Display for MissingFormatter<'a> {
             MissingPattern::Const(b) => b.fmt(f),
             MissingPattern::Tuple(elems) if elems.is_empty() => "_".fmt(f),
             MissingPattern::Tuple(elems) => write!(f, "({})", self.params(", ", false, elems)),
+            MissingPattern::Array(elems) => write!(f, "[{}]", self.params(", ", false, elems)),
             MissingPattern::Sum(sum, var, params) => {
                 let name = (self.name_of_var)(*sum, *var);
 

@@ -129,10 +129,10 @@ impl<'s> Lookups<'s> {
         module: key::Module,
         visibility: Visibility,
         name: &'s str,
-        type_: key::Record,
+        type_: M<key::Record>,
         field: key::Field,
     ) {
-        let m = Mod { visibility, module, key: (type_, field) };
+        let m = Mod { visibility, module: type_.0, key: (type_.1, field) };
         self.modules[module]
             .accessors
             .entry(name)

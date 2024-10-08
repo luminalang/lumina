@@ -2,6 +2,8 @@
 
 ## Compiling from scratch
 
+You need the nightly version of the Rust compiler. 
+
 Clone the repository
 
 ```bash

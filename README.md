@@ -65,14 +65,14 @@ All of this is written in a non-platform-agnostic way and needs to be changed to
  - [ ] Trait-overloaded key-value syntactic sugar for hashmaps
  - [ ] Higher kinded types (monomorphised)
  - [ ] Documentation Generator
- - [ ] `@[repr "C"]` attributes and FFI-binding generator
+ - [x] `@[repr "C"]` attributes and FFI-binding generator
  - [ ] Incremental compilation
  - [ ] Self-hosted compiler reimplementation
  - [ ] Stack backtraces and runtime debugging
  - [ ] Code formatter
  - [ ] Syntax files for various text editors
  - [ ] trait specialisation
- - [ ] Inline smaller sum-type data payloads for increased performance
- - [ ] Natively aligned data for improved performance
- - [ ] Stable public function symbols
+ - [x] Inline smaller sum-type data payloads for increased performance
+ - [x] Natively aligned data for improved performance
+ - [x] Stable public function symbols
  - [ ] Deduplicate ReadOnlyBytes

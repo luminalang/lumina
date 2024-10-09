@@ -11,6 +11,14 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         VEntry::Scalar(Scalar::pointer(ptr, &*ty))
     }
 
+    pub(super) fn alloca(&mut self, ty: &MonoType) -> VEntry {
+        let (size, align) = self.ctx.structs.size_and_align_of(ty);
+        let slot = self.create_struct_stack_slot(size, align as u8);
+        let size_t = self.ctx.size_t();
+        let addr = self.ins().stack_addr(size_t, slot, 0);
+        VEntry::Scalar(Scalar::pointer(addr, ty))
+    }
+
     pub(super) fn write_ptr(&mut self, ptr: lir::Value, value: lir::Value) {
         let v = self.value_to_entry(value);
         match self.value_to_entry(ptr) {

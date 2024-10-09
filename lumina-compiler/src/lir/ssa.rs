@@ -378,6 +378,11 @@ impl Blocks {
         let ty = MonoType::Pointer(Box::new(objty));
         self.assign(entry, ty)
     }
+    pub fn alloca(&mut self, ty: MonoType) -> Value {
+        let entry = Entry::Alloca;
+        let ty = MonoType::Pointer(Box::new(ty));
+        self.assign(entry, ty)
+    }
     pub fn dealloc(&mut self, ptr: Value, ty: MonoType) {
         let entry = Entry::Dealloc { ptr };
         self.assign(entry, ty);
@@ -567,6 +572,7 @@ pub enum Entry {
 
     // Pointer Manipulation
     Alloc,
+    Alloca,
     Dealloc {
         ptr: Value,
     },
@@ -694,6 +700,7 @@ impl fmt::Display for Entry {
             Entry::BitAnd([left, right]) => write!(f, "{} {left} {right}", "bit-and".keyword()),
             Entry::BitNot(v) => write!(f, "{} {v}", "bit-not".keyword()),
             Entry::Alloc => write!(f, "{}", "alloc".keyword(),),
+            Entry::Alloca => write!(f, "{}", "alloca".keyword()),
             Entry::Dealloc { ptr } => write!(f, "{} {ptr}", "dealloc".keyword()),
             Entry::Field { of, field, .. } => write!(f, "{} {of} {field}", "field".keyword(),),
             Entry::Indice { of, indice } => write!(f, "{} {of} {indice}", "indice".keyword()),

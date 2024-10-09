@@ -522,6 +522,7 @@ impl<'a, 's> Verify<'a, 's> {
                 .try_get_known_type(*var)
                 .and_then(|ty| self.module_of_type(ty.as_ref())),
             IType::Container(Container::Pointer, _) => self.hir.lookups.find_lib("std", "ptr"),
+            IType::Container(Container::Array, _) => self.hir.lookups.find_lib("std", "array"),
             IType::Int(size) => self.hir.lookups.find_lib("std", "math").and_then(|math| {
                 match self
                     .hir
@@ -736,6 +737,11 @@ impl<'a, 's> Verify<'a, 's> {
                 "size_of" => {
                     // TODO: 32-bit
                     InstCall::Local(Ty::Int(self.target.uint()).tr(span))
+                }
+                "alloca" => {
+                    let any = Ty::infer(self.vars().var(span));
+                    let ptr = IType::pointer(any);
+                    InstCall::LocalCall(span, vec![], ptr, Container::FnPointer)
                 }
                 "unreachable" => InstCall::Local(Ty::infer(self.vars().var(span)).tr(span)),
                 "transmute" => {

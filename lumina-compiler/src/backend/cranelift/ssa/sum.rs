@@ -139,7 +139,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         match struct_.fields.as_slice() {
             [] => Map::new(),
             [x] => match x {
-                FieldV::Flat(ty) => [self.cast_value_to_scalar(ty, inline)].into(),
+                FieldV::Flat(ty) => [self.cast_value_from_scalar(ty, inline)].into(),
                 FieldV::AutoBoxed(inner) => [VEntry::Scalar(Scalar::new(
                     inline,
                     ScalarKind::AutoBoxed((*inner).into()),

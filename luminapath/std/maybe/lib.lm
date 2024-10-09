@@ -1,4 +1,5 @@
 use std:math [Compare [..]]
+use std:io [crash]
 
 pub type Maybe a = Just a | Nothing
 
@@ -16,6 +17,11 @@ pub fn map f m as fn(a -> b), Maybe a -> Maybe b =
   match m
   | Just a  -> Just (f a)
   | Nothing -> Nothing
+
+pub fn or_crash msg m as string, Maybe a -> a =
+  match m
+  | Just a -> a
+  | Nothing -> crash msg
 
 when a can Compare
 impl Compare for Maybe a

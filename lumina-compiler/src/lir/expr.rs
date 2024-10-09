@@ -148,6 +148,23 @@ impl<'a> FuncLower<'a> {
                 let params = self.params_to_values(elems);
                 self.elems_to_tuple(params)
             }
+            mir::Expr::PointerToArrayCast(expr, len, inner) => {
+                let inner =
+                    to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(inner);
+                let v = self.expr_to_value(expr);
+                self.ssa()
+                    .transmute(v, MonoType::Array(*len, Box::new(inner)))
+            }
+            mir::Expr::PointerToGenericArrayCast(expr, generic, inner) => {
+                let mut morph = to_morphization!(self.lir, self.mir, &mut self.current.tmap);
+                let inner = morph.apply(inner);
+                let &MonoType::Const(ConstValue::Usize(len)) = morph.generic(*generic) else {
+                    panic!("invalid const-value given as generic");
+                };
+                let v = self.expr_to_value(expr);
+                self.ssa()
+                    .transmute(v, MonoType::Array(len, Box::new(inner)))
+            }
             mir::Expr::PointerToPointerCast(expr, to) | mir::Expr::ToPointerCast(expr, _, to) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(to);
                 let v = self.expr_to_value(&expr);
@@ -235,6 +252,10 @@ impl<'a> FuncLower<'a> {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
                 let intsize = self.lir.target.int_size();
                 self.ssa().size_of(ty, IntSize::new(false, intsize))
+            }
+            mir::Expr::Alloca(ty) => {
+                let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
+                self.ssa().alloca(ty)
             }
             mir::Expr::Cmp(cmp, params) => {
                 let params = [

@@ -34,7 +34,7 @@ pub struct GenericData<'s, T> {
 }
 
 /// Mainly exists so we can have proper array types in the stdlib
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ConstGeneric {
     Int(IntSize),
     Bool,

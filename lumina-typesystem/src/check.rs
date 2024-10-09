@@ -296,6 +296,8 @@ impl<'e, 's> TypeSystem<'e, 's> {
                         (ConstGeneric::Int(_), Ty::Const(ConstValue::Usize(_))) => {}
                         (ConstGeneric::Bool, Ty::Const(ConstValue::Bool(_))) => {}
                         (ConstGeneric::Char, Ty::Const(ConstValue::Char(_))) => {}
+                        (con, Ty::Generic(generic))
+                            if lhs_forall(generic.kind)[generic.key].const_ == Some(con) => {}
                         _ => errors.push(ConstraintError::BadConstType(con, ty.clone().tr(tyspan))),
                     }
                 }

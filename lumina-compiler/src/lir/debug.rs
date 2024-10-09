@@ -285,6 +285,7 @@ impl<'a> Debugger<'a> {
                 assert_eq!(exp, ty);
             }
             Entry::Alloc { .. } => {}
+            Entry::Alloca => {}
             Entry::Dealloc { ptr } => {
                 let ty = self.lir.type_of_value(self.mfunc, *ptr);
                 self.as_ptr(&ty);

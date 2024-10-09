@@ -3,8 +3,8 @@ use crate::prelude::*;
 use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY, STRINGABLE_FROM_RAW_PARTS};
 use ast::NFunc;
 use lumina_typesystem::{
-    Constraint, Container, Generic, GenericKind, GenericMapper, IntSize, Static, Transformer, Ty,
-    Type, Var,
+    ConstValue, Constraint, Container, Generic, GenericKind, GenericMapper, IntSize, Static,
+    Transformer, Ty, Type, Var,
 };
 use lumina_util::Highlighting;
 use std::fmt;
@@ -28,6 +28,8 @@ pub enum Expr {
     ReadOnly(M<key::ReadOnly>),
 
     PointerToPointerCast(Box<Self>, Type),
+    PointerToArrayCast(Box<Self>, u64, Type),
+    PointerToGenericArrayCast(Box<Self>, Generic, Type),
     ToPointerCast(Box<Self>, IntSize, Type),
     FromPointerCast(Box<Self>, IntSize),
     IntCast(Box<Self>, IntSize, IntSize),
@@ -40,6 +42,7 @@ pub enum Expr {
     Write(Box<[Self; 2]>),
     ReflectTypeOf(Type),
     SizeOf(Type),
+    Alloca(Type),
     Unreachable(Type),
 
     Cmp(&'static str, Box<[Expr; 2]>),
@@ -164,6 +167,12 @@ impl<'a, 's> Lower<'a, 's> {
                         assert_eq!(*name, "self");
                         let ty = self.finalizer().transform(&ty);
                         Expr::SizeOf(ty)
+                    }
+                    "alloca" => {
+                        let (name, ty) = tanot.for_entity[0].clone();
+                        assert_eq!(*name, "self");
+                        let ty = self.finalizer().transform(&ty);
+                        Expr::Alloca(ty)
                     }
                     _ => panic!("unknown builtin: {name}"),
                 },
@@ -362,6 +371,8 @@ impl<'a, 's> Lower<'a, 's> {
             (Ty::Int(fromsize), Ty::Int(tosize)) => Expr::IntCast(expr, *fromsize, tosize),
             (Ty::Int(intsize), Ty::Simple("f64")) => Expr::ToFloatCast(expr, *intsize),
             (Type::Simple("f64"), Type::Int(intsize)) => Expr::FromFloatCast(expr, intsize),
+
+            // T as DynTrait
             (
                 _,
                 Type::Container(
@@ -375,17 +386,38 @@ impl<'a, 's> Lower<'a, 's> {
                     .push((ty_of_expr.clone(), con));
                 Expr::ObjectCast(expr, ty_of_expr.value, trait_, params)
             }
+
+            // int as *a
             (Type::Int(intsize), Type::Container(Container::Pointer, mut inner)) => {
                 Expr::ToPointerCast(expr, *intsize, inner.pop().unwrap())
             }
+
+            // *a as int
             (Type::Container(Container::Pointer, _), Type::Int(intsize)) => {
                 Expr::FromPointerCast(expr, intsize)
             }
 
+            // *a as *b
             (
                 Type::Container(Container::Pointer, _),
                 Type::Container(Container::Pointer, mut inner),
             ) => Expr::PointerToPointerCast(expr, inner.pop().unwrap()),
+
+            // *a as [a; n]
+            (
+                Type::Container(Container::Pointer, pinner),
+                Type::Container(Container::Array, mut params),
+            ) if pinner[0] == params[0] => {
+                let inner = params.remove(0);
+                match params.remove(0) {
+                    Type::Generic(generic) => Expr::PointerToGenericArrayCast(expr, generic, inner),
+                    Type::Const(ConstValue::Usize(len)) => {
+                        Expr::PointerToArrayCast(expr, len, inner)
+                    }
+                    _ => panic!("invalid type parameter to array"),
+                }
+            }
+
             (_, to) => {
                 self.errors.push(FinError::InvalidCast(ty_of_expr, to));
                 Expr::Poison
@@ -634,6 +666,12 @@ impl fmt::Display for Expr {
                     )
                 }
             },
+            Expr::PointerToArrayCast(expr, len, inner) => {
+                write!(f, "{op}{expr} {} [{inner}; {len}]{cp}", "as".keyword())
+            }
+            Expr::PointerToGenericArrayCast(expr, generic, inner) => {
+                write!(f, "{op}{expr} {} [{inner}; {generic}]{cp}", "as".keyword())
+            }
             Expr::IntCast(expr, _, to) => write!(f, "{op}{expr} {} {to}{cp}", "as".keyword()),
             Expr::ToFloatCast(expr, _) => {
                 write!(f, "{op}{expr} {} float{cp}", "as".keyword())
@@ -661,6 +699,7 @@ impl fmt::Display for Expr {
             Expr::Write(p) => write!(f, "{op}{} {} {}{cp}", "write".keyword(), &p[0], &p[1]),
             Expr::ReflectTypeOf(ty) => write!(f, "{op}{} {ty}{cp}", "type-of".keyword()),
             Expr::SizeOf(ty) => write!(f, "{op}{} {ty}{cp}", "size-of".keyword()),
+            Expr::Alloca(ty) => write!(f, "{op}{} {ty}{cp}", "alloca".keyword()),
             Expr::Poison => "<poison>".fmt(f),
             Expr::Unreachable(_) => write!(f, "{}", "unreachable".keyword()),
         }

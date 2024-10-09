@@ -294,6 +294,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             lir::Entry::BitNot(v) => self.bit_not(*v),
 
             lir::Entry::Alloc => self.alloc(ty),
+            lir::Entry::Alloca => self.alloca(ty),
             lir::Entry::Dealloc { ptr } => {
                 self.heap_dealloc(*ptr, 0);
                 VEntry::ZST
@@ -605,8 +606,8 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             | VEntry::StructHeapPointer(_, _) => {
                 unimplemented!("transmuting structs or arrays");
             }
-            VEntry::Scalar(scalar) => self.cast_value_to_scalar(ty, scalar.point),
-            VEntry::SumPayloadStackPointer { ptr, .. } => self.cast_value_to_scalar(ty, ptr),
+            VEntry::Scalar(scalar) => self.cast_value_from_scalar(ty, scalar.point),
+            VEntry::SumPayloadStackPointer { ptr, .. } => self.cast_value_from_scalar(ty, ptr),
             VEntry::ZST => VEntry::ZST,
         }
     }
@@ -653,13 +654,16 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         VEntry::direct(v)
     }
 
-    fn cast_value_to_scalar(&mut self, ty: &MonoType, point: Value) -> VEntry {
+    fn cast_value_from_scalar(&mut self, ty: &MonoType, point: Value) -> VEntry {
         match ty {
             MonoType::Int(intsize) => {
                 let int = Type::int(intsize.bits() as u16).unwrap();
                 VEntry::direct(self.resize_uint(point, int))
             }
             MonoType::Pointer(ty) => VEntry::Scalar(Scalar::pointer(point, &ty)),
+            MonoType::Array(len, inner) => {
+                VEntry::ArrayStackPointer((**inner).clone(), *len, point)
+            }
             MonoType::FnPointer(params, ret) => {
                 let typing = self.ctx.structs.records.get_abi_typing(params.iter(), ret);
 

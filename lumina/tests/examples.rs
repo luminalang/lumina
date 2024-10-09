@@ -97,3 +97,11 @@ fn example_ffi() {
 fn example_raw_fn_pointers() {
     run("examples/raw-function-pointers", "5\n");
 }
+
+#[test]
+fn example_fizz_buzz() {
+    run(
+        "examples/fizz-buzz",
+        "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\n",
+    );
+}

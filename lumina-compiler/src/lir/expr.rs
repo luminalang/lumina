@@ -253,6 +253,11 @@ impl<'a> FuncLower<'a> {
                 let intsize = self.lir.target.int_size();
                 self.ssa().size_of(ty, IntSize::new(false, intsize))
             }
+            mir::Expr::AlignOf(ty) => {
+                let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
+                let intsize = self.lir.target.int_size();
+                self.ssa().align_of(ty, IntSize::new(false, intsize))
+            }
             mir::Expr::Alloca(ty) => {
                 let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
                 self.ssa().alloca(ty)

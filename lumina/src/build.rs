@@ -164,9 +164,8 @@ pub fn project_info<'s>(
         })
     })?;
 
-    let [closure, size, listable, stringable] = [
+    let [closure, listable, stringable] = [
         ["std", "prelude", "Closure"].as_slice(),
-        &["std", "prelude", "Size"],
         &["std", "prelude", "Listable"],
         &["std", "prelude", "Stringable"],
     ]
@@ -178,7 +177,7 @@ pub fn project_info<'s>(
     })?;
 
     let reflect_type = resolve_or_error(lookups, &["std", "prelude", "Type"], |k| match k {
-        ast::Entity::Type(key::TypeKind::Sum(key)) => Some(key),
+        ast::Entity::Type(key::TypeKind::Trait(key)) => Some(key),
         _ => None,
     })?;
 
@@ -201,7 +200,6 @@ pub fn project_info<'s>(
         main,
         sys_init,
         closure,
-        size,
         (alloc, dealloc),
         reflect_type,
         listable,

@@ -43,6 +43,7 @@ pub enum Expr {
     Write(Box<[Self; 2]>),
     ReflectTypeOf(Type),
     SizeOf(Type),
+    AlignOf(Type),
     Alloca(Type),
     Unreachable(Type),
 
@@ -634,6 +635,7 @@ impl fmt::Display for Expr {
             Expr::Write(p) => write!(f, "{op}{} {} {}{cp}", "write".keyword(), &p[0], &p[1]),
             Expr::ReflectTypeOf(ty) => write!(f, "{op}{} {ty}{cp}", "type-of".keyword()),
             Expr::SizeOf(ty) => write!(f, "{op}{} {ty}{cp}", "size-of".keyword()),
+            Expr::AlignOf(ty) => write!(f, "{op}{} {ty}{cp}", "align-of".keyword()),
             Expr::Alloca(ty) => write!(f, "{op}{} {ty}{cp}", "alloca".keyword()),
             Expr::Poison => "<poison>".fmt(f),
             Expr::Unreachable(_) => write!(f, "{}", "unreachable".keyword()),

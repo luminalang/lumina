@@ -12,7 +12,7 @@ pub type Vec a {
 }
 
 pub fn capacity len as uint -> Vec a =
-  let ptr = std:prelude:alloc ((Size(a):of * len) as int)
+  let ptr = std:prelude:alloc ((Type(a):size * len) as int)
    in { ptr = ptr as *a, len }
 
 pub fn empty as Vec a = { Vec a | ptr = ptr:null, len = 0 }
@@ -29,10 +29,10 @@ pub fn get i vec as uint, Vec a -> Maybe a =
     else Just (unsafe_get i vec)
 
 fn unsafe_get i {ptr, len} as uint, Vec a -> a =
-  ptr:offsetu ptr (Size(a):of * i) . ptr:deref
+  ptr:offsetu ptr (Type(a):size * i) . ptr:deref
 
 fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
-   let at = ptr:offsetu ptr (Size(a):of * i) in
+   let at = ptr:offsetu ptr (Type(a):size * i) in
     ptr:write at v
 
 pub fn from_range (start, end) f as (uint, uint), fn(uint -> a) -> Vec a =

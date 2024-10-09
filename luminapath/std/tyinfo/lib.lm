@@ -1,0 +1,31 @@
+pub trait Type
+  fn size  as uint
+  fn align as uint
+  // fn kind  as TypeKind
+
+impl Type for a
+  fn size  as uint =  builtin:size_of(a)
+  fn align as uint = builtin:align_of(a)
+  // fn kind  as TypeKind = builtin:kind_of(a)
+
+// pub type TypeKind = UInt u8 | Int u8 | Defined u64
+
+// -- // 
+
+// Something like this could probably work? 
+//
+// Hm. But for CT reflection we probably want to just have a single TypeId for everything including primitives. 
+// I suspect it'd be easier to use that way, and, we wouldn't have to create lots of different builtins for the 
+// type kinds. 
+//
+// The generated type id's can simple be `MonoTypeKey + all_primitives.len()` if we decide to take that route. 
+
+// when
+//   ty can Type
+//   trait_ can Type
+// pub fn find_implementation as Maybe Implementation =
+//   builtin:find(ty as Type, trait_ as Type)
+// 
+// type Implementation {
+//   methods (Vec *u8)
+// }

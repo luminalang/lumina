@@ -238,6 +238,11 @@ impl Blocks {
         self.assign(entry, MonoType::Int(to))
     }
 
+    pub fn align_of(&mut self, ty: MonoType, to: IntSize) -> Value {
+        let entry = Entry::AlignOf(ty);
+        self.assign(entry, MonoType::Int(to))
+    }
+
     pub fn call<C: Callable>(&mut self, call: C, params: Vec<Value>, ret: MonoType) -> Value {
         let entry = C::construct(call, params);
         self.assign(entry, ret)
@@ -558,6 +563,7 @@ pub enum Entry {
 
     Transmute(Value), // Transmute two values of equal size
     SizeOf(MonoType),
+    AlignOf(MonoType),
     Reduce(Value),
     ExtendSigned(Value),
     ExtendUnsigned(Value),
@@ -673,6 +679,7 @@ impl fmt::Display for Entry {
             }
             Entry::Transmute(v) => write!(f, "{} {v}", "transmute".keyword()),
             Entry::SizeOf(v) => write!(f, "{} {v:#?}", "size-of".keyword()),
+            Entry::AlignOf(v) => write!(f, "{} {v:#?}", "align-of".keyword()),
             Entry::RefStaticVal(val) => write!(f, "&{val}"),
             Entry::Copy(v) => write!(f, "{} {v}", "copy".keyword()),
             Entry::BlockParam(param) => write!(f, "{} {param}", "fparam".keyword()),

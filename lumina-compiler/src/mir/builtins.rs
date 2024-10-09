@@ -57,6 +57,7 @@ pub fn signature<'t, 's>(lower: &mut mir::Verify<'t, 's>, span: Span, name: &str
             InstCall::Local(Ty::defined(lower.items.pinfo.reflect_type, vec![]).tr(span))
         }
         "size_of" => sig! { direct uint },
+        "align_of" => sig! { direct uint },
         "alloca" => sig! { direct (pointer 'a') },
         "unreachable" => sig! { direct 'a' },
         "transmute" => sig! { 'a' => 'b' },
@@ -111,6 +112,12 @@ pub fn lower<'t, 's>(
             assert_eq!(*name, "self");
             let ty = lower.finalizer().transform(&ty);
             Expr::SizeOf(ty)
+        }
+        "align_of" => {
+            let (name, ty) = tanot.for_entity[0].clone();
+            assert_eq!(*name, "self");
+            let ty = lower.finalizer().transform(&ty);
+            Expr::AlignOf(ty)
         }
         "alloca" => {
             let (name, ty) = tanot.for_entity[0].clone();

@@ -119,6 +119,9 @@ impl<'a> Debugger<'a> {
             Entry::SizeOf(_) => {
                 self.as_int(exp, "size-of");
             }
+            Entry::AlignOf(_) => {
+                self.as_int(exp, "align-of");
+            }
             Entry::CallExtern(fkey, params) => {
                 let extern_ = &self.lir.extern_funcs[fkey];
                 self.params(params, extern_.params.iter());

@@ -203,6 +203,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             lir::Entry::BlockParam(v) => self.value_to_entry(lir::Value::V(*v)),
             lir::Entry::Transmute(value) => self.transmute(*value, ty),
             lir::Entry::SizeOf(ty) => self.size_of(ty),
+            lir::Entry::AlignOf(ty) => self.align_of(ty),
 
             lir::Entry::CallStatic(mfunc, params) => {
                 let fheader = &self.ctx.funcmap[*mfunc];
@@ -651,6 +652,13 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let size = self.ctx.structs.size_of(ty);
         let size_t = self.ctx.size_t();
         let v = self.ins().iconst(size_t, size as i64);
+        VEntry::direct(v)
+    }
+
+    fn align_of(&mut self, ty: &MonoType) -> VEntry {
+        let (_, align) = self.ctx.structs.size_and_align_of(ty);
+        let size_t = self.ctx.size_t();
+        let v = self.ins().iconst(size_t, align as i64);
         VEntry::direct(v)
     }
 

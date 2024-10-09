@@ -1,4 +1,5 @@
 use super::{pat, pat::Merge, Callable, FinError, Lower, MatchBranchLower};
+use crate::mir::builtins;
 use crate::prelude::*;
 use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY, STRINGABLE_FROM_RAW_PARTS};
 use ast::NFunc;
@@ -120,62 +121,7 @@ impl<'a, 's> Lower<'a, 's> {
                         Expr::Call(call, params)
                     })
                 }
-                hir::Callable::Builtin(name) => match *name {
-                    "plus" => self.lower_builtin(params, |p| Expr::Num("plus", Box::new(p))),
-                    "minus" => self.lower_builtin(params, |p| Expr::Num("minus", Box::new(p))),
-                    "mul" => self.lower_builtin(params, |p| Expr::Num("mul", Box::new(p))),
-                    "div" => self.lower_builtin(params, |p| Expr::Num("div", Box::new(p))),
-                    "plus_checked" => {
-                        self.lower_builtin(params, |p| Expr::Num("plus_checked", Box::new(p)))
-                    }
-                    "minus_checked" => {
-                        self.lower_builtin(params, |p| Expr::Num("minus_checked", Box::new(p)))
-                    }
-                    "mul_checked" => {
-                        self.lower_builtin(params, |p| Expr::Num("mul_checked", Box::new(p)))
-                    }
-                    "div_checked" => {
-                        self.lower_builtin(params, |p| Expr::Num("div_checked", Box::new(p)))
-                    }
-                    "array_len" => self.lower_builtin(params, |[p]| Expr::ArrayLen(Box::new(p))),
-                    "array_get" => self.lower_builtin(params, |p| Expr::ArrayAccess(Box::new(p))),
-                    "iabs" => self.lower_builtin(params, |[p]| Expr::IntAbs(Box::new(p))),
-                    "eq" => self.lower_builtin(params, |p| Expr::Cmp("eq", Box::new(p))),
-                    "lt" => self.lower_builtin(params, |p| Expr::Cmp("lt", Box::new(p))),
-                    "gt" => self.lower_builtin(params, |p| Expr::Cmp("gt", Box::new(p))),
-                    "deref" => self.lower_builtin(params, |[inner]| Expr::Deref(Box::new(inner))),
-                    "write" => self.lower_builtin(params, |p| Expr::Write(Box::new(p))),
-                    "offset" => self.lower_builtin(params, |p| Expr::Num("plus", Box::new(p))),
-                    "unreachable" => {
-                        let (name, ty) = tanot.for_entity[0].clone();
-                        assert_eq!(*name, "self");
-                        let ty = self.finalizer().transform(&ty);
-                        self.lower_builtin::<0>(params, |_| Expr::Unreachable(ty))
-                    }
-                    "transmute" => self.lower_builtin(params, |[inner]| inner),
-                    "val_to_ref" => {
-                        self.lower_builtin(params, |[inner]| Expr::ValToRef(Box::new(inner)))
-                    }
-                    "reflect_type" => {
-                        let (name, ty) = tanot.for_entity[0].clone();
-                        assert_eq!(*name, "self");
-                        let ty = self.finalizer().transform(&ty);
-                        Expr::ReflectTypeOf(ty)
-                    }
-                    "size_of" => {
-                        let (name, ty) = tanot.for_entity[0].clone();
-                        assert_eq!(*name, "self");
-                        let ty = self.finalizer().transform(&ty);
-                        Expr::SizeOf(ty)
-                    }
-                    "alloca" => {
-                        let (name, ty) = tanot.for_entity[0].clone();
-                        assert_eq!(*name, "self");
-                        let ty = self.finalizer().transform(&ty);
-                        Expr::Alloca(ty)
-                    }
-                    _ => panic!("unknown builtin: {name}"),
-                },
+                hir::Callable::Builtin(name) => builtins::lower(self, *name, params, tanot),
             },
             hir::Expr::Pass(call, _, params) => match call {
                 hir::Callable::Func(nfunc) => {
@@ -317,18 +263,7 @@ impl<'a, 's> Lower<'a, 's> {
         Some((rkey.inside(module), params))
     }
 
-    fn lower_builtin<const N: usize>(
-        &mut self,
-        params: &[Tr<hir::Expr<'s>>],
-        constructor: impl FnOnce([Expr; N]) -> Expr,
-    ) -> Expr {
-        match <[Expr; N]>::try_from(self.lower_exprs(params)) {
-            Ok(params) => constructor(params),
-            Err(_) => Expr::Poison,
-        }
-    }
-
-    fn lower_exprs(&mut self, exprs: &[Tr<hir::Expr<'s>>]) -> Vec<Expr> {
+    pub(crate) fn lower_exprs(&mut self, exprs: &[Tr<hir::Expr<'s>>]) -> Vec<Expr> {
         exprs
             .iter()
             .map(|expr| self.lower_expr(expr.as_ref()))

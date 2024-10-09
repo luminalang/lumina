@@ -1,4 +1,4 @@
-use super::{lower, tyfmt::TyFmtState, Current, LangItems, ReadOnlyBytes, Verify};
+use super::{builtins, lower, tyfmt::TyFmtState, Current, LangItems, ReadOnlyBytes, Verify};
 use crate::prelude::*;
 use crate::{ProjectInfo, Target};
 use ast::NFunc;
@@ -681,87 +681,7 @@ impl<'a, 's> Verify<'a, 's> {
                     }
                 }
             }
-            hir::Callable::Builtin(name) => match *name {
-                "plus" | "minus" | "mul" | "div" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptypes = vec![any.clone(), any.clone()];
-                    InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
-                }
-                "plus_checked" | "minus_checked" | "mul_checked" | "div_checked" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptypes = vec![any.clone(), any.clone()];
-                    let ret = Ty::tuple(vec![any, Ty::bool()]);
-                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
-                }
-                "array_len" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptypes = vec![any];
-                    let ret = Ty::Int(self.target.uint());
-                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
-                }
-                "array_get" => {
-                    let [arr, any] = [(); 2].map(|_| self.vars().var(span)).map(Ty::infer);
-                    let ptypes = vec![Ty::Int(self.target.uint()), arr];
-                    InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
-                }
-                "iabs" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptypes = vec![any.clone()];
-                    InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
-                }
-                "eq" | "lt" | "gt" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptypes = vec![any.clone(), any];
-                    InstCall::LocalCall(span, ptypes, Ty::bool(), Container::FnPointer)
-                }
-                "deref" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptypes = vec![Ty::pointer(any.clone())];
-                    InstCall::LocalCall(span, ptypes, any, Container::FnPointer)
-                }
-                "write" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptypes = vec![Ty::pointer(any.clone()), any.clone()];
-                    let ret = Ty::tuple(vec![]);
-                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
-                }
-                "offset" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptr = Ty::pointer(any.clone());
-                    let ptypes = vec![ptr.clone(), Ty::Int(self.target.int())];
-                    InstCall::LocalCall(span, ptypes, ptr, Container::FnPointer)
-                }
-                "reflect_type" => {
-                    InstCall::Local(Ty::defined(self.items.pinfo.reflect_type, vec![]).tr(span))
-                }
-                "size_of" => {
-                    // TODO: 32-bit
-                    InstCall::Local(Ty::Int(self.target.uint()).tr(span))
-                }
-                "alloca" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptr = IType::pointer(any);
-                    InstCall::LocalCall(span, vec![], ptr, Container::FnPointer)
-                }
-                "unreachable" => InstCall::Local(Ty::infer(self.vars().var(span)).tr(span)),
-                "transmute" => {
-                    let param = Ty::infer(self.vars().var(span));
-                    let ptypes = vec![param];
-                    let ret = Ty::infer(self.vars().var(span));
-                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
-                }
-                "val_to_ref" => {
-                    let any = Ty::infer(self.vars().var(span));
-                    let ptr = Ty::pointer(any.clone());
-                    let ptypes = vec![any];
-                    let ret = ptr;
-                    InstCall::LocalCall(span, ptypes, ret, Container::FnPointer)
-                }
-                _ => {
-                    self.error("unrecognised builtin").eline(span, "").emit();
-                    InstCall::Local(Ty::poison().tr(span))
-                }
-            },
+            hir::Callable::Builtin(name) => builtins::signature(self, span, *name),
             hir::Callable::Func(mnfunc) => {
                 self.type_of_nfunc(span, M(mnfunc.module, mnfunc.key), tanot)
             }

@@ -8,9 +8,9 @@ pub fn deref ptr as *a -> a = builtin:deref ptr
 // So; we shouldn't need builtin:offset anymore. 
 
 // Offset the pointer by a set amount of bytes
-pub fn offset ptr by as *a, int -> *a = builtin:offset ptr by
+pub fn offset ptr by as *a, int -> *a = builtin:offset ptr (by as uint)
 
-pub fn offsetu ptr by as *a, uint -> *a = builtin:offset ptr (by as int)
+pub fn offsetu ptr by as *a, uint -> *a = builtin:offset ptr by
 
 pub fn null as *a = 0 as *a
 

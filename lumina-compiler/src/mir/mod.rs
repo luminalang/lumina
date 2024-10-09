@@ -19,13 +19,14 @@ mod func;
 pub use func::FunctionStatus;
 use func::InstInfo;
 use lumina_typesystem::{ImplIndex, Type};
+mod builtins;
 mod patc;
 mod tcheck;
 
 mod tyfmt;
 
 mod lower;
-pub use lower::{pat, CallTypes, Callable, ConcreteTyping, Expr, Function};
+pub use lower::{pat, CallTypes, Callable, ConcreteTyping, Expr, Function, Lower};
 pub type DecTree = pat::DecTree<key::DecisionTreeTail>;
 pub type Branching<K> = pat::Branching<K, key::DecisionTreeTail>;
 

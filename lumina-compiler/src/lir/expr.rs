@@ -43,7 +43,10 @@ impl<'a> FuncLower<'a> {
             }
             mir::Expr::Yield(call) => match self.lower_callable(call) {
                 Callable::Extern(fkey) => Value::ExternFuncPtr(fkey),
-                Callable::Static(mfunc) => Value::FuncPtr(mfunc),
+                Callable::Static(mfunc) => {
+                    self.lir.functions[mfunc].pointed_to_by_func_pointer = true;
+                    Value::FuncPtr(mfunc)
+                }
                 Callable::LiftedLambda(mfunc, captures) => {
                     self.partially_applicate_func(mfunc, captures)
                 }
@@ -502,7 +505,14 @@ impl<'a> FuncLower<'a> {
             typing.origin.name(&self.mir)
         );
 
-        self.lir
-            .func(self.mir, self.iquery, self.info, tmap, typing, None)
+        let mfunc = self
+            .lir
+            .func(self.mir, self.iquery, self.info, tmap, typing, None);
+
+        if mfunc == self.current.mfkey {
+            self.lir.functions[mfunc].directly_recursive = true;
+        }
+
+        mfunc
     }
 }

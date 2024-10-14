@@ -37,7 +37,7 @@ impl From<MonoTypeKey> for MonoType {
 pub struct Types {
     #[deref]
     #[deref_mut]
-    records: Map<MonoTypeKey, MonoTypeData>,
+    pub(super) records: Map<MonoTypeKey, MonoTypeData>,
 
     pub pointer_bits: u32,
 }

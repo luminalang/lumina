@@ -16,6 +16,8 @@ impl<'a> FuncLower<'a> {
     //     let {a} = deref data in
     //       target a b c
     pub fn partially_applicate_func(&mut self, target: MonoFunc, params: Vec<Value>) -> Value {
+        self.lir.functions[target].pointed_to_by_func_pointer = true;
+
         let target_func = &self.lir.functions[target];
         let mut types = target_func.blocks.func_params();
         let ret = target_func.returns.clone();
@@ -144,6 +146,7 @@ impl<'a> FuncLower<'a> {
         captures: Vec<Value>,
         cap: MonoTypeKey,
     ) -> Value {
+        self.lir.functions[mfunc].pointed_to_by_func_pointer = true;
         let ret = self.lir.functions[mfunc].returns.clone();
 
         let object_type = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
@@ -231,6 +234,8 @@ impl<'a> FuncLower<'a> {
                     self.lir.push_function(symbol, ssa, vtable_type.into())
                 };
 
+                self.lir.functions[vtable_val_initializer].pointed_to_by_func_pointer = true;
+
                 let val = self.lir.vals.push(trait_.0, vtable_type.into());
                 self.lir
                     .val_initialisers
@@ -270,6 +275,8 @@ impl<'a> FuncLower<'a> {
         target: MonoFunc,
         impltor: MonoType,
     ) -> MonoFunc {
+        self.lir.functions[target].pointed_to_by_func_pointer = true;
+
         let mut params = self.lir.functions[target].blocks.func_params();
         let ret = self.lir.functions[target].returns.clone();
         params[self_ as usize] = MonoType::u8_pointer();
@@ -313,6 +320,9 @@ impl<'a> FuncLower<'a> {
         // Construct the forwarding jump
         construct(self, &mut ssa);
 
-        self.lir.push_function(symbol, ssa, ret)
+        let mfunc = self.lir.push_function(symbol, ssa, ret);
+        self.lir.functions[mfunc].pointed_to_by_func_pointer = true;
+
+        mfunc
     }
 }

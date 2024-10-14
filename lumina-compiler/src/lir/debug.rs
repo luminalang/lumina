@@ -24,7 +24,7 @@ impl<'a> Debugger<'a> {
                     let entry = func.blocks.entry_of(v);
                     info!("{v} = {entry}");
                     let exp = func.blocks.type_of(v);
-                    self.entry(exp, entry)
+                    self.entry(v, exp, entry)
                 }
 
                 let flow = func.blocks.flow_of(block);
@@ -56,7 +56,6 @@ impl<'a> Debugger<'a> {
     #[track_caller]
     fn check(&self, got: &MonoType, exp: &MonoType) {
         if got != exp {
-            dbg!(&got, &exp);
             panic!(
                 "LIR type mismatch post-monomorphisation: {} != {}",
                 self.tfmt(got),
@@ -102,9 +101,22 @@ impl<'a> Debugger<'a> {
         self.tcheck(given, expected);
     }
 
-    fn entry(&mut self, exp: &MonoType, entry: &Entry) {
+    fn check_declared(&mut self, at: V, value: Value) {
+        match value {
+            Value::V(v) if v.0 >= at.0 => panic!("{v} used before declared"),
+            _ => {}
+        }
+    }
+
+    fn check_declaredn(&mut self, at: V, values: &[Value]) {
+        values.iter().for_each(|v| self.check_declared(at, *v))
+    }
+
+    fn entry(&mut self, at: V, exp: &MonoType, entry: &Entry) {
         match entry {
             Entry::CallStatic(mfunc, params) => {
+                self.check_declaredn(at, params);
+
                 let expected = self.lir.functions[*mfunc]
                     .blocks
                     .param_types(ssa::Block::entry());
@@ -114,6 +126,7 @@ impl<'a> Debugger<'a> {
                 assert_eq!(exp, &self.lir.functions[*mfunc].returns)
             }
             Entry::Transmute(v) => {
+                self.check_declared(at, *v);
                 let _ty = self.lir.type_of_value(self.mfunc, *v);
             }
             Entry::SizeOf(_) => {
@@ -123,11 +136,13 @@ impl<'a> Debugger<'a> {
                 self.as_int(exp, "align-of");
             }
             Entry::CallExtern(fkey, params) => {
+                self.check_declaredn(at, params);
                 let extern_ = &self.lir.extern_funcs[fkey];
                 self.params(params, extern_.params.iter());
                 assert_eq!(exp, &extern_.returns);
             }
             Entry::CallValue(to_call, params) => {
+                self.check_declaredn(at, params);
                 let called = self.lir.type_of_value(self.mfunc, *to_call);
                 match called {
                     MonoType::FnPointer(ptypes, ret) => {
@@ -152,39 +167,51 @@ impl<'a> Debugger<'a> {
                     ),
                 }
             }
-            Entry::Copy(v) => assert_eq!(exp, &self.lir.type_of_value(self.mfunc, *v)),
-            Entry::Construct(values) => match exp {
-                MonoType::Array(len, inner) => {
-                    assert_eq!(*len, values.len() as u64);
-                    for p in values {
-                        assert_eq!(self.lir.type_of_value(self.mfunc, *p), **inner);
+            Entry::Copy(v) => {
+                self.check_declared(at, *v);
+                assert_eq!(exp, &self.lir.type_of_value(self.mfunc, *v))
+            }
+            Entry::Construct(values) => {
+                self.check_declaredn(at, values);
+
+                match exp {
+                    MonoType::Array(len, inner) => {
+                        assert_eq!(*len, values.len() as u64);
+                        for p in values {
+                            assert_eq!(self.lir.type_of_value(self.mfunc, *p), **inner);
+                        }
                     }
+                    MonoType::Monomorphised(mk) => match &self.lir.mono.types[*mk] {
+                        MonoTypeData::Record { fields, .. } => self.params(values, fields.values()),
+                        MonoTypeData::DynTraitObject { vtable, .. } => {
+                            self.params(values, [&MonoType::u8_pointer(), vtable].into_iter());
+                        }
+                        _ => {
+                            panic!("invalid type for construct: {}", self.tfmt(exp))
+                        }
+                    },
+                    _ => panic!("cannot construct non-record: {}", self.tfmt(exp)),
                 }
-                MonoType::Monomorphised(mk) => match &self.lir.mono.types[*mk] {
-                    MonoTypeData::Record { fields, .. } => self.params(values, fields.values()),
-                    MonoTypeData::DynTraitObject { vtable, .. } => {
-                        self.params(values, [&MonoType::u8_pointer(), vtable].into_iter());
+            }
+            Entry::Replicate(value, times) => {
+                self.check_declared(at, *value);
+                match exp {
+                    MonoType::Array(len, inner) => {
+                        assert_eq!(times, len);
+                        assert_eq!(self.lir.type_of_value(self.mfunc, *value), **inner);
                     }
-                    _ => {
-                        panic!("invalid type for construct: {}", self.tfmt(exp))
-                    }
-                },
-                _ => panic!("cannot construct non-record: {}", self.tfmt(exp)),
-            },
-            Entry::Replicate(value, times) => match exp {
-                MonoType::Array(len, inner) => {
-                    assert_eq!(times, len);
-                    assert_eq!(self.lir.type_of_value(self.mfunc, *value), **inner);
+                    MonoType::Monomorphised(_) => todo!(),
+                    _ => panic!("cannot replicate non-aggregate: {}", self.tfmt(exp)),
                 }
-                MonoType::Monomorphised(_) => todo!(),
-                _ => panic!("cannot replicate non-aggregate: {}", self.tfmt(exp)),
-            },
+            }
             Entry::TagFromSum { of } => {
+                self.check_declared(at, *of);
                 let ty = self.lir.type_of_value(self.mfunc, *of);
                 let _ = self.lir.mono.types[ty.as_key()].as_sum();
                 self.as_int(exp, "tag");
             }
             Entry::Variant(var, elems) => {
+                self.check_declaredn(at, elems);
                 let (_, variants) = self.lir.mono.types[exp.as_key()].as_sum();
                 self.params(
                     elems,
@@ -196,6 +223,7 @@ impl<'a> Debugger<'a> {
                 assert_eq!(exp, &MonoType::pointer(ty.clone()));
             }
             Entry::Field { of, key, field } => {
+                self.check_declared(at, *of);
                 assert_eq!(self.lir.type_of_value(self.mfunc, *of).as_key(), *key);
                 match &self.lir.mono.types[*key] {
                     MonoTypeData::Record { fields, .. } => assert_eq!(exp, &fields[*field]),
@@ -208,6 +236,8 @@ impl<'a> Debugger<'a> {
                 }
             }
             Entry::Indice { of, indice } => {
+                self.check_declared(at, *of);
+
                 let of_ty = self.lir.type_of_value(self.mfunc, *of);
                 let indice_ty = self.lir.type_of_value(self.mfunc, *indice);
 
@@ -222,6 +252,8 @@ impl<'a> Debugger<'a> {
                 }
             }
             Entry::CastFromSum { of } => {
+                self.check_declared(at, *of);
+
                 let of = self.lir.type_of_value(self.mfunc, *of);
                 match of {
                     MonoType::Monomorphised(mkey) => {
@@ -235,6 +267,9 @@ impl<'a> Debugger<'a> {
             | Entry::IntSub(lhs, rhs)
             | Entry::IntMul(lhs, rhs)
             | Entry::IntDiv(lhs, rhs) => {
+                self.check_declared(at, *lhs);
+                self.check_declared(at, *rhs);
+
                 let [lhs, rhs] = [lhs, rhs].map(|v| self.lir.type_of_value(self.mfunc, *v));
                 match lhs {
                     MonoType::Pointer(inner) => {
@@ -249,37 +284,47 @@ impl<'a> Debugger<'a> {
                 }
             }
             Entry::IntAbs(v) => {
+                self.check_declared(at, *v);
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 self.as_int(&ty, "iabs");
             }
             Entry::Reduce(v) => {
+                self.check_declared(at, *v);
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 self.as_int(&ty, "reduce");
             }
             Entry::ExtendSigned(v) => {
+                self.check_declared(at, *v);
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 assert!(self.as_int(&ty, "extend").signed);
             }
             Entry::ExtendUnsigned(v) => {
+                self.check_declared(at, *v);
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 assert!(!self.as_int(&ty, "extend").signed);
             }
             Entry::IntToFloat(v, size) => {
+                self.check_declared(at, *v);
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 assert_eq!(*size, self.as_int(&ty, "cast"));
                 self.as_float(exp, "cast");
             }
             Entry::FloatToInt(v, size) => {
+                self.check_declared(at, *v);
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 self.as_float(&ty, "cast");
                 assert_eq!(*size, self.as_int(exp, "cast"));
             }
             Entry::BitAnd(values) => values
-                .map(|v| self.lir.type_of_value(self.mfunc, v))
+                .map(|v| {
+                    self.check_declared(at, v);
+                    self.lir.type_of_value(self.mfunc, v)
+                })
                 .iter()
                 .chain(std::iter::once(exp))
                 .for_each(|v| assert_eq!(self.as_int(v, "bitand").bits(), 8)),
             Entry::BitNot(v) => {
+                self.check_declared(at, *v);
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 self.as_int(&ty, "bitnot");
             }
@@ -290,11 +335,14 @@ impl<'a> Debugger<'a> {
             Entry::Alloc { .. } => {}
             Entry::Alloca => {}
             Entry::Dealloc { ptr } => {
+                self.check_declared(at, *ptr);
                 let ty = self.lir.type_of_value(self.mfunc, *ptr);
                 self.as_ptr(&ty);
                 self.as_unit(exp);
             }
             Entry::WritePtr { ptr, value } => {
+                self.check_declared(at, *ptr);
+                self.check_declared(at, *value);
                 let ty = self.lir.type_of_value(self.mfunc, *ptr);
                 let inner = self.as_ptr(&ty);
                 let ty = self.lir.type_of_value(self.mfunc, *value);
@@ -302,6 +350,7 @@ impl<'a> Debugger<'a> {
                 self.as_unit(exp);
             }
             Entry::Deref(ptr) => {
+                self.check_declared(at, *ptr);
                 // TODO: I think our casts are currently implicit for pointers. Wwe should probably change that?
                 //
                 // or no, they probably occur in the intcast stuff?

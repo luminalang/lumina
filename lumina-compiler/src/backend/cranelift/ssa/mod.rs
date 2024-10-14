@@ -591,6 +591,8 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let (clblock, predecessors) = &mut self.f.blockmap[block];
         *predecessors += 1;
 
+        debug_assert!(*predecessors <= self.f.func.blocks.predecessors(block));
+
         if *predecessors == self.f.func.blocks.predecessors(block) {
             self.f.builder.seal_block(*clblock);
             self.f.switch_to_block(block);

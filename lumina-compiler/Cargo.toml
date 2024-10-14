@@ -20,7 +20,7 @@ owo-colors = { version = "4.0.*", features = ["supports-colors"] }
 itertools = "0.10.*"
 smallvec = "1.10.*"
 take_mut = "*"
-derive_more = { version = "1.0.*", features = ["from", "display", "index", "index_mut", "deref", "deref_mut"] }
+derive_more = { version = "1.0.*", features = ["from", "display", "index", "index_mut", "deref", "deref_mut", "add", "add_assign"] }
 insta = "*"
 tracing = "0.1.40"
 cranelift = "0.112.*"

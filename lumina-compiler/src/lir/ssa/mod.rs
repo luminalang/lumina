@@ -1,6 +1,6 @@
 use super::{mono::fmt, mono::MonoFormatter, MonoFunc, MonoType, MonoTypeKey, UNIT};
 use crate::{MAYBE_JUST, MAYBE_NONE};
-use derive_more::From;
+use derive_more::{Add, AddAssign, From};
 use itertools::Itertools;
 use key::{Map, M};
 use lumina_collections::map_key_impl;
@@ -9,25 +9,36 @@ use lumina_typesystem::IntSize;
 use lumina_util::{Highlighting, ParamFmt};
 use owo_colors::OwoColorize;
 use std::fmt;
+use std::ops::Sub;
 use tracing::{info, trace};
+
+mod opts;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Block(pub u32);
 map_key_impl!(Block(u32), "block");
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Add, AddAssign)]
 pub struct V(pub u32);
 map_key_impl!(V(u32), "v");
 
-impl std::ops::Add for V {
+impl Add<u32> for V {
     type Output = Self;
 
-    fn add(mut self, rhs: Self) -> Self::Output {
-        self.0 += rhs.0;
-        self
+    fn add(self, rhs: u32) -> Self::Output {
+        V(self.0 + rhs)
     }
 }
 
+impl Sub<u32> for V {
+    type Output = Self;
+
+    fn sub(self, rhs: u32) -> Self::Output {
+        V(self.0 - rhs)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct BasicBlock {
     parameters: u32,
     offset: Option<(V, V)>,
@@ -48,7 +59,7 @@ impl BasicBlock {
 
 pub struct Blocks {
     current: Block,
-    blocks: Map<Block, BasicBlock>,
+    pub(super) blocks: Map<Block, BasicBlock>,
     ventries: Map<V, Entry>,
     vtypes: Map<V, MonoType>,
 }
@@ -108,14 +119,33 @@ impl Blocks {
         self.blocks[block].predecessors
     }
 
+    pub fn remove_predecessor(&mut self, block: Block) {
+        self.blocks[block].predecessors -= 1;
+
+        if self.predecessors(block) == 0 {
+            match self.flow_of(block) {
+                ControlFlow::JmpBlock(cblock, _) => self.remove_predecessor(*cblock),
+                ControlFlow::Select { on_true, on_false, .. } => {
+                    let blocks = [on_true.0, on_false.0];
+                    for cblock in blocks {
+                        self.remove_predecessor(cblock);
+                    }
+                }
+                ControlFlow::JmpTable(_, _, blocks) => {
+                    let blocks = blocks.clone();
+                    for cblock in blocks {
+                        self.remove_predecessor(cblock);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub fn new_block(&mut self, params: u32) -> Block {
         debug_assert_ne!(self.blocks.len(), 0);
         self.blocks.push(BasicBlock::new(params))
     }
-
-    // pub fn set_predecessors(&mut self, block: Block, pred: u16) {
-    //     self.blocks[block].predecessors = pred;
-    // }
 
     pub fn get_block_param(&self, block: Block, pid: u32) -> V {
         let params = self.blocks[block].parameters;
@@ -159,9 +189,19 @@ impl Blocks {
         v.value()
     }
 
+    pub fn entries_count(&self) -> usize {
+        self.ventries.len()
+    }
+
     pub fn entries(&self, block: Block) -> impl Iterator<Item = V> + 'static {
         let (start, end) = self.blocks[block].offset.unwrap_or((V(0), V(0)));
-        VIter { start: start + V(self.blocks[block].parameters), end }
+        let start = start + V(self.blocks[block].parameters);
+        debug_assert!(
+            start.0 <= end.0,
+            "{start} <= {end} where {}",
+            self.blocks[block].parameters
+        );
+        VIter { start, end }
     }
 
     pub fn flow_of(&self, block: Block) -> &ControlFlow {
@@ -493,7 +533,7 @@ impl Value {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum ControlFlow {
     JmpFunc(MonoFunc, Vec<Value>),
     JmpBlock(Block, Vec<Value>),
@@ -518,12 +558,7 @@ impl Block {
     }
 }
 
-// We need to add the pointer primitives as builtins here
-//
-// TODO: Actually; shouldn't we do SSA+Basic Block Parameters+CFG?
-//
-// We probably should. Alright let's do that.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Entry {
     CallStatic(MonoFunc, Vec<Value>),
     CallExtern(M<key::Func>, Vec<Value>),
@@ -607,7 +642,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t Blocks> {
         for (block, data) in &self.v.blocks {
             writeln!(
                 f,
-                "{block}{}{}{}:",
+                "{block}{}{}{}: {}",
                 '('.symbol(),
                 self.v
                     .params(block)
@@ -616,6 +651,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t Blocks> {
                         fmt(self.types, self.v.type_of(v))
                     ))),
                 ')'.symbol(),
+                format!("// {} predecessors", data.predecessors).dimmed()
             )?;
 
             if let Some((from, to)) = data.offset {
@@ -734,6 +770,73 @@ impl fmt::Display for Entry {
             Entry::FloatToInt(v, intsize) => {
                 write!(f, "{} {intsize} {v}", "float_to_int".keyword())
             }
+        }
+    }
+}
+
+impl Entry {
+    pub fn offset_v(&mut self, if_gt: V, by: u32) {
+        self.for_values_mut(&mut |v| {
+            if v.0 >= if_gt.0 {
+                v.0 += by;
+            }
+        });
+    }
+
+    // TODO: consider whether splitting out parameters like `Entry = EntryKind * [Value]` is a good idea
+    //
+    // OR: perhaps the sort of optimizations we do are a lot easier of each block
+    // has it's own V scope instead of shared.
+    //
+    // Hm. I kinda want to experiment with that.
+    pub fn for_values_mut(&mut self, f: &mut dyn Fn(&mut V)) {
+        match self {
+            Entry::Variant(_, params)
+            | Entry::Construct(params)
+            | Entry::CallExtern(_, params)
+            | Entry::CallStatic(_, params) => params.iter_mut().for_each(|p| p.for_values_mut(f)),
+            Entry::CallValue(v, params) => {
+                v.for_values_mut(f);
+                params.iter_mut().for_each(|p| p.for_values_mut(f));
+            }
+            Entry::ExtendUnsigned(v)
+            | Entry::ExtendSigned(v)
+            | Entry::Reduce(v)
+            | Entry::Transmute(v)
+            | Entry::IntAbs(v)
+            | Entry::Indice { of: v, .. }
+            | Entry::Field { of: v, .. }
+            | Entry::TagFromSum { of: v }
+            | Entry::CastFromSum { of: v }
+            | Entry::BitNot(v)
+            | Entry::Replicate(v, _)
+            | Entry::Deref(v)
+            | Entry::IntToFloat(v, _)
+            | Entry::FloatToInt(v, _)
+            | Entry::Dealloc { ptr: v }
+            | Entry::Copy(v) => v.for_values_mut(f),
+            Entry::RefStaticVal(_) => {}
+            Entry::IntCmpInclusive(lhs, _, rhs, _)
+            | Entry::IntAdd(lhs, rhs)
+            | Entry::BitAnd([lhs, rhs])
+            | Entry::IntSub(lhs, rhs)
+            | Entry::IntMul(lhs, rhs)
+            | Entry::WritePtr { ptr: lhs, value: rhs }
+            | Entry::IntDiv(lhs, rhs) => {
+                lhs.for_values_mut(f);
+                rhs.for_values_mut(f);
+            }
+            Entry::BlockParam(v) => f(v),
+            Entry::SizeOf(_) | Entry::AlignOf(_) | Entry::Alloc | Entry::Alloca => {}
+        }
+    }
+}
+
+impl Value {
+    pub fn for_values_mut(&mut self, f: &mut dyn Fn(&mut V)) {
+        match self {
+            Value::V(v) => f(v),
+            _ => {}
         }
     }
 }

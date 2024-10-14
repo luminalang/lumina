@@ -7,6 +7,7 @@
 use crate::prelude::*;
 use crate::{ProjectInfo, Target};
 use ast::attr::Repr;
+use derive_new::new;
 use either::Either;
 use lumina_collections::map_key_impl;
 use lumina_typesystem::{Generic, GenericKind, GenericMapper, ImplIndex, IntSize, Static, Type};
@@ -143,10 +144,17 @@ struct Current {
     captures: Option<usize>,
 }
 
+#[derive(new)]
 pub struct Function {
     pub symbol: String,
     pub blocks: ssa::Blocks,
     pub returns: MonoType,
+    pub invocations: u32,
+
+    #[new(default)]
+    pub directly_recursive: bool,
+    #[new(default)]
+    pub pointed_to_by_func_pointer: bool,
 }
 
 impl Function {
@@ -318,6 +326,11 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
     #[cfg(debug_assertions)]
     Debugger::new(&lir, &mir).run();
 
+    lir.perform_optimizations();
+
+    #[cfg(debug_assertions)]
+    Debugger::new(&lir, &mir).run();
+
     Output {
         functions: lir.functions,
         extern_funcs: lir.extern_funcs,
@@ -361,7 +374,10 @@ impl LIR {
         let key = MonoTypesKey::new(typing.origin, tmap.generics, tmap.self_);
 
         match self.mono_resolve.get(&key) {
-            Some(key) => *key,
+            Some(key) => {
+                self.functions[*key].invocations += 1;
+                *key
+            }
             None => {
                 typing.origin = key.origin;
                 tmap.generics = key.generics;
@@ -459,7 +475,7 @@ impl LIR {
         blocks: ssa::Blocks,
         returns: MonoType,
     ) -> MonoFunc {
-        let func = Function { symbol, blocks, returns };
+        let func = Function::new(symbol, blocks, returns, 1);
         self.functions.push(func)
     }
 
@@ -615,11 +631,9 @@ impl<'a> FuncLower<'a> {
 
                 ssa.construct(block_params, params_tuple);
 
-                let function = Function {
-                    symbol: func_symbol(self.mir, mfunc, &origin),
-                    blocks: ssa,
-                    returns: ty,
-                };
+                let symbol = func_symbol(self.mir, mfunc, &origin);
+                let mut function = Function::new(symbol, ssa, ty, 1);
+                function.pointed_to_by_func_pointer = true;
 
                 self.lir.functions.push_as(mfunc, function);
                 self.lir.mono_resolve.insert(key, mfunc);

@@ -30,3 +30,5 @@ cranelift-object = "0.112.*"
 cranelift-native = "0.112.*"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-tree = "0.3.0"
+gimli = "*"
+object = "*"

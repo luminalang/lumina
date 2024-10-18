@@ -147,6 +147,7 @@ struct Current {
 #[derive(new)]
 pub struct Function {
     pub symbol: String,
+    pub module: key::Module,
     pub blocks: ssa::Blocks,
     pub returns: MonoType,
     pub invocations: u32,
@@ -382,10 +383,11 @@ impl LIR {
                 typing.origin = key.origin;
                 tmap.generics = key.generics;
                 tmap.self_ = key.self_;
+                let module = typing.origin.module();
 
                 let _span = info_span!(
                     "lowering function",
-                    module = &mir.module_names[typing.origin.module()],
+                    module = &mir.module_names[module],
                     entity = typing.origin.name(mir),
                 );
                 let _handle = _span.enter();
@@ -428,7 +430,7 @@ impl LIR {
                 let returns = typing.returns.clone();
 
                 let symbol = func_symbol(mir, self.functions.next_key(), &origin);
-                let mfkey = self.push_function(symbol, ssa, returns);
+                let mfkey = self.push_function(symbol, module, ssa, returns);
 
                 let key = MonoTypesKey::new(
                     typing.origin.clone(),
@@ -472,10 +474,11 @@ impl LIR {
     fn push_function(
         &mut self,
         symbol: String,
+        module: key::Module,
         blocks: ssa::Blocks,
         returns: MonoType,
     ) -> MonoFunc {
-        let func = Function::new(symbol, blocks, returns, 1);
+        let func = Function::new(symbol, module, blocks, returns, 1);
         self.functions.push(func)
     }
 
@@ -632,7 +635,7 @@ impl<'a> FuncLower<'a> {
                 ssa.construct(block_params, params_tuple);
 
                 let symbol = func_symbol(self.mir, mfunc, &origin);
-                let mut function = Function::new(symbol, ssa, ty, 1);
+                let mut function = Function::new(symbol, module, ssa, ty, 1);
                 function.pointed_to_by_func_pointer = true;
 
                 self.lir.functions.push_as(mfunc, function);

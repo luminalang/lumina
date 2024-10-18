@@ -14,6 +14,8 @@ use std::fmt;
 use std::ops::Not;
 use tracing::info_span;
 
+mod dwarf;
+pub use dwarf::DwarfDebugInfo;
 mod expr;
 mod func;
 pub use func::FunctionStatus;
@@ -77,10 +79,11 @@ pub struct ReadOnlyBytes(pub Box<[u8]>);
 pub fn run<'a, 'h, 's>(
     pinfo: ProjectInfo,
     target: Target,
+    src_dir: std::path::PathBuf,
     hir: hir::HIR<'s>,
     mut tenvs: MMap<key::Func, TEnv<'s>>,
     iquery: &mut ImplIndex,
-) -> (MIR, bool) {
+) -> (MIR, DwarfDebugInfo, bool) {
     let mut funcs = hir.funcs.secondary_with(|_, _| FunctionStatus::Pending);
     let mut rotable = hir.sources.modules().collect();
 
@@ -135,6 +138,8 @@ pub fn run<'a, 'h, 's>(
 
     let has_failed = hir.sources.has_failed();
 
+    let dwarf = DwarfDebugInfo::init(src_dir, target, &hir.sources);
+
     (
         MIR {
             funcs,
@@ -167,6 +172,7 @@ pub fn run<'a, 'h, 's>(
             variant_types: hir.variant_types,
             val_initializers: hir.val_initializers,
         },
+        dwarf,
         has_failed,
     )
 }

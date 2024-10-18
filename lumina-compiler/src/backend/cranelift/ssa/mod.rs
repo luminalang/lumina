@@ -1,5 +1,5 @@
 use super::{
-    layout,
+    debuginfo, layout,
     layout::{ByteOffset, FType, FieldV, PassBy, Scalar, ScalarKind},
     Context,
 };
@@ -126,14 +126,17 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         &self.ctx.lir.types
     }
 
-    pub fn func(ctx: &'c mut Context<'a>, func: &'a lir::Function, key: MonoFunc) -> ir::Function {
-        let mut func_builder_ctx = FunctionBuilderContext::new();
-        let mut clfunc = ir::Function::new();
-
+    pub fn func(
+        ctx: &'c mut Context<'a>,
+        cctx: &mut codegen::Context,
+        fctx: &mut FunctionBuilderContext,
+        func: &'a lir::Function,
+        key: MonoFunc,
+    ) -> debuginfo::FunctionDebugContext {
         let header = &ctx.funcmap[key];
 
-        clfunc.signature = ctx.structs.signature(&header.typing);
-        let mut builder = FunctionBuilder::new(&mut clfunc, &mut func_builder_ctx);
+        cctx.func.signature = ctx.structs.signature(&header.typing);
+        let mut builder = FunctionBuilder::new(&mut cctx.func, fctx);
 
         let blockmap = func
             .blocks
@@ -141,15 +144,17 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             .map(|block| ctx.declare_block_from_lir(&mut builder, func, block))
             .collect();
 
+        let f_dbg_ctx = ctx.dwarf_def_function(key);
+
         Translator { ctx, f: Current::new(func, builder, blockmap) }.lower_and_finalize_current();
 
-        info!("lowered {}:\n {clfunc}", func.symbol);
+        info!("lowered {}:\n {}", func.symbol, &cctx.func);
 
-        if let Err(err) = cranelift_codegen::verify_function(&clfunc, ctx.isa.as_ref()) {
+        if let Err(err) = cranelift_codegen::verify_function(&cctx.func, ctx.isa.as_ref()) {
             error!("cranelift_codegen verifier error:\n{err}");
         }
 
-        clfunc
+        f_dbg_ctx
     }
 
     fn lower_and_finalize_current(mut self) {

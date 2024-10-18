@@ -18,6 +18,7 @@ use std:list:vec [Vec]
 use std:gc
 use std:env [process_arguments]
 use std:array
+use std:unwind
 pub use std:tyinfo [Type]
 
 // we need these so that their implementations are always included

@@ -61,3 +61,14 @@ pub fn any f slice as fn(a -> bool), Slice a -> bool =
       if f elem
         then true
         else next (i+1)
+
+// TODO: do something more efficient
+when a can ToString
+impl ToString for Slice a
+  fn show slice as self -> string =
+    "[" <++> show_ slice
+    where
+      fn show_ slice as Slice a -> string = 
+        match split slice
+        | Nothing -> "]"
+        | Just (x, xs) -> show x <++> ", " <++> show_ xs

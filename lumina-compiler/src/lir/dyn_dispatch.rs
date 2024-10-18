@@ -55,7 +55,9 @@ impl<'a> FuncLower<'a> {
                     ssa.jump(target, applicated)
                 };
 
-                let mfunc = self.create_deref_funcwrapper(symbol, construct, fnptr_ptypes, ret);
+                let module = self.current.origin.module();
+                let mfunc =
+                    self.create_deref_funcwrapper(symbol, module, construct, fnptr_ptypes, ret);
                 self.lir.memo_closures.insert(key, mfunc);
 
                 mfunc
@@ -132,8 +134,9 @@ impl<'a> FuncLower<'a> {
 
         let symbol = format!("__Partial_{target}_in_{}", self.current.mfkey);
 
-        let mfunc =
-            self.create_deref_funcwrapper(symbol, construct, fnptr_ptypes, inner_ret.clone());
+        let module = self.current.origin.module();
+        let ret = inner_ret.clone();
+        let mfunc = self.create_deref_funcwrapper(symbol, module, construct, fnptr_ptypes, ret);
 
         params.insert(0, target.value());
         self.construct_closure(mfunc, remaining, params, capture_tuple)
@@ -231,7 +234,8 @@ impl<'a> FuncLower<'a> {
                     let v = ssa.construct(fptrs, vtable_type.into());
                     ssa.return_(v);
 
-                    self.lir.push_function(symbol, ssa, vtable_type.into())
+                    self.lir
+                        .push_function(symbol, ikey.0, ssa, vtable_type.into())
                 };
 
                 self.lir.functions[vtable_val_initializer].pointed_to_by_func_pointer = true;
@@ -302,12 +306,13 @@ impl<'a> FuncLower<'a> {
             ssa.jump(target, params);
         };
 
-        self.create_deref_funcwrapper(symbol, con, params, ret)
+        self.create_deref_funcwrapper(symbol, trait_.0, con, params, ret)
     }
 
     fn create_deref_funcwrapper(
         &mut self,
         symbol: String,
+        module: key::Module,
         construct: impl FnOnce(&mut Self, &mut Blocks),
         ptypes: Vec<MonoType>,
         ret: MonoType,
@@ -320,7 +325,7 @@ impl<'a> FuncLower<'a> {
         // Construct the forwarding jump
         construct(self, &mut ssa);
 
-        let mfunc = self.lir.push_function(symbol, ssa, ret);
+        let mfunc = self.lir.push_function(symbol, module, ssa, ret);
         self.lir.functions[mfunc].pointed_to_by_func_pointer = true;
 
         mfunc

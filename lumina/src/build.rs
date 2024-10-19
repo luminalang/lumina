@@ -48,7 +48,7 @@ pub fn build_project(
         Ok(ast) => ast,
     };
 
-    let pinfo = match project_info(&ast.lookups) {
+    let pinfo = match project_info(ast.main_module, &ast.lookups) {
         Err(err) => {
             eprintln!("{err}");
             return Err(ExitCode::FAILURE);
@@ -126,15 +126,17 @@ pub fn run_built_binary(output: &FilePathBuf) -> ExitCode {
 }
 
 pub fn project_info<'s>(
+    from: key::Module,
     lookups: &ast::Lookups<'s>,
 ) -> Result<compiler::ProjectInfo, lumina_util::Error> {
     fn resolve_or_error<'a, 's, T>(
+        from: key::Module,
         lookups: &ast::Lookups<'s>,
         names: &[&'a str],
         f: impl FnOnce(ast::Entity<'a, 's>) -> Option<T>,
     ) -> Result<M<T>, lumina_util::Error> {
         lookups
-            .resolve_langitem(names)
+            .resolve_langitem(from, names)
             .map_err(|_| {
                 lumina_util::Error::error("project error").with_text(format!(
                     "`{}` core item not found",
@@ -158,7 +160,7 @@ pub fn project_info<'s>(
         &["std", "prelude", "dealloc"],
     ]
     .try_map(|path| {
-        resolve_or_error(lookups, path, |k| match k {
+        resolve_or_error(from, lookups, path, |k| match k {
             ast::Entity::Func(ast::NFunc::Key(func)) => Some(func),
             _ => None,
         })
@@ -170,28 +172,28 @@ pub fn project_info<'s>(
         &["std", "prelude", "Stringable"],
     ]
     .try_map(|path| {
-        resolve_or_error(lookups, path, |k| match k {
+        resolve_or_error(from, lookups, path, |k| match k {
             ast::Entity::Type(key::TypeKind::Trait(trait_)) => Some(trait_),
             _ => None,
         })
     })?;
 
-    let reflect_type = resolve_or_error(lookups, &["std", "prelude", "Type"], |k| match k {
+    let reflect_type = resolve_or_error(from, lookups, &["std", "prelude", "Type"], |k| match k {
         ast::Entity::Type(key::TypeKind::Trait(key)) => Some(key),
         _ => None,
     })?;
 
-    let maybe = resolve_or_error(lookups, &["std", "prelude", "Maybe"], |k| match k {
+    let maybe = resolve_or_error(from, lookups, &["std", "prelude", "Maybe"], |k| match k {
         ast::Entity::Type(key::TypeKind::Sum(key)) => Some(key),
         _ => None,
     })?;
 
-    let list_default = resolve_or_error(lookups, &["std", "prelude", "List"], |k| match k {
+    let list_default = resolve_or_error(from, lookups, &["std", "prelude", "List"], |k| match k {
         ast::Entity::Type(kind) => Some(kind),
         _ => None,
     })?;
 
-    let string = resolve_or_error(lookups, &["std", "prelude", "string"], |k| match k {
+    let string = resolve_or_error(from, lookups, &["std", "prelude", "string"], |k| match k {
         ast::Entity::Type(key::TypeKind::Record(key)) => Some(key),
         _ => None,
     })?;

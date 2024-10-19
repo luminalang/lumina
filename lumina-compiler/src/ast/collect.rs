@@ -49,13 +49,15 @@ impl<'s> Collector<'s> {
         err
     }
 
-    pub fn include_dir(&mut self, module: key::Module, path: PathBuf) -> Result<(), Error> {
+    pub fn include_dir(
+        &mut self,
+        root_name: &str,
+        module: key::Module,
+        path: PathBuf,
+    ) -> Result<(), Error> {
         let dir = std::fs::read_dir(&path).map_err(|err| {
             self.reserve_module_and_err(module, &path, Error::Dir(err, path.clone()))
         })?;
-        let is_entrypoint = module == self.lookups.project;
-
-        let root_name = is_entrypoint.then_some("main.lm").unwrap_or("lib.lm");
 
         {
             let root = path.join(root_name);
@@ -86,7 +88,7 @@ impl<'s> Collector<'s> {
             }
 
             // prelude has already been included as module key 0
-            if is_entrypoint && fname == OsStr::new("prelude") {
+            if self.lookups.is_entry_module(module) && fname == OsStr::new("prelude") {
                 continue;
             }
 
@@ -109,7 +111,7 @@ impl<'s> Collector<'s> {
                 let src = self.sources.push(child, source, path);
                 self.parse_declarations(child, src);
             } else {
-                self.include_dir(child, path)?;
+                self.include_dir("lib.lm", child, path)?;
             }
         }
 
@@ -481,7 +483,7 @@ impl<'s> Collector<'s> {
         let path = self.std_lib_directory.join(lib);
         let module = self.lookups.new_lib(header, lib.to_string());
         self.entities.add_module(module);
-        if let Err(err) = self.include_dir(module, path) {
+        if let Err(err) = self.include_dir("lib.lm", module, path) {
             self.emit_stdlib_err(span, from, err);
         }
     }

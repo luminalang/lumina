@@ -45,7 +45,6 @@ impl Visibility {
 
 pub struct Lookups<'s> {
     modules: Map<key::Module, Namespaces<'s>>,
-    pub project: key::Module,
     libs: HashMap<&'static str, HashMap<String, key::Module>>,
 }
 
@@ -57,7 +56,7 @@ impl<'s> Lookups<'s> {
         libs.insert("std", HashMap::new());
         libs.insert("ext", HashMap::new());
 
-        Lookups { libs, modules, project: key::Module(u32::MAX) }
+        Lookups { libs, modules }
     }
 
     pub fn find_lib(&self, root: &str, name: &str) -> Option<key::Module> {
@@ -89,6 +88,13 @@ impl<'s> Lookups<'s> {
             stdlib: parent.map(|m| self.is_stdlib(m)).unwrap_or(false),
         };
         self.modules.push(namespaces)
+    }
+
+    pub fn is_entry_module(&mut self, m: key::Module) -> bool {
+        match self.modules[m].kind {
+            ModuleKind::Root { parent, .. } => parent.is_none(),
+            _ => false,
+        }
     }
 
     pub fn is_stdlib(&self, module: key::Module) -> bool {
@@ -234,9 +240,11 @@ impl<'s> Lookups<'s> {
 
     pub fn resolve_langitem<'a>(
         &self,
+        from: key::Module,
         names: &[&'a str],
     ) -> Result<Mod<Entity<'a, 's>>, ImportError<'a>> {
-        self.resolve(self.project, Namespace::Functions, names, true)
+        let root = self.get_root_module(from);
+        self.resolve(root, Namespace::Functions, names, true)
     }
 
     fn resolve<'a>(
@@ -269,7 +277,7 @@ impl<'s> Lookups<'s> {
             }
             None if path[0] == "project" => {
                 path = &path[1..];
-                self.project
+                self.get_root_module(from)
             }
             None => from,
         };

@@ -30,6 +30,8 @@ pub struct AST<'s> {
     pub lookups: Lookups<'s>,
     pub sources: Sources,
 
+    pub main_module: key::Module,
+
     pub config: ProjectConfig,
 }
 
@@ -94,12 +96,12 @@ pub fn parse_with_config<'s>(
         let prelude_path = lumina_util::Identifier::parse(&config.prelude)
             .expect("invalid prelude path")
             .to_directory(&lumina, &project, &lumina);
-        collector.include_dir(key::PRELUDE, prelude_path)?;
+        collector.include_dir("lib.lm", key::PRELUDE, prelude_path)?;
 
         // include the project source directory recursively
-        collector.lookups.project = collector.lookups.new_root_module(None);
-        collector.entities.add_module(collector.lookups.project);
-        collector.include_dir(collector.lookups.project, project.join("src"))?;
+        let main_module = collector.lookups.new_root_module(None);
+        collector.entities.add_module(main_module);
+        collector.include_dir("main.lm", main_module, project.join("src"))?;
 
         // include all external dependencies listed in config
         for dep in config.dependencies.iter() {
@@ -112,6 +114,9 @@ pub fn parse_with_config<'s>(
             entities: collector.entities,
             lookups: collector.lookups,
             sources: collector.sources,
+
+            main_module,
+
             config,
         })
     }
@@ -147,7 +152,7 @@ fn include_ext_library<'s>(
     path.push("src");
 
     collector.entities.add_module(module);
-    collector.include_dir(module, path)?;
+    collector.include_dir("lib.lm", module, path)?;
 
     // include all external dependencies listed in config
     for dep in config.dependencies.iter() {

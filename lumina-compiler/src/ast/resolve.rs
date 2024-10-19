@@ -3,6 +3,8 @@ use crate::impl_map_arrow_fmt;
 use itertools::Itertools;
 use lumina_key as key;
 use lumina_key::{Map, M};
+use lumina_parser::Type;
+use lumina_util::Tr;
 use lumina_util::{Highlighting, Span};
 use std::collections::HashMap;
 use std::fmt;
@@ -124,6 +126,17 @@ impl<'s> Lookups<'s> {
         T::insert(m, name, &mut self.modules[module])
     }
 
+    pub fn declare_alias(
+        &mut self,
+        module: key::Module,
+        visibility: Visibility,
+        name: &'s str,
+        dst: Tr<Type<'s>>,
+    ) {
+        let dst = Mod { module, visibility, key: dst };
+        self.modules[module].aliases.insert(name, dst);
+    }
+
     pub fn declare_accessor(
         &mut self,
         module: key::Module,
@@ -166,31 +179,49 @@ impl<'s> Lookups<'s> {
         children.insert(name, m);
     }
 
-    /// Resolve an entity and prioritise the function namespace
-    pub fn resolve_func(
+    pub fn alias_as_func<'t, 'a>(
         &self,
         from: key::Module,
-        path: &[&'s str],
-    ) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
+        alias: &'t Type<'a>,
+    ) -> Option<(&'t [&'a str], Mod<NFunc>)> {
+        if let Type::Defined(path, params) = alias {
+            if params.is_empty() {
+                if let Ok(f) = self.resolve_func(from, path.path.as_slice()) {
+                    if let Entity::Func(nfunc) = f.key {
+                        return Some((path.path.as_slice(), f.map(|_| nfunc)));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Resolve an entity and prioritise the function namespace
+    pub fn resolve_func<'a>(
+        &self,
+        from: key::Module,
+        path: &[&'a str],
+    ) -> Result<Mod<Entity<'a, 's>>, ImportError<'a>> {
         self.resolve(from, Namespace::Functions, path, false)
     }
     /// Resolve an entity and prioritise the type namespace
-    pub fn resolve_type(
+    pub fn resolve_type<'a>(
         &self,
         from: key::Module,
-        path: &[&'s str],
-    ) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
+        path: &[&'a str],
+    ) -> Result<Mod<Entity<'a, 's>>, ImportError<'a>> {
         self.resolve(from, Namespace::Types, path, false)
     }
     /// Resolve an entity and prioritise the module/imports namespace
-    pub fn resolve_module(
+    pub fn resolve_module<'a>(
         &self,
         from: key::Module,
-        path: &[&'s str],
-    ) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
+        path: &[&'a str],
+    ) -> Result<Mod<Entity<'a, 's>>, ImportError<'a>> {
         self.resolve(from, Namespace::Modules, path, false)
     }
-    pub fn resolve_import(&self, from: key::Module, name: &'s str) -> Option<Mod<key::Module>> {
+    pub fn resolve_import(&self, from: key::Module, name: &str) -> Option<Mod<key::Module>> {
         self.modules[from]
             .child_modules
             .get(name)
@@ -201,17 +232,20 @@ impl<'s> Lookups<'s> {
             })
     }
 
-    pub fn resolve_langitem(&self, names: &[&'s str]) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
+    pub fn resolve_langitem<'a>(
+        &self,
+        names: &[&'a str],
+    ) -> Result<Mod<Entity<'a, 's>>, ImportError<'a>> {
         self.resolve(self.project, Namespace::Functions, names, true)
     }
 
-    fn resolve(
+    fn resolve<'a>(
         &self,
         from: key::Module,
         namespace: Namespace,
-        mut path: &[&'s str],
+        mut path: &[&'a str],
         mut ignore_vis: bool,
-    ) -> Result<Mod<Entity<'s>>, ImportError<'s>> {
+    ) -> Result<Mod<Entity<'a, 's>>, ImportError<'a>> {
         trace!(
             "attempting to resolve {} from {from} in namespace {namespace:?}",
             path.iter().format(":")
@@ -255,7 +289,7 @@ impl<'s> Lookups<'s> {
         module: key::Module,
         name: &'a str,
         igv: bool,
-    ) -> Result<Mod<Entity<'a>>, ImportError<'a>> {
+    ) -> Result<Mod<Entity<'a, 's>>, ImportError<'a>> {
         self.resolve_in(origin, Namespace::Types, module, &[name], igv)
     }
 
@@ -273,7 +307,7 @@ impl<'s> Lookups<'s> {
         module: key::Module,
         path: &[&'a str],
         ignore_vis: bool,
-    ) -> Result<Mod<Entity<'a>>, ImportError<'a>> {
+    ) -> Result<Mod<Entity<'a, 's>>, ImportError<'a>> {
         let entity = match path {
             [] => Ok(Mod {
                 key: Entity::Module(module),
@@ -396,19 +430,22 @@ enum Namespace {
 }
 
 #[derive(Debug)]
-pub enum Entity<'s> {
+pub enum Entity<'a, 's> {
     Module(key::Module),
     Func(NFunc),
     Type(key::TypeKind),
-    Member(key::TypeKind, &'s str),
-    // Method((key::Type, key::Method)),
-    // since these can be multiple, we can't really handle it in normal resolve
-    // Accessors((key::Type, key::RecordField)),
+    Member(key::TypeKind, &'a str),
+    /// Even though it's parsed as a type; it could be a function. You need to check
+    Alias(Tr<Type<'s>>),
 }
 
-impl<'s> Entity<'s> {
+impl<'a, 's> Entity<'a, 's> {
     pub fn describe(&self) -> &'static str {
         match self {
+            Entity::Alias(ty) => match &ty.value {
+                Type::Defined(_, params) if params.is_empty() => "alias",
+                _ => "type",
+            },
             Entity::Module(_) => "module",
             Entity::Func(_) => "function",
             Entity::Type(_) => "type",
@@ -454,6 +491,7 @@ impl_entityt!(key::TypeKind, types);
 
 #[derive(Default, Debug)]
 pub struct Namespaces<'s> {
+    aliases: HashMap<&'s str, Mod<Tr<Type<'s>>>>,
     funcs: HashMap<&'s str, Mod<NFunc>>,
     types: HashMap<&'s str, Mod<key::TypeKind>>,
 
@@ -484,35 +522,49 @@ impl Default for ModuleKind {
 }
 
 impl<'s> Namespaces<'s> {
-    fn try_namespace<'a>(&self, namespace: Namespace, name: &'a str) -> Option<Mod<Entity<'a>>> {
+    fn try_namespace<'a>(
+        &self,
+        namespace: Namespace,
+        name: &'a str,
+    ) -> Option<Mod<Entity<'a, 's>>> {
         match namespace {
             Namespace::Functions => self
                 .try_function_namespace(name)
+                .or_else(|| self.try_alias_namespace(name))
                 .or_else(|| self.try_type_namespace(name))
                 .or_else(|| self.try_child_imports(name)),
             Namespace::Types => self
                 .try_type_namespace(name)
+                .or_else(|| self.try_alias_namespace(name))
                 .or_else(|| self.try_function_namespace(name))
                 .or_else(|| self.try_child_imports(name)),
             Namespace::Modules => self
                 .try_child_imports(name)
+                .or_else(|| self.try_alias_namespace(name))
                 .or_else(|| self.try_function_namespace(name))
                 .or_else(|| self.try_type_namespace(name)),
         }
     }
 
-    fn try_function_namespace<'a>(&self, name: &'a str) -> Option<Mod<Entity<'a>>> {
+    fn try_function_namespace<'a>(&self, name: &'a str) -> Option<Mod<Entity<'a, 's>>> {
         self.funcs.get(name).copied().map(|m| m.map(Entity::Func))
     }
 
-    fn try_child_imports<'a>(&self, name: &'a str) -> Option<Mod<Entity<'a>>> {
+    fn try_alias_namespace<'a>(&self, name: &'a str) -> Option<Mod<Entity<'a, 's>>> {
+        self.aliases
+            .get(name)
+            .cloned()
+            .map(|m| m.map(Entity::Alias))
+    }
+
+    fn try_child_imports<'a>(&self, name: &'a str) -> Option<Mod<Entity<'a, 's>>> {
         self.child_modules
             .get(name)
             .copied()
             .map(|m| m.map(Entity::Module))
     }
 
-    fn try_type_namespace<'a>(&self, name: &'a str) -> Option<Mod<Entity<'a>>> {
+    fn try_type_namespace<'a>(&self, name: &'a str) -> Option<Mod<Entity<'a, 's>>> {
         self.types.get(name).copied().map(|m| m.map(Entity::Type))
     }
 

@@ -660,14 +660,28 @@ impl<'a, 's> Verify<'a, 's> {
                 match result {
                     Ok(entity) => match entity.key {
                         ast::Entity::Func(nfunc) => {
-                            self.current
-                                .type_dependent_lookup
-                                .push_back(M(entity.module, nfunc));
-                            self.type_of_nfunc(span, M(entity.module, nfunc), tanot)
+                            let f = M(entity.module, nfunc);
+                            self.current.type_dependent_lookup.push_back(f);
+                            self.type_of_nfunc(span, f, tanot)
+                        }
+                        ast::Entity::Alias(ty) => {
+                            if let Some((_, nfunc)) =
+                                self.hir.lookups.alias_as_func(entity.module, &ty)
+                            {
+                                let f = M(nfunc.module, nfunc.key);
+                                self.current.type_dependent_lookup.push_back(f);
+                                self.type_of_nfunc(span, f, tanot)
+                            } else {
+                                self.error("invalid function")
+                                    .eline(span, format!("{name} is a type, not a function"))
+                                    .emit();
+
+                                InstCall::TypeDependentFailure
+                            }
                         }
                         ast::Entity::Member(_, _) => todo!(),
                         ast::Entity::Module(_) => todo!(),
-                        ast::Entity::Type(_) => {
+                        _ => {
                             self.error("invalid function")
                                 .eline(span, format!("{name} is a type, not a function"))
                                 .emit();

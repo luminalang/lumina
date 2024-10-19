@@ -1,0 +1,5 @@
+---
+source: lumina-parser/src/tests.rs
+expression: "{ \"alias IoResult = Result int IoError\"; format! (\"\\n{}\", ast) }"
+---
+alias IoResult = (Result int IoError)

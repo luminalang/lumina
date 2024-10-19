@@ -89,6 +89,8 @@ pub enum Token {
     FnOpenParen,
     #[token("fnptr(")]
     FnPtrOpenParen,
+    #[token("alias")]
+    Alias,
     #[token("type")]
     Type,
     #[token("trait")]
@@ -138,6 +140,7 @@ impl Token {
             T::Type,
             T::Trait,
             T::Impl,
+            T::Alias,
             T::When,
             T::Default,
             T::When,
@@ -190,6 +193,7 @@ impl Token {
             T::Fn => "start of function declaration",
             T::FnOpenParen => "start of closure type",
             T::FnPtrOpenParen => "start of function pointer type",
+            T::Alias => "start of alias declaration",
             T::Type => "start of type declaration",
             T::Trait => "start of trait declaration",
             T::Use => "use declaration",

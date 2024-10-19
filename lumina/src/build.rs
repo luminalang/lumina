@@ -128,10 +128,10 @@ pub fn run_built_binary(output: &FilePathBuf) -> ExitCode {
 pub fn project_info<'s>(
     lookups: &ast::Lookups<'s>,
 ) -> Result<compiler::ProjectInfo, lumina_util::Error> {
-    fn resolve_or_error<'s, T>(
+    fn resolve_or_error<'a, 's, T>(
         lookups: &ast::Lookups<'s>,
-        names: &[&'s str],
-        f: impl FnOnce(ast::Entity<'s>) -> Option<T>,
+        names: &[&'a str],
+        f: impl FnOnce(ast::Entity<'a, 's>) -> Option<T>,
     ) -> Result<M<T>, lumina_util::Error> {
         lookups
             .resolve_langitem(names)

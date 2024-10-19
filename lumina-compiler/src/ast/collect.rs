@@ -149,6 +149,9 @@ impl<'s> Collector<'s> {
             parser::Declaration::Function(func) => {
                 self.include_func(module, func, true, |body| body.map(FuncBody::Func));
             }
+            parser::Declaration::Alias(alias) => {
+                self.include_alias(module, alias);
+            }
             parser::Declaration::Type(ty) => {
                 self.include_type(module, ty);
             }
@@ -256,6 +259,15 @@ impl<'s> Collector<'s> {
                 self.entities.fheaders[fkey.inside(module)].name
             }
         }
+    }
+
+    fn include_alias(&mut self, module: key::Module, alias: parser::alias::Declaration<'s>) {
+        let attributes = attr::TypeAttr::parse(module, &self.sources, &alias.attributes);
+
+        let visibility = Visibility::from_public_flag(module, attributes.shared.public);
+
+        self.lookups
+            .declare_alias(module, visibility, *alias.name, alias.dst);
     }
 
     fn include_type(
@@ -602,6 +614,12 @@ impl<'s> Collector<'s> {
         for exposed in exposing {
             let span = exposed.span;
 
+            let expose_func = |this: &mut Self, name: &'s str, m: key::Module, nfunc: NFunc| {
+                if let Some(existing) = this.lookups.declare(module, v, name, m, nfunc) {
+                    this.emit_func_already_exists(module, span, existing);
+                }
+            };
+
             match self
                 .lookups
                 .resolve_entity_in(module, dst, exposed.name, false)
@@ -609,13 +627,16 @@ impl<'s> Collector<'s> {
                 Ok(entity) => match entity.key {
                     Entity::Func(nfunc) => {
                         self.forbid_members(module, "function", &exposed);
-                        if let Some(existing) =
-                            self.lookups
-                                .declare(module, v, exposed.name, entity.module, nfunc)
-                        {
-                            self.emit_func_already_exists(module, exposed.span, existing);
-                        }
+                        expose_func(self, exposed.name, entity.module, nfunc);
                     }
+                    Entity::Alias(ty) => match self.lookups.alias_as_func(dst, &ty) {
+                        Some((path, nfunc)) => {
+                            self.forbid_members(module, "function", &exposed);
+                            let name = path.last().unwrap();
+                            expose_func(self, name, nfunc.module, nfunc.key);
+                        }
+                        None => unimplemented!("importing public type aliases"),
+                    },
                     Entity::Type(ty) => {
                         if let Some(existing) =
                             self.lookups

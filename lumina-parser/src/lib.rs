@@ -17,6 +17,7 @@ mod shared;
 pub use shared::{AnnotatedPath, CurlyInit, Field, Fields, ListLength};
 pub mod ty;
 pub use ty::Type;
+pub mod alias;
 mod error;
 pub use error::Error;
 pub mod r#use;
@@ -134,6 +135,7 @@ impl<'a> Parser<'a> {
             Declaration::ModuleAttribute(_, attributes)
             | Declaration::Impl(r#impl::Declaration { attributes, .. })
             | Declaration::Type(ty::Declaration { attributes, .. })
+            | Declaration::Alias(alias::Declaration { attributes, .. })
             | Declaration::Function(func::Declaration { attributes, .. }) => {
                 attributes.extend(attribute);
                 decl
@@ -178,6 +180,7 @@ impl<'a> Parser<'a> {
             },
             T::OpenModuleAttribute => wrap(|attrs| Declaration::ModuleAttribute(span, attrs), self.attribute(span)),
             T::Fn => wrap(Declaration::Function, self.func(when::Constraints::empty(), None, vec![])),
+            T::Alias => wrap(Declaration::Alias, self.alias(vec![])),
             T::Type => wrap(Declaration::Type, self.type_decleration(vec![])),
             T::Trait => wrap(Declaration::Type, self.r#trait(vec![])),
             T::Use => wrap(Declaration::Use, self.r#use()),
@@ -319,6 +322,7 @@ impl<'a> Parser<'a> {
 pub enum Declaration<'a> {
     ModuleAttribute(Span, Vec<Tr<expr::Expr<'a>>>),
     Function(func::Declaration<'a>),
+    Alias(alias::Declaration<'a>),
     Type(ty::Declaration<'a>),
     Impl(r#impl::Declaration<'a>),
     Use(r#use::Declaration<'a>),
@@ -334,6 +338,7 @@ impl<'a> fmt::Display for Declaration<'a> {
             Declaration::ModuleAttribute(_, attribute) => {
                 writeln!(f, "@![{}]", attribute.iter().format(", "))
             }
+            Declaration::Alias(alias) => alias.fmt(f),
             Declaration::Function(func) => func.fmt(f),
             Declaration::Type(type_) => type_.fmt(f),
             Declaration::Impl(impl_) => impl_.fmt(f),

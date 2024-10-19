@@ -183,6 +183,7 @@ match (match 0 | 0 -> true | _ -> false)
 "
 );
 
+declaration!(decl_alias, "alias IoResult = Result int IoError");
 declaration!(decl_option, "type Option a = Just a | None");
 declaration!(decl_point_single_line, "type Point a { x a, y a }");
 declaration!(

@@ -223,6 +223,9 @@ impl<'a, 's> Lower<'a, 's> {
                                 unordered_fields.push((field, bind.span, expr));
                             }
                             None => {
+                                let fname = self.fnames[key][field];
+                                self.errors
+                                    .push(FinError::MissingField(fname.to_string(), expr.span));
                                 unordered_fields.push((field, expr.span, Expr::Poison));
                             }
                         }

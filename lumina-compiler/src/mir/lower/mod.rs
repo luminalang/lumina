@@ -99,6 +99,7 @@ pub enum FinError {
     BadArrayCount { got: Tr<usize>, exp: Tr<u64> },
     BadGenericArrayCount { got: Tr<usize> },
     DuplicateField(Tr<String>, Span),
+    MissingField(String, Span),
 }
 
 impl<'a, 's> Lower<'a, 's> {
@@ -427,6 +428,12 @@ pub fn emit_fin_error<'s>(
                 )
                 .emit();
         }
+        // TODO: merge multiple
+        FinError::MissingField(field, rspan) => sources
+            .error("missing record field")
+            .m(module)
+            .eline(rspan, format!("field `{field}` is missing"))
+            .emit(),
     }
 }
 

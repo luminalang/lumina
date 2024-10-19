@@ -834,6 +834,23 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         })
     }
 
+    fn resolve_variant(&self, sum: M<key::Sum>, span: Span, vname: &str) -> Option<key::Variant> {
+        let variants = &self.ast.entities.variant_names[sum];
+        let var = variants.find(|n| **n == vname);
+        let tname = self
+            .ast
+            .entities
+            .header_of_ty(sum.map(key::TypeKind::Sum))
+            .header
+            .name;
+        if var.is_none() {
+            self.ast
+                .sources
+                .emit_member_not_found(sum.0, span, "type", tname, vname);
+        }
+        var
+    }
+
     fn try_resolve_foreign(
         &mut self,
         span: Span,
@@ -874,14 +891,8 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                             ast::NFunc::Method(trait_, method)
                         }
                         key::TypeKind::Sum(sum) => {
-                            let variants = &self.ast.entities.variant_names[sum.inside(module)];
-                            match variants.find(|n| **n == name) {
-                                None => {
-                                    self.ast
-                                        .sources
-                                        .emit_member_not_found(module, span, "type", tname, name);
-                                    return None;
-                                }
+                            match self.resolve_variant(sum.inside(module), span, name) {
+                                None => return None,
                                 Some(var) => ast::NFunc::SumVar(sum, var),
                             }
                         }

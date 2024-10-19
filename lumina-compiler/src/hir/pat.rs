@@ -295,6 +295,15 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                     let params = self.pats(params);
                     Pattern::Constructor(type_.inside(module), var, params)
                 }
+                Ok(Mod {
+                    key: Entity::Member(key::TypeKind::Sum(sum), name), module, ..
+                }) => match self.resolve_variant(sum.inside(module), span, name) {
+                    None => Pattern::Poison,
+                    Some(var) => {
+                        let params = self.pats(params);
+                        Pattern::Constructor(sum.inside(module), var, params)
+                    }
+                },
 
                 _ if is_valid_wildcard() => {
                     let bind = self.bindings.declare(path[0]);

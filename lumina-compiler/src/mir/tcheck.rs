@@ -249,8 +249,16 @@ impl SameAsCheck {
                 for (got, _) in types {
                     err.clone()
                         .eline(got.span, self.kind)
-                        .text(format!("{}      {}", "got".purple(), got))
-                        .text(format!("{} {}", "expected".purple(), exp))
+                        .text(format!(
+                            "{}      {}",
+                            "got".purple(),
+                            tfmt.clone().fmt(&**got)
+                        ))
+                        .text(format!(
+                            "{} {}",
+                            "expected".purple(),
+                            tfmt.clone().fmt(&**exp)
+                        ))
                         .iline(
                             exp.span,
                             format!("type set by this and {expc} other {elem}(s)"),

@@ -679,43 +679,13 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
 
         let (mut params, expr) = self.lower_func_body(header, body);
 
-        let error_text = || {
-            format!(
-                "{} patterns, function expects {} parameters",
-                params.len().numeric(),
-                typing.params.len().numeric(),
-            )
-        };
-
-        match params.len().cmp(&typing.params.len()) {
-            Ordering::Equal => {}
-            Ordering::Less => {
-                let span = header.name.span.extend_by_params(&params);
-                self.ast
-                    .sources
-                    .error("missing parameter pattern(s)")
-                    .m(self.module)
-                    .eline(span, error_text())
-                    .emit();
-
-                while params.len() < typing.params.len() {
-                    params.push(Pattern::Poison.tr(span));
-                }
-            }
-            Ordering::Greater => {
-                let span = Span::from_params(typing.params.values(), |v| v.span);
-                self.ast
-                    .sources
-                    .error("missing parameter type(s)")
-                    .m(self.module)
-                    .eline(span, error_text())
-                    .emit();
-
-                while params.len() > typing.params.len() {
-                    typing.params.push(Ty::poison().tr(span));
-                }
-            }
-        }
+        check_param_len(
+            self.module,
+            self.ast,
+            header.name.span,
+            &mut typing.params,
+            &mut params,
+        );
 
         let forall = self.type_info.leave_function();
         info!("forall lowered to: {}", forall);
@@ -799,7 +769,16 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             };
 
             self.bindings.enter();
-            let patterns = self.patterns(&fdecl.header.params);
+            let mut patterns = self.patterns(&fdecl.header.params);
+
+            check_param_len(
+                self.module,
+                self.ast,
+                header.name.span,
+                &mut self.lambdas.typings[lkey].params,
+                &mut patterns,
+            );
+
             let expr = self.expr(lbody.expr.as_ref());
             let (captures, lcaptures) = self.bindings.leave();
             self.lambdas
@@ -1091,6 +1070,50 @@ fn include_constraints<'s, T: ty::FromVar>(
             .collect();
 
         attach(tinfo, key, cons)
+    }
+}
+
+fn check_param_len<'s>(
+    module: key::Module,
+    ast: &AST<'s>,
+    nspan: Span,
+    ptypes: &mut Map<key::Param, Tr<IType>>,
+    params: &mut Vec<Tr<hir::Pattern<'s>>>,
+) {
+    let error_text = || {
+        format!(
+            "{} patterns, function expects {} parameters",
+            params.len().numeric(),
+            ptypes.len().numeric(),
+        )
+    };
+
+    match params.len().cmp(&ptypes.len()) {
+        Ordering::Equal => {}
+        Ordering::Less => {
+            let span = nspan.extend_by_params(&params);
+            ast.sources
+                .error("missing parameter pattern(s)")
+                .m(module)
+                .eline(span, error_text())
+                .emit();
+
+            while params.len() < ptypes.len() {
+                params.push(Pattern::Poison.tr(span));
+            }
+        }
+        Ordering::Greater => {
+            let span = Span::from_params(ptypes.values(), |v| v.span);
+            ast.sources
+                .error("missing parameter type(s)")
+                .m(module)
+                .eline(span, error_text())
+                .emit();
+
+            while params.len() > ptypes.len() {
+                ptypes.push(Ty::poison().tr(span));
+            }
+        }
     }
 }
 

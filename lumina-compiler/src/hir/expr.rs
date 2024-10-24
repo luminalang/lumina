@@ -5,6 +5,7 @@ use crate::prelude::*;
 use ast::{Entity, Mod, NFunc};
 use derive_more::Display;
 use derive_more::From;
+use either::Either;
 use lumina_parser as parser;
 use lumina_typesystem::{Forall, Generic, IType, TEnv, Var};
 use lumina_util::Highlighting;
@@ -28,6 +29,7 @@ pub enum Expr<'s> {
         Option<Tr<key::Bind>>,
         Vec<(Tr<&'s str>, Tr<Self>)>,
     ),
+    BuiltinOp(&'static str, Box<[Tr<Self>; 2]>),
     Lit(Literal<'s>),
     Tuple(Vec<Tr<Self>>),
     List(Vec<Tr<Self>>, Var),
@@ -442,6 +444,20 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         let init = Side::Tail(init);
 
         let op = ops.iter().fold(init, |lhs, (op, rhs)| {
+            const BOOL_AND_PREC: u32 = 2000;
+            const BOOL_OR_PREC: u32 = 1900;
+
+            match **op {
+                // Since we want these to be lazy, they can't be user-defined operators
+                "&&" => {
+                    return lhs.handle_right(BOOL_AND_PREC, Either::Right("&&"), rhs.as_ref(), *op);
+                }
+                "||" => {
+                    return lhs.handle_right(BOOL_OR_PREC, Either::Right("||"), rhs.as_ref(), *op);
+                }
+                _ => {}
+            }
+
             match self.ast.lookups.resolve_func(self.module, &[**op]) {
                 Ok(entity) => match entity.key {
                     Entity::Func(func) => {
@@ -459,37 +475,9 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                         }
                         .expect("non-operator used as operator");
 
-                        let func = entity.map(|_| func);
+                        let func = Either::Left(entity.map(|_| func));
 
-                        match lhs {
-                            Side::Op(mut lop) => {
-                                if precedence > lop.precedence {
-                                    let previous_rhs = lop.sides[1].clone();
-                                    let this = OpTree {
-                                        func,
-                                        precedence,
-                                        raw: *op,
-                                        sides: Box::new([previous_rhs, Side::Tail(rhs.as_ref())]),
-                                    };
-                                    lop.sides[1] = Side::Op(this);
-                                    Side::Op(lop)
-                                } else {
-                                    let this = OpTree {
-                                        func,
-                                        precedence,
-                                        raw: *op,
-                                        sides: Box::new([Side::Op(lop), Side::Tail(rhs.as_ref())]),
-                                    };
-                                    Side::Op(this)
-                                }
-                            }
-                            Side::Tail(lhs) => Side::Op(OpTree {
-                                func,
-                                precedence,
-                                raw: *op,
-                                sides: Box::new([Side::Tail(lhs), Side::Tail(rhs.as_ref())]),
-                            }),
-                        }
+                        lhs.handle_right(precedence, func, rhs.as_ref(), *op)
                     }
                     _ => {
                         self.ast.sources.emit_wrong_entity(
@@ -518,7 +506,10 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         let [left, right] = *op.sides;
         let left = self.fold_optree_side(left);
         let right = self.fold_optree_side(right);
-        Expr::Call(op.func.into(), TypeAnnotation::new(), vec![left, right])
+        match op.func {
+            Either::Left(func) => Expr::Call(func.into(), TypeAnnotation::new(), vec![left, right]),
+            Either::Right(op) => Expr::BuiltinOp(op, Box::new([left, right])),
+        }
     }
 
     fn fold_optree_side<'o>(&mut self, side: Side<'o, 's>) -> Tr<Expr<'s>> {
@@ -833,10 +824,50 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
 
 #[derive(Clone, Debug)]
 struct OpTree<'a, 's> {
-    func: Mod<NFunc>,
+    func: Either<Mod<NFunc>, &'static str>,
     precedence: u32,
     raw: Tr<&'s str>,
     sides: Box<[Side<'a, 's>; 2]>,
+}
+
+impl<'a, 's> Side<'a, 's> {
+    fn handle_right(
+        self,
+        precedence: u32,
+        op: Either<Mod<NFunc>, &'static str>,
+        rhs: Tr<&'a parser::Expr<'s>>,
+        raw: Tr<&'s str>,
+    ) -> Side<'a, 's> {
+        match self {
+            Side::Op(mut lop) => {
+                if precedence > lop.precedence {
+                    let previous_rhs = lop.sides[1].clone();
+                    let this = OpTree {
+                        func: op,
+                        precedence,
+                        raw,
+                        sides: Box::new([previous_rhs, Side::Tail(rhs)]),
+                    };
+                    lop.sides[1] = Side::Op(this);
+                    Side::Op(lop)
+                } else {
+                    let this = OpTree {
+                        func: op,
+                        precedence,
+                        raw,
+                        sides: Box::new([Side::Op(lop), Side::Tail(rhs)]),
+                    };
+                    Side::Op(this)
+                }
+            }
+            Side::Tail(lhs) => Side::Op(OpTree {
+                func: op,
+                precedence,
+                raw,
+                sides: Box::new([Side::Tail(lhs), Side::Tail(rhs)]),
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -854,6 +885,7 @@ impl<'s> fmt::Display for Expr<'s> {
             Expr::Call(call, anot, params) => {
                 write!(f, "{op}{call}{anot:?} {}{cp}", params.iter().format(" "))
             }
+            Expr::BuiltinOp(op, params) => write!(f, "{} {op} {}", params[0], params[1]),
             Expr::PassExpr(inner) => {
                 write!(f, "#{op}{inner}{cp}")
             }

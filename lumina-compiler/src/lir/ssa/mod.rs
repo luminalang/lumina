@@ -517,6 +517,10 @@ impl V {
 }
 
 impl Value {
+    pub fn bool(b: bool) -> Value {
+        Value::Int(b as i128, IntSize::new(false, 8))
+    }
+
     pub fn maybe_just() -> Value {
         Value::Int(MAYBE_JUST.0 as i128, IntSize::new(false, 16))
     }

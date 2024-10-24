@@ -124,6 +124,12 @@ impl<'a, 's> Lower<'a, 's> {
                 }
                 hir::Callable::Builtin(name) => builtins::lower(self, *name, params, tanot),
             },
+            hir::Expr::BuiltinOp(op, params) => {
+                let left = self.lower_expr(params[0].as_ref());
+                let right = self.lower_expr(params[1].as_ref());
+
+                Expr::Num(op, Box::new([left, right]))
+            }
             hir::Expr::Pass(call, _, params) => match call {
                 hir::Callable::Func(nfunc) => {
                     let params = self.lower_exprs(params);

@@ -39,6 +39,19 @@ impl<'a, 's> Verify<'a, 's> {
                 self.current.casts_and_matches.push_back(ty_of_expr);
                 ty.value.clone()
             }
+            hir::Expr::BuiltinOp(op, params) => {
+                let exp = match *op {
+                    "&&" | "||" => IType::bool(),
+                    _ => panic!("unknown builtin operator: {op}"),
+                };
+                let lhs = self.type_check_expr(params[0].as_ref());
+                let rhs = self.type_check_expr(params[1].as_ref());
+
+                self.type_check_and_emit(lhs.as_ref(), (&exp).tr(expr.span));
+                self.type_check_and_emit(rhs.as_ref(), (&exp).tr(expr.span));
+
+                IType::bool()
+            }
             hir::Expr::Access(rvar, object, field) => {
                 let fieldvar = self.vars().add_field(*rvar, (**field).tr(field.span));
 

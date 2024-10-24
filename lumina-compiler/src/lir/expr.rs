@@ -288,28 +288,16 @@ impl<'a> FuncLower<'a> {
                 self.ssa().abs(n, ty)
             }
             mir::Expr::Num(name, params) => {
-                let [left, right] = [
-                    self.expr_to_value(&params[0]),
-                    self.expr_to_value(&params[1]),
-                ];
-
-                let ty = self.type_of_value(left);
-                let cty = self
-                    .lir
-                    .mono
-                    .get_or_make_tuple(vec![ty.clone(), MonoType::bool()])
-                    .into();
-
+                // Lazy operators
                 match *name {
-                    "plus" => self.ssa().add(left, right, ty),
-                    "minus" => self.ssa().sub(left, right, ty),
-                    "mul" => self.ssa().mul(left, right, ty),
-                    "div" => self.ssa().div(left, right, ty),
-                    "plus_checked" => self.ssa().add(left, right, cty),
-                    "minus_checked" => self.ssa().sub(left, right, cty),
-                    "mul_checked" => self.ssa().mul(left, right, cty),
-                    "div_checked" => self.ssa().div(left, right, cty),
-                    _ => panic!("unknown num builtin: {name}"),
+                    "&&" | "||" => self.lazy_binop(*name, &**params),
+                    _ => {
+                        let params = [
+                            self.expr_to_value(&params[0]),
+                            self.expr_to_value(&params[1]),
+                        ];
+                        self.eager_binop(*name, params)
+                    }
                 }
             }
             mir::Expr::Unreachable(_) => {
@@ -321,6 +309,55 @@ impl<'a> FuncLower<'a> {
                 // self.ssa().unreachable(ty).value()
             }
             mir::Expr::Poison => todo!(),
+        }
+    }
+
+    fn lazy_binop(&mut self, name: &'static str, params: &[mir::Expr; 2]) -> Value {
+        let left = self.expr_to_value(&params[0]);
+
+        let contb = self.ssa().new_block(1);
+        let rhsb = self.ssa().new_block(0);
+
+        match name {
+            "&&" => {
+                self.ssa()
+                    .select(left, [(rhsb, vec![]), (contb, vec![Value::bool(false)])]);
+            }
+            "||" => {
+                self.ssa()
+                    .select(left, [(contb, vec![Value::bool(true)]), (rhsb, vec![])]);
+            }
+            _ => panic!("unknown num builtin: {name}"),
+        }
+
+        self.ssa().switch_to_block(rhsb);
+
+        let v = self.expr_to_value(&params[1]);
+        self.ssa().jump(contb, vec![v]);
+        self.ssa().switch_to_block(contb);
+
+        let final_ = self.ssa().add_block_param(contb, MonoType::bool());
+        final_.value()
+    }
+
+    fn eager_binop(&mut self, name: &'static str, [left, right]: [Value; 2]) -> Value {
+        let ty = self.type_of_value(left);
+        let cty = self
+            .lir
+            .mono
+            .get_or_make_tuple(vec![ty.clone(), MonoType::bool()])
+            .into();
+
+        match name {
+            "plus" => self.ssa().add(left, right, ty),
+            "minus" => self.ssa().sub(left, right, ty),
+            "mul" => self.ssa().mul(left, right, ty),
+            "div" => self.ssa().div(left, right, ty),
+            "plus_checked" => self.ssa().add(left, right, cty),
+            "minus_checked" => self.ssa().sub(left, right, cty),
+            "mul_checked" => self.ssa().mul(left, right, cty),
+            "div_checked" => self.ssa().div(left, right, cty),
+            _ => panic!("unknown num builtin: {name}"),
         }
     }
 

@@ -369,6 +369,16 @@ impl<'s> Lookups<'s> {
         }
     }
 
+    pub fn get_parent(&self, of: key::Module) -> Option<key::Module> {
+        match self.modules[of].kind {
+            ModuleKind::Root { parent, .. } => match parent {
+                Some(p) => Some(p),
+                None => None,
+            },
+            ModuleKind::Member { root } => Some(root),
+        }
+    }
+
     /// Standard libraries do not have to be declared as dependencies but are still lazily included
     /// when imported. This checks whether the given path is an un-included standard library
     pub fn lib_should_be_included<'a, 'b>(

@@ -144,7 +144,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             .map(|block| ctx.declare_block_from_lir(&mut builder, func, block))
             .collect();
 
-        let f_dbg_ctx = ctx.dwarf_def_function(key);
+        let f_dbg_ctx = ctx.def_function(key);
 
         Translator { ctx, f: Current::new(func, builder, blockmap) }.lower_and_finalize_current();
 
@@ -633,7 +633,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 }
             }
             VEntry::StructStackPointer(key, ptr) => {
-                let (tagsize, _) = self.ctx.structs.records[key].as_sum();
+                let (tagsize, _, _) = self.ctx.structs.records[key].as_sum();
                 let tagt = Type::int(tagsize.bits() as u16).unwrap();
 
                 let size_t = self.ctx.size_t().bytes();

@@ -1,3 +1,4 @@
+use crate::debuginfo::BinDebugInfo;
 use crate::lir;
 use crate::prelude::*;
 use crate::target::{Arch, LinuxPlatform, Platform};
@@ -29,7 +30,7 @@ impl Target {
     }
 }
 
-pub fn run(target: Target, dwarf: mir::DwarfDebugInfo, lir: lir::Output) -> Vec<u8> {
+pub fn run(target: Target, dwarf: BinDebugInfo, lir: lir::Output) -> Vec<u8> {
     let mut shared_builder = settings::builder();
     shared_builder.set("opt_level", "speed").unwrap();
     let shared_flags = settings::Flags::new(shared_builder);
@@ -116,10 +117,9 @@ pub fn run(target: Target, dwarf: mir::DwarfDebugInfo, lir: lir::Output) -> Vec<
         .collect();
 
     let unwindinfo = unwind::UnwindContext::new(&*isa, true);
-    let debuginfo = debuginfo::DebugContext::new(&*isa, dwarf);
 
     let mut ctx = Context::new(
-        isa, &vals, &lir, structs, objmodule, funcmap, externmap, rotable, unwindinfo, debuginfo,
+        isa, &vals, &lir, structs, objmodule, funcmap, externmap, rotable, unwindinfo, dwarf,
     );
 
     let mut cctx = codegen::Context::new();
@@ -167,7 +167,7 @@ pub struct Context<'a> {
     externmap: HashMap<M<key::Func>, FuncHeader>,
     rotable: MMap<key::ReadOnly, DataId>,
     unwindinfo: unwind::UnwindContext,
-    debuginfo: debuginfo::DebugContext,
+    debuginfo: BinDebugInfo,
 }
 
 impl<'a> Context<'a> {

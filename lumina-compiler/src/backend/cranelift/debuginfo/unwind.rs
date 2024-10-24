@@ -4,7 +4,9 @@
 //! I barely understand what's actually going on here. However; It does seem to account for
 //! the differences between platforms. So; seems like a good thing to copy.
 
-use super::{add_debug_reloc, add_debug_section, address_for_func, DebugReloc, DebugRelocName};
+use crate::debuginfo::emit::{
+    add_debug_reloc, add_debug_section, address_for_func, DebugReloc, DebugRelocName,
+};
 use codegen::Context;
 use cranelift_codegen::ir::Endianness;
 use cranelift_codegen::isa::unwind::UnwindInfo;

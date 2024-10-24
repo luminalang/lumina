@@ -1,4 +1,4 @@
-use super::{FuncOrigin, MonoTyping, UNIT};
+use super::{Item, MonoTyping, UNIT};
 use crate::prelude::*;
 use ast::attr::Repr;
 use derive_more::{Deref, DerefMut};
@@ -92,9 +92,9 @@ impl MonoTypeData {
     }
 
     #[track_caller]
-    pub fn as_sum(&self) -> (IntSize, &Map<key::Variant, MonoTypeKey>) {
+    pub fn as_sum(&self) -> (IntSize, M<key::Sum>, &Map<key::Variant, MonoTypeKey>) {
         match self {
-            MonoTypeData::Sum { tag, variants, .. } => (*tag, variants),
+            MonoTypeData::Sum { tag, variants, key } => (*tag, *key, variants),
             other => panic!("not a record: {other:?}"),
         }
     }
@@ -640,7 +640,7 @@ impl<'a> Monomorphization<'a> {
         tys.into_iter().map(|ty| self.apply_weak(ty)).collect::<F>()
     }
 
-    pub fn apply_typing(&mut self, origin: FuncOrigin, typing: &mir::ConcreteTyping) -> MonoTyping {
+    pub fn apply_typing(&mut self, origin: Item, typing: &mir::ConcreteTyping) -> MonoTyping {
         MonoTyping {
             origin,
             params: self.applys(typing.params.iter()),

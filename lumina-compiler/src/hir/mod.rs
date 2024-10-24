@@ -543,6 +543,7 @@ pub struct FuncDef<'s> {
 
 #[derive(Clone, Default, Debug)]
 pub struct Lambdas<'s> {
+    pub names: Map<key::Lambda, &'s str>,
     pub foralls: RefCell<Map<key::Lambda, Forall<'s, Inference>>>,
     pub typings: Map<key::Lambda, Typing<IType>>,
     pub params: Map<key::Lambda, Vec<Tr<Pattern<'s>>>>,
@@ -563,6 +564,7 @@ impl<'s> Lambdas<'s> {
         typing: Typing<IType>,
     ) -> key::Lambda {
         let lkey = self.foralls.get_mut().push(forall);
+        self.names.push("");
         self.typings.push_as(lkey, typing);
         self.params.push_as(lkey, vec![]);
         self.bodies.push_as(lkey, Expr::Poison.tr(span));
@@ -573,12 +575,14 @@ impl<'s> Lambdas<'s> {
 
     pub fn complete_lambda(
         &mut self,
+        name: &'s str,
         key: key::Lambda,
         expr: Tr<Expr<'s>>,
         patterns: Vec<Tr<Pattern<'s>>>,
         captures: Vec<key::Bind>,
         capture_lambdas: Vec<key::Lambda>,
     ) {
+        self.names[key] = name;
         self.bodies[key] = expr;
         self.params[key] = patterns;
         self.captures[key] = captures;
@@ -802,8 +806,9 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             let patterns = self.patterns(&fdecl.header.params);
             let expr = self.expr(lbody.expr.as_ref());
             let (captures, lcaptures) = self.bindings.leave();
+            let name = *fdecl.header.name;
             self.lambdas
-                .complete_lambda(lkey, expr, patterns, captures, lcaptures);
+                .complete_lambda(name, lkey, expr, patterns, captures, lcaptures);
         }
 
         (params, expr)

@@ -300,7 +300,7 @@ impl<'a> Structs<'a> {
     // TODO: we're calling this operation *a lot* while it's fairly expensive we should probably
     // memoizise it.
     pub fn sum_payload_alloca_size(&self, sum: MonoTypeKey) -> u32 {
-        let (_, variants) = self.records[sum].as_sum();
+        let (_, _, variants) = self.records[sum].as_sum();
         variants
             .values()
             .map(|&param_tuple| self.size_of(&param_tuple.into()))

@@ -414,6 +414,10 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         (on, falsely): (ssa::Value, Block),
         (checks, next): (&[StrCheck], &DecTree<key::DecisionTreeTail>),
     ) {
+        // TODO: we should perform a single `len` check and then re-use it
+        //
+        // let len = Option<Value>;
+
         checks.iter().enumerate().fold(on, |mut on, (i, check)| {
             let is_last = i == checks.len() - 1;
 

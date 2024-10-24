@@ -34,7 +34,8 @@ pub fn raw_print str len as string, uint -> () =
 
 when s can ToString
 pub fn trace s as s -> s =
-  do print (ToString:show s) then 
+  do print "trace: " then
+  do print s then 
     do print "\n" then s
 
 @[platform ["linux-gnu", "linux-musl"]]

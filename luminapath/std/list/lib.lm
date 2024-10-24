@@ -78,7 +78,8 @@ pub fn min list as [n] -> Maybe n =
 
 pub fn len list as List a -> uint =
   match list
-  | Slice slice -> slice.vec.len - slice.start
+  | Slice slice -> 
+    slice.vec.len - slice.start
   | Singleton a -> 1
   | Concat left right -> len left + len right
   | Nil -> 0
@@ -120,6 +121,10 @@ pub fn break f list as fn(a -> bool), [a] -> ([a], [a]) =
         (x : left, right)
       // TODO: if we do pointer-equality on `:` could we optimise appending two `Slice`s
       // into shifting start of a singlular Slice?
+
+pub fn take at list as uint, List a -> List a =
+  let (lhs, rhs) = split_at at list
+   in lhs
 
 pub fn split_at at list as uint, List a -> (List a, List a) =
   if at == 0 then

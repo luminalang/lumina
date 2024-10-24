@@ -44,7 +44,7 @@ pub fn split_at at slice as uint, Slice a -> (Slice a, Slice a) =
 pub fn take n slice as uint, Slice a -> Slice a =
   if n >= len slice
     then slice
-    else { slice ~ vec @ vec = unsafe_take n vec }
+    else { slice ~ vec @ vec = unsafe_take (n + slice.start) vec }
   
 pub fn skip n slice as uint, Slice a -> Slice a =
   if n >= len slice

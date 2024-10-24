@@ -30,9 +30,6 @@ impl Stringable for string
     | Just (x, xs) -> (x, { inner = xs })
 
   fn equals lhs rhs as string, string -> bool = 
-    do io:println (show (len lhs)) then
-    do io:println (show (len rhs)) then
-    do io:println ("checking if " <++> lhs <++> " equals " <++> rhs) then
     lhs == rhs
 
   fn from_raw_parts ptr len as *u8, uint -> string =
@@ -46,9 +43,18 @@ pub type string {
 
 pub fn len {inner} as string -> uint = inner . len
 
+pub fn take n str as uint, string -> string =
+  { string | inner = std:list:take n str.inner }
+
 pub fn toByteVec str as string -> Vec u8 =
   match str.inner
-  | Slice {std:list:vec:Slice u8 | vec, start} -> vec
+  | Slice {std:list:vec:Slice u8 | vec, start} -> 
+    // WARNING: if the GC clears `vec.ptr` before this
+    // has been used then that would be *very* bad. 
+    //
+    // We currently only use this for very temporary data in syscalls
+    // So I don't think it's a concern as long as we make this private to the stdlib. 
+    { Vec u8 | ptr = std:ptr:offsetu vec.ptr start, len = vec.len - start }
   | _ -> 
     let vec = vec:capacity (len str) in
       do str.inner

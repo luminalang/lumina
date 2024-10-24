@@ -50,6 +50,7 @@ pub fn parse<'s>(
     project: PathBuf,
     lumina: PathBuf,
     epanic: bool,
+    super_debug: bool,
     target: Target,
 ) -> Result<(AST<'s>, BinDebugInfo), Error> {
     if !project.is_dir() {
@@ -68,6 +69,7 @@ pub fn parse<'s>(
     };
 
     config.epanic |= epanic;
+    config.super_debug |= super_debug;
 
     parse_with_config(project, lumina, config, target)
 }
@@ -83,7 +85,7 @@ pub fn parse_with_config<'s>(
         let _ispan = ispan.enter();
 
         let std_lib_directory = lumina.join("std");
-        let mut collector = Collector::new(std_lib_directory.clone(), target);
+        let mut collector = Collector::new(std_lib_directory.clone(), config.super_debug, target);
         collector.sources.set_panicy(config.epanic);
 
         // include the prelude directory

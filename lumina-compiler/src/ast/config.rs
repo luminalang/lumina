@@ -10,6 +10,7 @@ pub struct ProjectConfig {
     pub authors: Vec<String>,
     pub parameters: Vec<String>,
     pub epanic: bool,
+    pub super_debug: bool,
     pub prelude: String,
     pub dependencies: Vec<Dependency>,
     pub linker_args: Vec<String>,

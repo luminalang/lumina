@@ -39,6 +39,7 @@ pub fn build_project(
         project_path.clone(),
         lumina_dir.clone(),
         settings.epanic,
+        settings.super_debug,
         target.clone(),
     ) {
         Err(fatal_err) => {

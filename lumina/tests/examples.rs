@@ -16,6 +16,7 @@ fn run(path: &str, expected: &str) {
         target: None,
         epanic: true,
         output: None,
+        super_debug: false,
         project: Some(environment.current_directory.clone()),
     };
 

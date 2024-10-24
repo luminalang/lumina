@@ -70,8 +70,14 @@ pub struct BuildFlags {
     /// Target operating system
     pub target: Option<String>,
 
+    /// Perform an internal compiler panic on the first error
     #[arg(long)]
     pub epanic: bool,
+
+    /// Inject prints for every function call.
+    /// Will reduce performance by ~100000%
+    #[arg(long)]
+    pub super_debug: bool,
 
     /// Path of output binary
     #[arg(short = 'o', long)]

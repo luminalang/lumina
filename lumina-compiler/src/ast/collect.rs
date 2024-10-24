@@ -9,12 +9,25 @@ use crate::prelude::*;
 use crate::Target;
 use lumina_parser as parser;
 use lumina_parser::{func, r#use, ty, val, when, Error as ParseError, Parser};
-use lumina_util::{Spanned, Tr};
+use lumina_parser::{AnnotatedPath, Expr};
+use lumina_util::{Identifier, Spanned, Tr};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
 const DEFAULT_OPERATOR_PRECEDENCE: u32 = 1000;
+
+// All functions that are involved in printing.
+// trying to print them will induce infinite recursion.
+const BANNED_SUPER_DEBUG_FNS: &[&'static str] = &[
+    "raw_print",
+    "stdout",
+    "write",
+    "from_raw_parts",
+    "==",
+    "slice",
+    "alloc",
+];
 
 pub(crate) struct Collector<'s> {
     pub entities: Entities<'s>,
@@ -24,6 +37,8 @@ pub(crate) struct Collector<'s> {
 
     pub dir: PathBuf,
 
+    pub super_debug: bool,
+
     std_lib_directory: PathBuf,
     pub uses: Map<key::Module, Vec<r#use::Declaration<'s>>>,
 
@@ -31,13 +46,15 @@ pub(crate) struct Collector<'s> {
 }
 
 impl<'s> Collector<'s> {
-    pub unsafe fn new(std_lib_directory: PathBuf, target: Target) -> Self {
+    pub unsafe fn new(std_lib_directory: PathBuf, super_debug: bool, target: Target) -> Self {
         Self {
             entities: Entities::default(),
             lookups: Lookups::new(),
             sources: Sources::new(),
 
             debug: BinDebugInfo::new(target),
+
+            super_debug,
 
             dir: PathBuf::new(),
 
@@ -183,7 +200,7 @@ impl<'s> Collector<'s> {
     fn include_func(
         &mut self,
         module: key::Module,
-        func: parser::func::Declaration<'s>,
+        mut func: parser::func::Declaration<'s>,
         can_be_resolved: bool,
         to_body: impl FnOnce(Option<parser::func::Body<'s>>) -> Option<FuncBody<'s>>,
     ) -> Option<key::Func> {
@@ -205,6 +222,38 @@ impl<'s> Collector<'s> {
         };
 
         if is_targetted(&attributes.shared, &self.target) {
+            if self.super_debug && !BANNED_SUPER_DEBUG_FNS.contains(&*func.header.name) {
+                let mut text = if func.header.when.generics.is_empty() {
+                    format!("super-trace: {}", &func.header)
+                } else {
+                    format!("super-trace:\n{}", &func.header)
+                };
+                text = text.replace("\\", "\\\\");
+                text.push('\n');
+                let text = Box::leak(text.into_boxed_str());
+
+                if let Some(body) = func.body.as_mut() {
+                    take_mut::take(&mut body.expr, |expr| {
+                        let span = expr.span;
+                        let print = Expr::Call(
+                            AnnotatedPath::without(Identifier::from_segments(&[
+                                "std",
+                                "io",
+                                "raw_print",
+                            ]))
+                            .tr(span),
+                            vec![
+                                Expr::Lit(lumina_parser::Literal::String(text)).tr(span),
+                                Expr::Lit(lumina_parser::Literal::Int(false, text.len() as u128))
+                                    .tr(span),
+                            ],
+                        );
+
+                        Expr::Do(Box::new([Tr::null(print), expr])).tr(span)
+                    });
+                }
+            }
+
             let fkey = self.entities.fheaders.push(module, func.header);
 
             let body = match to_body(func.body) {

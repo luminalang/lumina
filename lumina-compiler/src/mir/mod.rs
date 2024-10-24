@@ -77,6 +77,7 @@ pub struct ReadOnlyBytes(pub Box<[u8]>);
 pub fn run<'a, 'h, 's>(
     pinfo: ProjectInfo,
     target: Target,
+    _src_dir: std::path::PathBuf,
     hir: hir::HIR<'s>,
     mut tenvs: MMap<key::Func, TEnv<'s>>,
     iquery: &mut ImplIndex,

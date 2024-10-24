@@ -3,6 +3,7 @@
 
 pub mod ast;
 pub mod backend;
+mod debuginfo;
 pub mod hir;
 pub mod lir;
 pub mod mir;

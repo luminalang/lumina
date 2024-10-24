@@ -232,8 +232,7 @@ impl<'a> FuncLower<'a> {
                             let mut tmap = tmap.clone();
                             let mut morph = to_morphization!(self.lir, self.mir, &mut tmap);
                             let typing = self.mir.funcs[func].as_typing();
-                            let typing =
-                                morph.apply_typing(FuncOrigin::Method(impl_, method), typing);
+                            let typing = morph.apply_typing(Item::Method(impl_, method), typing);
                             self.lir
                                 .func(self.mir, self.iquery, self.info, tmap, typing, None)
                         }
@@ -483,9 +482,9 @@ impl<'a> FuncLower<'a> {
             .unwrap()
     }
 
-    pub fn call_to_mfunc(&mut self, func: FuncOrigin, mut tmap: TypeMap) -> MonoFunc {
+    pub fn call_to_mfunc(&mut self, func: Item, mut tmap: TypeMap) -> MonoFunc {
         assert!(
-            !matches!(func, FuncOrigin::Lambda(..)),
+            !matches!(func, Item::Lambda(..)),
             "call_to_value does not handle captures"
         );
 

@@ -1,4 +1,5 @@
 use super::{
+    super::debuginfo::BinDebugInfo,
     attr,
     entities::{FuncBody, ImplDef, TyHeader},
     resolve::{Entity, Mod, Visibility},
@@ -19,6 +20,9 @@ pub(crate) struct Collector<'s> {
     pub entities: Entities<'s>,
     pub lookups: Lookups<'s>,
     pub sources: Sources,
+    pub debug: BinDebugInfo,
+
+    pub dir: PathBuf,
 
     std_lib_directory: PathBuf,
     pub uses: Map<key::Module, Vec<r#use::Declaration<'s>>>,
@@ -33,6 +37,10 @@ impl<'s> Collector<'s> {
             lookups: Lookups::new(),
             sources: Sources::new(),
 
+            debug: BinDebugInfo::new(target),
+
+            dir: PathBuf::new(),
+
             std_lib_directory,
 
             uses: Map::new(),
@@ -45,6 +53,9 @@ impl<'s> Collector<'s> {
     // though this one won't be used.
     fn reserve_module_and_err(&mut self, module: key::Module, path: &Path, err: Error) -> Error {
         self.sources.push(module, String::new(), path.to_path_buf());
+        if let Some(parent) = self.lookups.get_parent(module) {
+            self.debug.add_file(module, &self.dir, parent);
+        };
         self.uses.push_as(module, vec![]);
         err
     }
@@ -108,9 +119,12 @@ impl<'s> Collector<'s> {
                 info!("opening {} as {child}", trim_display(&path));
                 let source =
                     std::fs::read_to_string(&path).map_err(|err| Error::File(err, path.clone()))?;
+                self.debug.add_file(child, &self.dir.join(fname), module);
                 let src = self.sources.push(child, source, path);
                 self.parse_declarations(child, src);
             } else {
+                self.dir.push(fname);
+                self.debug.add_dir(child, "lib.lm", &self.dir, Some(module));
                 self.include_dir("lib.lm", child, path)?;
             }
         }
@@ -192,6 +206,7 @@ impl<'s> Collector<'s> {
 
         if is_targetted(&attributes.shared, &self.target) {
             let fkey = self.entities.fheaders.push(module, func.header);
+
             let body = match to_body(func.body) {
                 None => match attributes.extern_.clone() {
                     Some(link_name) => FuncBody::Extern { link_name },
@@ -483,6 +498,8 @@ impl<'s> Collector<'s> {
         let path = self.std_lib_directory.join(lib);
         let module = self.lookups.new_lib(header, lib.to_string());
         self.entities.add_module(module);
+        self.dir = PathBuf::from(header);
+        self.debug.add_dir(module, "lib.lm", &self.dir, None);
         if let Err(err) = self.include_dir("lib.lm", module, path) {
             self.emit_stdlib_err(span, from, err);
         }

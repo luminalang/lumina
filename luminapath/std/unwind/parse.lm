@@ -1,0 +1,32 @@
+// A Dwarf parser for the informtation we use and nothing else
+
+alias DwarfUnsigned = u64
+alias DwarfOff = u64
+alias DwarfSigned = i64
+
+type Func {
+  name *u8
+  lopc DwarfUnsigned
+  hipc DwarfUnsigned
+  call_file DwarfUnsigned
+  call_line DwarfUnsigned
+  ranges *u8
+  ranges_cnt DwarfSigned
+  inlined_caller *Func
+  next *Func
+}
+
+type CU {
+  off DwarfOff
+  lopc DwarfUnsigned
+  hipc DwarfUnsigned
+  srcfiles **u8
+  funclist *Func
+  // hh UT_hash_handle
+}
+
+// 1. call dwarf_init with the file descriptor 
+// 2. call dwarf_get_elf to get the elfptr
+// 3. 
+//   while ok
+//     

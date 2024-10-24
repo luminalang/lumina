@@ -212,7 +212,7 @@ impl<'a> Debugger<'a> {
             }
             Entry::Variant(var, elems) => {
                 self.check_declaredn(at, elems);
-                let (_, variants) = self.lir.mono.types[exp.as_key()].as_sum();
+                let (_, _, variants) = self.lir.mono.types[exp.as_key()].as_sum();
                 self.params(
                     elems,
                     self.lir.mono.types[variants[*var]].as_record().values(),
@@ -257,7 +257,7 @@ impl<'a> Debugger<'a> {
                 let of = self.lir.type_of_value(self.mfunc, *of);
                 match of {
                     MonoType::Monomorphised(mkey) => {
-                        let (_, _) = self.lir.mono.types[mkey].as_sum();
+                        let (_, _, _) = self.lir.mono.types[mkey].as_sum();
                     }
                     _ => panic!("SumField of non-opaque sum data: {}", self.tfmt(&of)),
                 }

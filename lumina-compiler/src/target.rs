@@ -80,6 +80,12 @@ impl Target {
         }
     }
 
+    pub fn endian(&self) -> gimli::RunTimeEndian {
+        match self.arch {
+            Arch::X86_64 => gimli::RunTimeEndian::Little,
+        }
+    }
+
     pub fn int(&self) -> lumina_typesystem::IntSize {
         let size = self.int_size();
         lumina_typesystem::IntSize::new(true, size)

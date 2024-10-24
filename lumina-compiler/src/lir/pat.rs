@@ -278,7 +278,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
     fn is_just(&mut self, maybe: Value) -> Value {
         let maybe_mk = self.f.type_of_value(maybe).as_key();
 
-        let (tagsize, _) = self.f.types()[maybe_mk].as_sum();
+        let (tagsize, _, _) = self.f.types()[maybe_mk].as_sum();
         let tag = self.ssa().tag_of(maybe, tagsize);
 
         self.ssa().eq([tag, Value::maybe_just()], tagsize)
@@ -311,7 +311,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             listmt.clone(),
         );
 
-        let split = FuncOrigin::Method(ikey, LISTABLE_SPLIT);
+        let split = Item::Method(ikey, LISTABLE_SPLIT);
         let split = self.f.call_to_mfunc(split, tmap);
         let ret = self.f.lir.functions[split].returns.clone();
 
@@ -519,7 +519,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let oblock = self.block();
         let on_mk = self.f.type_of_value(on).as_key();
 
-        let (tag_size, _) = self.f.types()[on_mk].as_sum();
+        let (tag_size, _, _) = self.f.types()[on_mk].as_sum();
         let tag = self.ssa().tag_of(on, tag_size);
 
         assert!(

@@ -1,3 +1,4 @@
+use crate::debuginfo::BinDebugInfo;
 use crate::lir;
 use crate::prelude::*;
 use crate::target::{Arch, LinuxPlatform, Platform};
@@ -10,6 +11,8 @@ use owo_colors::OwoColorize;
 use std::sync::Arc;
 use tracing::info_span;
 
+mod debuginfo;
+use debuginfo::unwind;
 mod layout;
 mod ssa;
 
@@ -27,10 +30,11 @@ impl Target {
     }
 }
 
-pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
+pub fn run(target: Target, dwarf: BinDebugInfo, lir: lir::Output) -> Vec<u8> {
     let mut shared_builder = settings::builder();
     shared_builder.set("opt_level", "speed").unwrap();
     let shared_flags = settings::Flags::new(shared_builder);
+    assert!(shared_flags.unwind_info());
 
     let isa = target.isa().finish(shared_flags).unwrap();
 
@@ -112,10 +116,14 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
         })
         .collect();
 
+    let unwindinfo = unwind::UnwindContext::new(&*isa, true);
+
     let mut ctx = Context::new(
-        isa, &vals, &lir, structs, objmodule, funcmap, externmap, rotable,
+        isa, &vals, &lir, structs, objmodule, funcmap, externmap, rotable, unwindinfo, dwarf,
     );
 
+    let mut cctx = codegen::Context::new();
+    let mut fctx = FunctionBuilderContext::new();
     for (mfunc, func) in lir.functions.iter() {
         let _span = info_span!(
             "lowering function expression",
@@ -124,17 +132,26 @@ pub fn run(target: Target, lir: lir::Output) -> Vec<u8> {
         );
         let _handle = _span.enter();
 
-        let clfunc = ssa::Translator::func(&mut ctx, func, mfunc);
-        let mut fctx = codegen::Context::for_function(clfunc);
+        let f_dbg_ctx = ssa::Translator::func(&mut ctx, &mut cctx, &mut fctx, func, mfunc);
+
         let id = ctx.funcmap[mfunc].id;
-        if let Err(err) = ctx.objmodule.define_function(id, &mut fctx) {
+        if let Err(err) = ctx.objmodule.define_function(id, &mut cctx) {
             panic!("definition error when defining {}:\n {err}", func.symbol);
         }
+
+        let id = ctx.funcmap[mfunc].id;
+        ctx.unwindinfo.add_function(id, &cctx, &*ctx.isa);
+
+        f_dbg_ctx.finalize(&mut ctx.debuginfo, id, &cctx);
+
+        cctx.clear();
     }
 
     ctx.declare_entrypoint(target);
 
-    let product = ctx.objmodule.finish();
+    let mut product = ctx.objmodule.finish();
+    ctx.unwindinfo.emit(&mut product);
+    ctx.debuginfo.emit(&mut product);
 
     product.emit().unwrap()
 }
@@ -149,6 +166,8 @@ pub struct Context<'a> {
     funcmap: Map<lir::MonoFunc, FuncHeader>,
     externmap: HashMap<M<key::Func>, FuncHeader>,
     rotable: MMap<key::ReadOnly, DataId>,
+    unwindinfo: unwind::UnwindContext,
+    debuginfo: BinDebugInfo,
 }
 
 impl<'a> Context<'a> {
@@ -274,6 +293,8 @@ impl<'a> Context<'a> {
 
         let mut fctx = codegen::Context::for_function(clfunc);
         self.objmodule.define_function(id, &mut fctx).unwrap();
+
+        self.unwindinfo.add_function(id, &mut fctx, &*self.isa);
 
         id
     }

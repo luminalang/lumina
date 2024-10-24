@@ -425,7 +425,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         assert!(forall.generics.is_empty());
 
         self.lambdas
-            .complete_lambda(lkey, expr, patterns, captures, lcaptures);
+            .complete_lambda("lambda", lkey, expr, patterns, captures, lcaptures);
 
         lkey
     }

@@ -151,8 +151,7 @@ impl ToString for [a]
   where
     fn show_ list as [a] -> string = 
       match list
-      | [] -> "[]"
-      | [last] -> show last <++> "]"
+      | [] -> "]"
       | [x : xs] -> show x <++> ", " <++> show_ xs
 
 

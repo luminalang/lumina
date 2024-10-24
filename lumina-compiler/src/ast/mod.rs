@@ -1,6 +1,6 @@
 //! Handles project structure, source file collection and parsing.
 
-use crate::Target;
+use crate::{debuginfo::BinDebugInfo, Target};
 use derive_more::From;
 use lumina_key as key;
 use std::path::{Path, PathBuf};
@@ -51,7 +51,7 @@ pub fn parse<'s>(
     lumina: PathBuf,
     epanic: bool,
     target: Target,
-) -> Result<AST<'s>, Error> {
+) -> Result<(AST<'s>, BinDebugInfo), Error> {
     if !project.is_dir() {
         return Err(Error::ProjectNotDir(project));
     }
@@ -77,7 +77,7 @@ pub fn parse_with_config<'s>(
     lumina: PathBuf,
     config: ProjectConfig,
     target: Target,
-) -> Result<AST<'s>, Error> {
+) -> Result<(AST<'s>, BinDebugInfo), Error> {
     unsafe {
         let ispan = info_span!("collector");
         let _ispan = ispan.enter();
@@ -96,10 +96,19 @@ pub fn parse_with_config<'s>(
         let prelude_path = lumina_util::Identifier::parse(&config.prelude)
             .expect("invalid prelude path")
             .to_directory(&lumina, &project, &lumina);
+
+        collector
+            .debug
+            .add_dir(key::PRELUDE, "lib.lm", &PathBuf::from("std/prelude"), None);
         collector.include_dir("lib.lm", key::PRELUDE, prelude_path)?;
 
         // include the project source directory recursively
         let main_module = collector.lookups.new_root_module(None);
+        collector.dir = PathBuf::from(&config.name);
+        collector.dir.push("src");
+        collector
+            .debug
+            .add_dir(main_module, "main.lm", &collector.dir, None);
         collector.entities.add_module(main_module);
         collector.include_dir("main.lm", main_module, project.join("src"))?;
 
@@ -110,15 +119,18 @@ pub fn parse_with_config<'s>(
 
         collector.link_up_imports_and_exposed();
 
-        Ok(AST {
-            entities: collector.entities,
-            lookups: collector.lookups,
-            sources: collector.sources,
+        Ok((
+            AST {
+                entities: collector.entities,
+                lookups: collector.lookups,
+                sources: collector.sources,
 
-            main_module,
+                main_module,
 
-            config,
-        })
+                config,
+            },
+            collector.debug,
+        ))
     }
 }
 
@@ -148,9 +160,13 @@ fn include_ext_library<'s>(
     if config.prelude != "" && config.prelude != "std:prelude" {
         panic!("specifying a prelude in an `ext` library is not supported");
     }
+    collector.dir = PathBuf::from(config.name.as_str());
+    collector.dir.push("src");
+    collector
+        .debug
+        .add_dir(module, "lib.lm", &collector.dir, None);
 
     path.push("src");
-
     collector.entities.add_module(module);
     collector.include_dir("lib.lm", module, path)?;
 

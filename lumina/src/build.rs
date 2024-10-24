@@ -35,7 +35,7 @@ pub fn build_project(
         .map(|name| Target::try_from(name.as_str()).unwrap())
         .unwrap_or_else(Target::native);
 
-    let ast = match compiler::ast::parse(
+    let (ast, dinfo) = match compiler::ast::parse(
         project_path.clone(),
         lumina_dir.clone(),
         settings.epanic,
@@ -58,7 +58,10 @@ pub fn build_project(
 
     let (pconfig, hir, tenvs, mut iquery) = compiler::hir::run(pinfo, target, ast);
 
-    let (mir, has_failed) = compiler::mir::run(pinfo, target, hir, tenvs, &mut iquery);
+    let mut src_dir = FilePathBuf::new();
+    src_dir.push(project_path.file_name().unwrap());
+    src_dir.push("src/");
+    let (mir, has_failed) = compiler::mir::run(pinfo, target, src_dir, hir, tenvs, &mut iquery);
     if has_failed {
         eprintln!("aborting compilation due to previous errors");
         return Err(ExitCode::FAILURE);
@@ -66,7 +69,7 @@ pub fn build_project(
 
     let lir = compiler::lir::run(pinfo, target, &iquery, mir);
 
-    let object = compiler::backend::cranelift::run(target, lir);
+    let object = compiler::backend::cranelift::run(target, dinfo, lir);
 
     let output = match settings.output.as_deref() {
         Some(name) => {

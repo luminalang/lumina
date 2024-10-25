@@ -125,6 +125,10 @@ pub fn take at list as uint, List a -> List a =
   let (lhs, rhs) = split_at at list
    in lhs
 
+pub fn skip at list as uint, List a -> List a = 
+  let (lhs, rhs) = split_at at list
+   in rhs
+
 pub fn split_at at list as uint, List a -> (List a, List a) =
   if at == 0 then
     (Nil, list)

@@ -41,6 +41,9 @@ impl Stringable for string
 pub fn break f str as fn(u8 -> bool), string -> (string, string) =
   Stringable:split_while str #f
 
+pub fn skip n {inner} as uint, string -> string =
+  inner . list:skip n . fromBytes
+
 pub fn fromByteVec vec as Vec u8 -> string =
   { string | inner = vec . to_slice . to_list }
 

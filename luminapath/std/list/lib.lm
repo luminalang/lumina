@@ -78,8 +78,7 @@ pub fn min list as [n] -> Maybe n =
 
 pub fn len list as List a -> uint =
   match list
-  | Slice slice -> 
-    slice.vec.len - slice.start
+  | Slice slice -> slice . len
   | Singleton a -> 1
   | Concat left right -> len left + len right
   | Nil -> 0
@@ -102,7 +101,7 @@ pub fn any f list as fn(a -> bool), List a -> bool =
   | Nil -> false
 
 pub fn from_range range f as (uint, uint), fn(uint -> a) -> List a =
-  Slice (vec:slice (vec:from_range range #f))
+  Slice (vec:to_slice (vec:from_range range #f))
 
 pub fn itimes f n as fn(uint -> ()), uint -> () = 
   next 0
@@ -140,12 +139,19 @@ pub fn split_at at list as uint, List a -> (List a, List a) =
 
     | Concat left right ->
       let (l, r) = split_at at left in
-        let remaining = (l . len) - at in
-          // I think we need the extra len == 0 edge-case because concat of Nil isn't allowed? 
-          //
-          // but perhaps we should just allow concat of Nil and handle that properly instead. 
-          let (x, y) = split_at remaining (if len r == 0 then right else r ++ right)
-           in (l ++ x, y)
+
+      let received = len l in
+
+        if received == at then
+          (l, r ++ right)
+
+        else if received < at then
+          let remaining = at - received in
+           let (x, y) = split_at remaining (r ++ right)
+            in (l ++ x, y)
+
+        else
+          io:crash "split yielded more elemements than requested" // we can remove this check in the future
 
     | Nil -> ([], [])
 
@@ -157,6 +163,7 @@ impl ToString for [a]
     fn show_ list as [a] -> string = 
       match list
       | [] -> "]"
+      | [last] -> show last <++> "]"
       | [x : xs] -> show x <++> ", " <++> show_ xs
 
 

@@ -29,7 +29,7 @@ fn sigint = 2
 
 pub fn raw_print str len as string, uint -> () =
   match str.inner
-  | Slice {vec:Slice u8 | start, vec = {Vec u8 | ptr, len}} -> do libc:write stdout ptr (len as int) then ()
+  | Slice {vec:Slice u8 | ptr, len } -> do libc:write stdout ptr (len as int) then ()
   | _ -> ()
 
 when s can ToString

@@ -48,7 +48,7 @@ pub fn readFile {fd} as File -> Result string IoError =
     let size = ptr:deref ((ptr:offset rptr 48) as *i64) in
     let buf = vec:capacity(a as u8) (size as uint) in
       libc:read fd buf.ptr size
-      . handle_io_errno #(\_ -> Ok { string | inner = Slice (buf . slice) })
+      . handle_io_errno #(\_ -> Ok (string:fromByteVec buf))
 
 impl ToString for IoError
   fn show err as self -> string =

@@ -20,8 +20,8 @@ pub fn empty as Vec a = { Vec a | ptr = ptr:null, len = 0 }
 pub fn singleton v as a -> Vec a = 
   { ptr = ptr:box v, len = 1 }
 
-pub fn slice vec as Vec a -> Slice a =
-  { Slice a | vec, start = 0 }
+pub fn to_slice {ptr, len} as Vec a -> Slice a =
+  { Slice a | ptr, len, source = ptr }
 
 pub fn get i vec as uint, Vec a -> Maybe a =
   if i >= vec.len
@@ -36,7 +36,6 @@ fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
     ptr:write at v
 
 pub fn from_range (start, end) f as (uint, uint), fn(uint -> a) -> Vec a =
-  // TODO: bound checks
   if start > end then
     crash ("error: from_range end larger than start " <++> show end <++> " > " <++> show start)
   else
@@ -53,11 +52,15 @@ fn bytes_from_null_terminated ptr as *u8 -> Vec u8 =
       then { ptr, len = i }
       else findZero (i + 1)
 
-// TODO: we need checked add operations to make this safe
 pub fn unsafe_take n {ptr, len} as uint, Vec a -> Vec a =
   { ptr, len = n }
+
+pub fn map f vec as fn(a -> b), Vec a -> Vec b = 
+  from_range
+    (0, vec.len)
+    #(\i -> unsafe_get i vec . f)
 
 when a can ToString
 impl ToString for Vec a
   fn show vec as self -> string =
-    slice vec . show
+    show (vec . to_slice)

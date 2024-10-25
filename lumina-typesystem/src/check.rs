@@ -259,6 +259,7 @@ pub enum ConstraintError {
         got: Type,
         at: Span,
     },
+    RecordDoesNotHaveFields(M<key::Record>, Vec<Tr<String>>),
     RecordNotFound(Vec<Tr<String>>),
     RecordAmbigous(Span, Vec<M<key::Record>>, Vec<Tr<String>>),
     BadConstType(ConstGeneric, Tr<Type>),
@@ -385,6 +386,8 @@ impl<'e, 's> TypeSystem<'e, 's> {
         params: &[Type],
         errors: &mut Vec<ConstraintError>,
     ) {
+        let mut unknowns = vec![];
+
         for &(fname, fvar, mismatch) in &self.env.vars[var].fields {
             if let Some(FieldMismatch) = mismatch {
                 let Tr { span, value } = self.env.vars[fvar].assignment.as_ref().unwrap();
@@ -392,6 +395,14 @@ impl<'e, 's> TypeSystem<'e, 's> {
                 let got = self.inst_field(record, &params, *fname).unwrap();
                 errors.push(ConstraintError::FieldType { exp, got, at: *span });
             }
+
+            if self.fnames[record].find(|f| **f == *fname).is_none() {
+                unknowns.push(fname.map(str::to_string));
+            }
+        }
+
+        if !unknowns.is_empty() {
+            errors.push(ConstraintError::RecordDoesNotHaveFields(record, unknowns));
         }
     }
 }

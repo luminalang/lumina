@@ -410,6 +410,19 @@ impl<'a, 's> Verify<'a, 's> {
                             .format(" or ")
                     ))
                     .emit(),
+                ConstraintError::RecordDoesNotHaveFields(record, unknown) => {
+                    let span = unknown[0].span;
+                    self.error("field(s) not found")
+                        .eline(
+                            span,
+                            format!(
+                                "{} does not have the fields {}",
+                                self.ty_formatter().fmt::<(_, &[Ty<Static>])>((record, &[])),
+                                unknown.iter().format(", ")
+                            ),
+                        )
+                        .emit();
+                }
                 ConstraintError::BadConstType(generic, ty) => self
                     .error("constraint not met")
                     .eline(
@@ -680,7 +693,13 @@ impl<'a, 's> Verify<'a, 's> {
                             }
                         }
                         ast::Entity::Member(_, _) => todo!(),
-                        ast::Entity::Module(_) => todo!(),
+                        ast::Entity::Module(_) => {
+                            self.error("invalid function")
+                                .eline(span, format!("{name} is a module, not a function"))
+                                .emit();
+
+                            InstCall::TypeDependentFailure
+                        }
                         _ => {
                             self.error("invalid function")
                                 .eline(span, format!("{name} is a type, not a function"))

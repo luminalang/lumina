@@ -423,7 +423,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
             match check {
                 StrCheck::Literal(key) => {
-                    let (str, slen_arg) = self.f.string_from_ro(*key);
+                    let (str, slen_arg, _) = self.f.string_from_ro(*key);
                     self.map.push(str);
 
                     let eq = if is_last {

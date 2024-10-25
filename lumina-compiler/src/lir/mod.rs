@@ -673,45 +673,13 @@ impl<'a> FuncLower<'a> {
         }
     }
 
-    // Relies on the layout of `std:prelude:List`
-    //
-    // type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
-    // fn values_to_cons_list(&mut self, values: Vec<Value>, inner: Type) -> Value {
-    //     let list_type: MonoType = to_morphization!(self.lir, self.mir, &mut self.current.tmap)
-    //         .defined(self.info.global_list_default, &[inner])
-    //         .into();
+    fn string_from_ro(&mut self, ro: M<key::ReadOnly>) -> (Value, Value, usize) {
+        let bytes = &self.lir.read_only_table[ro].0;
+        let slen = bytes.0.len();
 
-    //     let [nil_tag, singleton_tag, concat_tag] = [LIST_NIL, LIST_SINGLETON, LIST_CONCAT]
-    //         .map(|n| Value::Int(n.0 as i128, mono::TAG_SIZE));
-
-    //     let payload_size = self.lir.types.types.size_of(&list_type) - mono::TAG_SIZE.bits() as u32;
-
-    //     let empty_tuple = self.elems_to_tuple(vec![], Some(payload_size));
-
-    //     // TODO: we technically don't need a `Nil` at the end since we're using
-    //     // singleton. But; perhaps it's still a good idea?
-    //     let init = self
-    //         .ssa()
-    //         .construct(vec![nil_tag, empty_tuple], list_type.clone());
-
-    //     values.into_iter().rev().fold(init, |next, v| {
-    //         let singleton_payload = self.elems_to_tuple(vec![v], Some(payload_size));
-
-    //         let this = self
-    //             .ssa()
-    //             .construct(vec![singleton_tag, singleton_payload], list_type.clone());
-
-    //         let concat_payload = self.elems_to_tuple(vec![this, next], Some(payload_size));
-    //         self.ssa()
-    //             .construct(vec![concat_tag, concat_payload], list_type.clone())
-    //     })
-    // }
-
-    fn string_from_ro(&mut self, ro: M<key::ReadOnly>) -> (Value, Value) {
-        let slen = self.lir.read_only_table[ro].0 .0.len();
         let (slen_arg, _) = self.uint(slen as i128);
         let ptr = Value::ReadOnly(ro);
-        (self.string_from_raw_parts(ptr, slen_arg), slen_arg)
+        (self.string_from_raw_parts(ptr, slen_arg), slen_arg, slen)
     }
 
     fn string_from_raw_parts(&mut self, ptr: Value, len: Value) -> Value {

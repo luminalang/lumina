@@ -1,6 +1,7 @@
 use crate::lir;
 use crate::lir::{MonoType, MonoTypeKey};
 use crate::prelude::*;
+use ast::attr::Repr;
 use cranelift::codegen::ir::ArgumentPurpose;
 use cranelift::prelude::*;
 use lumina_collections::{map_key_impl, KeysIter};
@@ -69,7 +70,7 @@ impl lir::Types {
         Typing {
             params: params.into_iter().cloned().collect(),
             ret: ret.clone(),
-            conv: isa::CallConv::Fast,
+            conv: isa::CallConv::Tail,
         }
     }
 }
@@ -227,7 +228,7 @@ impl<'a> Structs<'a> {
     // Whether this struct should be passed as inlined scalars or is implicitly put behind a pointer.
     pub fn pass_mode(&self, key: MonoTypeKey) -> PassBy {
         match &self.records[key] {
-            lir::MonoTypeData::Record { key: _, .. } => match self.c_class_of_aggregate(key) {
+            lir::MonoTypeData::Record { .. } => match self.c_class_of_aggregate(key) {
                 SystemVClass::Integer => PassBy::Value,
                 SystemVClass::Memory => PassBy::Pointer,
             },
@@ -611,9 +612,14 @@ impl<'a> Structs<'a> {
                 }
             }
 
+            let max_struct_regs = match &self.records[key] {
+                lir::MonoTypeData::Record { repr, .. } if *repr == Repr::Lumina => 4,
+                _ => 2,
+            };
+
             // 5c. if the size exceeds two eightbytes and there are no floats or
             // vectors (which we don't support C repr of) then also use the stack.
-            if struct_size > (eightbyte * 2) {
+            if struct_size > (eightbyte * max_struct_regs) {
                 SystemVClass::Memory
             } else {
                 class.expect("empty repr C structs are not valid")

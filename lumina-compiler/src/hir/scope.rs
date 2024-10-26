@@ -68,6 +68,7 @@ impl<'s> Bindings<'s> {
         scope
             .binds
             .iter()
+            .rev()
             .find_map(|(bind, n)| (name == *n).then_some(*bind))
             .or_else(|| {
                 Self::resolve_in(xs, name).map(|bind| {

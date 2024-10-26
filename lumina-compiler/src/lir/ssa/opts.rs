@@ -5,7 +5,7 @@ use crate::lir::{mono::Types, Block, ControlFlow, Entry, Function, MonoFunc, Val
 use lumina_collections::{Map, MapKey};
 use tracing::{info, info_span};
 
-pub const ENABLE_OPTS: bool = false;
+pub const ENABLE_OPTS: bool = true;
 
 impl LIR {
     pub fn perform_optimizations(&mut self) {

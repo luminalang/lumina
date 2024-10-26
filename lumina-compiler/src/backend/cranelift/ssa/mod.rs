@@ -141,7 +141,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let blockmap = func
             .blocks
             .blocks()
-            .map(|block| ctx.declare_block_from_lir(&mut builder, func, block))
+            .map(|_| (builder.create_block(), 0))
             .collect();
 
         let f_dbg_ctx = ctx.def_function(key);
@@ -168,7 +168,45 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         self.f.builder.finalize();
     }
 
+    fn set_up_block_params(&mut self) {
+        let size_t = self.ctx.size_t();
+        let (clblock, _) = self.f.blockmap[self.f.block];
+
+        let builder = &mut self.f.builder;
+
+        self.f.func.blocks.params(self.f.block).for_each(|v| {
+            let t = self.f.func.blocks.type_of(v);
+
+            match self.ctx.structs.ftype(t) {
+                FType::StructZST => {}
+                FType::Scalar(scalar) => {
+                    builder.append_block_param(clblock, scalar.point);
+                }
+                FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) => {
+                    builder.append_block_param(clblock, size_t);
+                }
+                FType::Struct(PassBy::Value, mk) => {
+                    self.ctx.structs.iter_s_stable_fields(mk, &mut |scalar| {
+                        builder.append_block_param(clblock, scalar.point);
+                    });
+                }
+            }
+        });
+
+        if self.f.block == lir::Block::entry() {
+            // Attach the structret pointer as a parameter if needed
+            match self.ctx.structs.ftype(&self.f.func.returns) {
+                FType::Struct(PassBy::Pointer, _) | FType::ArrayPointer(..) => {
+                    builder.append_block_param(clblock, size_t);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn block(&mut self) {
+        self.set_up_block_params();
+
         let mut raw_params = self.f.builder.block_params(self.f.blockmap[self.f.block].0);
         let raw_params_ref: &mut &[Value] = &mut raw_params;
 

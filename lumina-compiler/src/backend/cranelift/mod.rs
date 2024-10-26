@@ -176,47 +176,6 @@ impl<'a> Context<'a> {
         Type::triple_pointer_type(triple)
     }
 
-    fn declare_block_from_lir(
-        &mut self,
-        builder: &mut FunctionBuilder,
-        func: &lir::Function,
-        block: lir::Block,
-    ) -> (Block, ssa::Predecessors) {
-        let clblock = builder.create_block();
-        let size_t = self.size_t();
-
-        func.blocks.params(block).for_each(|v| {
-            let t = func.blocks.type_of(v);
-
-            match self.structs.ftype(t) {
-                FType::StructZST => {}
-                FType::Scalar(scalar) => {
-                    builder.append_block_param(clblock, scalar.point);
-                }
-                FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) => {
-                    builder.append_block_param(clblock, size_t);
-                }
-                FType::Struct(PassBy::Value, mk) => {
-                    self.structs.iter_s_stable_fields(mk, &mut |scalar| {
-                        builder.append_block_param(clblock, scalar.point);
-                    });
-                }
-            }
-        });
-
-        if block == lir::Block::entry() {
-            // Attach the structret pointer as a parameter if needed
-            match self.structs.ftype(&func.returns) {
-                FType::Struct(PassBy::Pointer, _) | FType::ArrayPointer(..) => {
-                    builder.append_block_param(clblock, size_t);
-                }
-                _ => {}
-            }
-        }
-
-        (clblock, 0)
-    }
-
     // Declares a function that runs all the val initialisers, and writes their return types to the
     // global variable mapped to that initialiser.
     fn declare_val_run_and_store(&mut self) -> FuncId {

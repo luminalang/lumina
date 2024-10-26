@@ -233,10 +233,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         }
 
         let continuation = self.f.builder.create_block();
-        let out = self
-            .f
-            .builder
-            .append_block_param(continuation, self.ctx.size_t());
 
         let is_null = self.ins().icmp_imm(IntCC::Equal, src, 0);
         let [identity, allocate] = [(), ()].map(|_| self.f.builder.create_block());
@@ -255,6 +251,10 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
         self.f.builder.seal_block(continuation);
         self.f.builder.switch_to_block(continuation);
+        let out = self
+            .f
+            .builder
+            .append_block_param(continuation, self.ctx.size_t());
 
         out
     }

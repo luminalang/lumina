@@ -1,6 +1,22 @@
 use logos::{Lexer as LogosLexer, Logos, SpannedIter};
 use lumina_util::Span;
 
+fn find_str_end<'src>(lex: &mut LogosLexer<'src, Token>) {
+    let mut i = 0;
+    let bytes = lex.remainder().as_bytes();
+
+    while let Some(&c) = bytes.get(i) {
+        match c {
+            b'\\' if bytes.get(i + 1) == Some(&b'"') => i += 2,
+            b'\\' if bytes.get(i + 1) == Some(&b'\\') => i += 2,
+            b'"' => break,
+            _ => i += 1,
+        }
+    }
+
+    lex.bump(i + 1);
+}
+
 #[derive(PartialEq, Debug, Clone, Copy, Logos)]
 #[logos(subpattern name = "[_a-zA-Z][-_0-9a-zA-Z]*")]
 #[logos(subpattern path = "(?&name)(:(?&name))+|(?&name)")]
@@ -8,7 +24,7 @@ pub enum Token {
     #[regex("\\n+")]
     NewLines,
 
-    #[regex(r#""(\\[\\"]|[^"])*""#)]
+    #[token("\"", find_str_end)]
     StringLiteral,
 
     #[regex("\\-?\\d+")]
@@ -373,6 +389,13 @@ mod tests {
             tokens.push(T::EOF);
             assert_eq!(tokens, [$($exp),+], "\n representation: {:?}", paired);
         };
+    }
+
+    #[test]
+    fn str_escapes() {
+        cmp! { r#""hello" a"# => T::StringLiteral, T::Path, T::EOF };
+        cmp! { r#""hello\\" a"# => T::StringLiteral, T::Path, T::EOF };
+        cmp! { r#""hello\\\"" a"# => T::StringLiteral, T::Path, T::EOF };
     }
 
     #[test]

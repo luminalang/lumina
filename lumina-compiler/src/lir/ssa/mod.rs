@@ -1,4 +1,4 @@
-use super::{mono::fmt, mono::MonoFormatter, MonoFunc, MonoType, MonoTypeKey, UNIT};
+use super::{mono::MonoFormatter, Function, MonoFunc, MonoType, MonoTypeKey, UNIT};
 use crate::{MAYBE_JUST, MAYBE_NONE};
 use derive_more::{Add, AddAssign, From};
 use itertools::Itertools;
@@ -13,6 +13,7 @@ use std::ops::Sub;
 use tracing::{info, trace};
 
 mod opts;
+mod rewrite;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Block(pub u32);
@@ -96,7 +97,7 @@ impl Blocks {
         self.blocks.keys()
     }
 
-    pub fn params(&self, block: Block) -> impl Iterator<Item = V> + 'static {
+    pub fn params(&self, block: Block) -> impl Iterator<Item = V> + 'static + Clone {
         let params = self.blocks[block].parameters;
         let (start, _) = self.blocks[block].offset.unwrap_or((V(0), V(0)));
 
@@ -117,29 +118,6 @@ impl Blocks {
 
     pub fn predecessors(&self, block: Block) -> u16 {
         self.blocks[block].predecessors
-    }
-
-    pub fn remove_predecessor(&mut self, block: Block) {
-        self.blocks[block].predecessors -= 1;
-
-        if self.predecessors(block) == 0 {
-            match self.flow_of(block) {
-                ControlFlow::JmpBlock(cblock, _) => self.remove_predecessor(*cblock),
-                ControlFlow::Select { on_true, on_false, .. } => {
-                    let blocks = [on_true.0, on_false.0];
-                    for cblock in blocks {
-                        self.remove_predecessor(cblock);
-                    }
-                }
-                ControlFlow::JmpTable(_, _, blocks) => {
-                    let blocks = blocks.clone();
-                    for cblock in blocks {
-                        self.remove_predecessor(cblock);
-                    }
-                }
-                _ => {}
-            }
-        }
     }
 
     pub fn new_block(&mut self, params: u32) -> Block {
@@ -212,6 +190,10 @@ impl Blocks {
     }
     pub fn entry_of(&self, v: V) -> &Entry {
         &self.ventries[v]
+    }
+
+    pub fn last_value(&self, block: Block) -> Option<V> {
+        self.blocks[block].offset.map(|(_, end)| end - 1)
     }
 
     /// Perform a change to a block without switching to it
@@ -517,6 +499,10 @@ impl V {
 }
 
 impl Value {
+    pub fn u(n: i128, bits: u8) -> Value {
+        Value::Int(n, IntSize::new(false, bits))
+    }
+
     pub fn bool(b: bool) -> Value {
         Value::Int(b as i128, IntSize::new(false, 8))
     }
@@ -652,7 +638,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t Blocks> {
                     .params(block)
                     .format_with(", ", |v, f| f(&format_args!(
                         "{v}: {}",
-                        fmt(self.types, self.v.type_of(v))
+                        self.fork(self.v.type_of(v)),
                     ))),
                 ')'.symbol(),
                 format!("// {} predecessors", data.predecessors).dimmed()
@@ -671,10 +657,11 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t Blocks> {
                     let ty = &self.v.vtypes[v];
                     writeln!(
                         f,
-                        "{v} {} {entry} {} {}",
+                        "{v} {} {} {} {}",
                         '='.symbol(),
+                        self.fork(entry),
                         ':'.symbol(),
-                        fmt(self.types, ty)
+                        self.fork(ty),
                     )?;
                 }
             }
@@ -687,6 +674,12 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t Blocks> {
         }
 
         Ok(())
+    }
+}
+
+impl<'a> fmt::Display for MonoFormatter<'a, &Entry> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        EntryFmt(self.funcs, self.v).fmt(f)
     }
 }
 
@@ -705,11 +698,23 @@ impl<'a, H: fmt::Display, P: fmt::Display> fmt::Display for CStyle<'a, H, P> {
     }
 }
 
+struct EntryFmt<'a, 'e>(Option<&'a Map<MonoFunc, Function>>, &'e Entry);
+
 impl fmt::Display for Entry {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
+        write!(f, "{}", EntryFmt(None, self))
+    }
+}
+
+impl<'a, 'e> fmt::Display for EntryFmt<'a, 'e> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.1 {
             Entry::CallStatic(mfunc, params) => {
-                write!(f, "{} {}", "call".keyword(), CStyle(mfunc, params))
+                let symbol = self
+                    .0
+                    .map(|funcs| funcs[*mfunc].symbol.clone())
+                    .unwrap_or(mfunc.to_string());
+                write!(f, "{} {}", "call".keyword(), CStyle(&symbol, params))
             }
             Entry::CallValue(mfunc, params) => {
                 write!(f, "{} {}", "callv".keyword(), CStyle(mfunc, params))
@@ -778,68 +783,24 @@ impl fmt::Display for Entry {
     }
 }
 
-impl Entry {
-    pub fn offset_v(&mut self, if_gt: V, by: u32) {
-        self.for_values_mut(&mut |v| {
-            if v.0 >= if_gt.0 {
-                v.0 += by;
-            }
-        });
-    }
-
-    // TODO: consider whether splitting out parameters like `Entry = EntryKind * [Value]` is a good idea
-    //
-    // OR: perhaps the sort of optimizations we do are a lot easier of each block
-    // has it's own V scope instead of shared.
-    //
-    // Hm. I kinda want to experiment with that.
-    pub fn for_values_mut(&mut self, f: &mut dyn Fn(&mut V)) {
-        match self {
-            Entry::Variant(_, params)
-            | Entry::Construct(params)
-            | Entry::CallExtern(_, params)
-            | Entry::CallStatic(_, params) => params.iter_mut().for_each(|p| p.for_values_mut(f)),
-            Entry::CallValue(v, params) => {
-                v.for_values_mut(f);
-                params.iter_mut().for_each(|p| p.for_values_mut(f));
-            }
-            Entry::ExtendUnsigned(v)
-            | Entry::ExtendSigned(v)
-            | Entry::Reduce(v)
-            | Entry::Transmute(v)
-            | Entry::IntAbs(v)
-            | Entry::Indice { of: v, .. }
-            | Entry::Field { of: v, .. }
-            | Entry::TagFromSum { of: v }
-            | Entry::CastFromSum { of: v }
-            | Entry::BitNot(v)
-            | Entry::Replicate(v, _)
-            | Entry::Deref(v)
-            | Entry::IntToFloat(v, _)
-            | Entry::FloatToInt(v, _)
-            | Entry::Dealloc { ptr: v }
-            | Entry::Copy(v) => v.for_values_mut(f),
-            Entry::RefStaticVal(_) => {}
-            Entry::IntCmpInclusive(lhs, _, rhs, _)
-            | Entry::IntAdd(lhs, rhs)
-            | Entry::BitAnd([lhs, rhs])
-            | Entry::IntSub(lhs, rhs)
-            | Entry::IntMul(lhs, rhs)
-            | Entry::WritePtr { ptr: lhs, value: rhs }
-            | Entry::IntDiv(lhs, rhs) => {
-                lhs.for_values_mut(f);
-                rhs.for_values_mut(f);
-            }
-            Entry::BlockParam(v) => f(v),
-            Entry::SizeOf(_) | Entry::AlignOf(_) | Entry::Alloc | Entry::Alloca => {}
-        }
-    }
-}
-
 impl Value {
     pub fn for_values_mut(&mut self, f: &mut dyn Fn(&mut V)) {
         match self {
             Value::V(v) => f(v),
+            _ => {}
+        }
+    }
+}
+
+impl ControlFlow {
+    pub fn for_each_block(&self, mut f: impl FnMut(Block)) {
+        match self {
+            ControlFlow::JmpBlock(bl, _) => f(*bl),
+            ControlFlow::Select { on_true, on_false, .. } => {
+                f(on_true.0);
+                f(on_false.0);
+            }
+            ControlFlow::JmpTable(_, _, blocks) => blocks.iter().copied().for_each(f),
             _ => {}
         }
     }

@@ -35,7 +35,11 @@ impl<'a> Debugger<'a> {
     }
 
     fn tfmt<T>(&self, v: T) -> MonoFormatter<'_, T> {
-        MonoFormatter { types: &self.lir.mono.types, v }
+        MonoFormatter {
+            types: &self.lir.mono.types,
+            v,
+            funcs: Some(&self.lir.functions),
+        }
     }
 
     #[track_caller]

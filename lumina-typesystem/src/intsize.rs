@@ -77,7 +77,7 @@ impl IntSize {
 
 impl fmt::Display for IntSize {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_with_default(f, 0)
+        self.fmt_with_default(f, u8::MAX)
     }
 }
 

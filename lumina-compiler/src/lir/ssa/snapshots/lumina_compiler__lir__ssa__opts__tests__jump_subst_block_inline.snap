@@ -1,0 +1,28 @@
+---
+source: lumina-compiler/src/lir/ssa/opts.rs
+expression: comparison
+---
+BEFORE OPTS:
+block0(v0: u0): [2m// 0 predecessors[0m
+select 1
+| true  -> block1(1)
+| false -> block1(1)
+
+
+block1(v1: u16): [2m// 2 predecessors[0m
+jump block2(v1, 2)
+
+block2(v2: u16, v3: u32): [2m// 1 predecessors[0m
+v4 = (construct v0 v1 v2 v3) : u64
+return v4
+
+AFTER OPTS:
+block0(v0: u0): [2m// 0 predecessors[0m
+select 1
+| true  -> block1(1, 1, 2)
+| false -> block1(1, 1, 2)
+
+
+block1(v1: u16, v2: u16, v3: u32): [2m// 2 predecessors[0m
+v4 = (construct v0 v1 v2 v3) : u64
+return v4

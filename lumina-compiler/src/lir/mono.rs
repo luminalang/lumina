@@ -1,4 +1,4 @@
-use super::{Item, MonoTyping, UNIT};
+use super::{Function, Item, MonoFunc, MonoTyping, UNIT};
 use crate::prelude::*;
 use ast::attr::Repr;
 use derive_more::{Deref, DerefMut};
@@ -110,7 +110,19 @@ impl MonoTypeData {
 
 pub struct MonoFormatter<'a, T> {
     pub types: &'a Map<MonoTypeKey, MonoTypeData>,
+    pub funcs: Option<&'a Map<MonoFunc, Function>>,
     pub v: T,
+}
+
+impl<'a, T> MonoFormatter<'a, T> {
+    pub fn fns(mut self, funcs: &'a Map<MonoFunc, Function>) -> Self {
+        self.funcs = Some(funcs);
+        self
+    }
+
+    pub fn fork<U>(&self, other: U) -> MonoFormatter<'_, U> {
+        MonoFormatter { types: self.types, funcs: self.funcs, v: other }
+    }
 }
 
 impl<'a, 't> fmt::Display for MonoFormatter<'a, &lir::Function> {
@@ -121,8 +133,8 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &lir::Function> {
             "fn".keyword(),
             self.v.symbol,
             "returning".keyword(),
-            fmt(&self.types, &self.v.returns),
-            fmt(&self.types, &self.v.blocks)
+            self.fork(&self.v.returns),
+            self.fork(&self.v.blocks),
         )
     }
 }
@@ -131,23 +143,23 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoType> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.v {
             MonoType::Int(intsize) => write!(f, "{}", intsize),
-            MonoType::Pointer(inner) => write!(f, "*{}", fmt(self.types, &**inner)),
+            MonoType::Pointer(inner) => write!(f, "*{}", self.fork(&**inner)),
             MonoType::FnPointer(params, ret) if params.is_empty() => {
-                write!(f, "fnptr({})", fmt(self.types, &**ret))
+                write!(f, "fnptr({})", self.fork(&**ret))
             }
             MonoType::FnPointer(params, ret) => {
                 write!(
                     f,
                     "fnptr({} -> {})",
-                    params.iter().map(|t| fmt(self.types, t)).format(", "),
-                    fmt(self.types, &**ret)
+                    params.iter().map(|t| self.fork(t)).format(", "),
+                    self.fork(&**ret),
                 )
             }
             MonoType::Const(const_) => const_.fmt(f),
             MonoType::Float => "float".fmt(f),
             MonoType::Unreachable => "!".fmt(f),
-            MonoType::Array(len, inner) => write!(f, "[{}; {len}]", fmt(self.types, &**inner)),
-            MonoType::Monomorphised(key) => fmt(self.types, *key).fmt(f),
+            MonoType::Array(len, inner) => write!(f, "[{}; {len}]", self.fork(&**inner)),
+            MonoType::Monomorphised(key) => self.fork(*key).fmt(f),
         }
     }
 }
@@ -170,7 +182,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, MonoTypeKey> {
                     .format(" | ")
             ),
             MonoTypeData::DynTraitObject { vtable, trait_ } => {
-                write!(f, "(dyn {trait_} {})", fmt(&self.types, vtable))
+                write!(f, "(dyn {trait_} {})", self.fork(vtable))
             }
             MonoTypeData::Placeholder => write!(f, "???"),
         }
@@ -183,12 +195,8 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoTyping> {
             f,
             "fn {} as {} -> {}",
             self.v.origin,
-            self.v
-                .params
-                .values()
-                .map(|t| fmt(self.types, t))
-                .format(", "),
-            fmt(self.types, &self.v.returns)
+            self.v.params.values().map(|t| self.fork(t)).format(", "),
+            self.fork(&self.v.returns),
         )
     }
 }
@@ -199,13 +207,13 @@ impl<'a, 't, T: fmt::Display> fmt::Display for MonoFormatter<'a, (T, &'t [MonoTy
             f,
             "({} {})",
             &self.v.0,
-            self.v.1.iter().map(|t| fmt(self.types, t)).format(" ")
+            self.v.1.iter().map(|t| self.fork(t)).format(" ")
         )
     }
 }
 
 pub fn fmt<'a, T>(types: &'a Map<MonoTypeKey, MonoTypeData>, v: T) -> MonoFormatter<'_, T> {
-    MonoFormatter { v, types }
+    MonoFormatter { v, types, funcs: None }
 }
 
 impl MonomorphisedTypes {
@@ -226,7 +234,7 @@ impl MonomorphisedTypes {
     }
 
     pub fn fmt<T>(&self, v: T) -> MonoFormatter<'_, T> {
-        MonoFormatter { v, types: &self.types.records }
+        MonoFormatter { v, types: &self.types.records, funcs: None }
     }
 
     pub fn get_or_make_tuple(&mut self, elems: Vec<MonoType>) -> MonoTypeKey {
@@ -284,6 +292,9 @@ impl MonoType {
         MonoType::pointer(Self::byte())
     }
 
+    pub fn u(bits: u8) -> Self {
+        MonoType::Int(IntSize::new(false, bits))
+    }
     pub fn byte() -> MonoType {
         MonoType::Int(IntSize::new(false, 8))
     }

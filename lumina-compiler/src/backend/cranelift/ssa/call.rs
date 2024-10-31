@@ -5,13 +5,12 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         &mut self,
         id: FuncId,
         typing: layout::Typing,
-        params: &[lir::Value],
+        mut params: Vec<Value>,
     ) -> VEntry {
-        let mut appl = self.params(params);
-        let slot = self.append_rptr_if_needed(&typing.ret, &mut appl);
+        let slot = self.append_rptr_if_needed(&typing.ret, &mut params);
 
         let fref = self.declare_func_in_func(id);
-        let call = self.ins().call(fref, &appl);
+        let call = self.ins().call(fref, &params);
 
         self.map_call_results_to_ventry(call, &typing.ret, slot)
     }
@@ -49,6 +48,57 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             self.entry_to_fstable(false, &entry, &mut buf)
         });
         buf
+    }
+
+    fn copy_rptr_if_needed(&self, params: &mut Vec<Value>) {
+        let ret = &self.f.func.returns;
+        match self.ctx.structs.ftype(ret) {
+            FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) => {
+                let entry = self.f.blockmap[lir::Block::entry()].0;
+                let rptr = self.f.builder.block_params(entry).last().unwrap();
+                let size_t = self.ctx.size_t();
+                assert_eq!(self.f.builder.func.dfg.value_type(*rptr), size_t);
+                params.push(*rptr);
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn tail_call(&mut self, mfunc: MonoFunc, params: &[lir::Value]) {
+        let mut params = self.params(&params);
+
+        let fheader = self.ctx.funcmap[mfunc].clone();
+
+        let fname = self.ctx.lir.functions[mfunc].symbol.to_string();
+
+        if mfunc == self.f.fkey {
+            info!("performing a self-tail call to {mfunc} in {fname}");
+
+            self.copy_rptr_if_needed(&mut params);
+            let entry = self.f.blockmap[lir::Block::entry()].0;
+            self.ins().jump(entry, &params);
+        } else if fheader.typing.ret == self.f.func.returns {
+            info!("performing a ret-tail call to {mfunc} in {fname}");
+
+            self.copy_rptr_if_needed(&mut params);
+            let fref = self.declare_func_in_func(fheader.id);
+            self.ins().return_call(fref, &params);
+        } else {
+            match self.ctx.structs.ftype(&fheader.typing.ret) {
+                FType::ArrayPointer(_, _) | FType::Struct(PassBy::Pointer, _) => {
+                    info!("refusing tail call due to ret mismatch");
+
+                    self.f.vmap.as_mut_vec().pop();
+                    self.call_func(fheader.id, fheader.typing, params);
+                }
+                _ => {
+                    info!("performing a ret-tail call to {mfunc} in {fname} without rptr");
+
+                    let fref = self.declare_func_in_func(fheader.id);
+                    self.ins().return_call(fref, &params);
+                }
+            }
+        }
     }
 
     fn struct_to_fstable(

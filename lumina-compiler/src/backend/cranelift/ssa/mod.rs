@@ -32,6 +32,7 @@ pub(super) type Predecessors = u16;
 #[derive(new)]
 struct Current<'a, 'f> {
     func: &'a lir::Function,
+    fkey: MonoFunc,
     builder: FunctionBuilder<'f>,
     blockmap: Map<lir::Block, (Block, Predecessors)>,
     #[new(default)]
@@ -146,7 +147,8 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
         let f_dbg_ctx = ctx.def_function(key);
 
-        Translator { ctx, f: Current::new(func, builder, blockmap) }.lower_and_finalize_current();
+        Translator { ctx, f: Current::new(func, key, builder, blockmap) }
+            .lower_and_finalize_current();
 
         info!("lowered {}:\n {}", func.symbol, &cctx.func);
 
@@ -226,11 +228,31 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
         assert_eq!(raw_params_ref, &[]);
 
-        for v in self.f.func.blocks.entries(self.f.block) {
+        let mut entries = self.f.func.blocks.entries(self.f.block).peekable();
+        loop {
+            let Some(v) = entries.next() else {
+                break;
+            };
             let entry = self.f.func.blocks.entry_of(v);
             let ty = self.f.func.blocks.type_of(v);
             let n = self.f.builder.func.dfg.num_values();
             trace!("at v{n} ; lowering {v} {} {entry} : {ty:?}", '='.symbol());
+
+            // Edge-case for merging the last bind and tail to form a tail call
+            if entries.peek().is_none() {
+                match (entry, self.f.func.blocks.flow_of(self.f.block)) {
+                    (
+                        lir::Entry::CallStatic(mfunc, params),
+                        lir::ControlFlow::Return(lir::Value::V(rv)),
+                    ) if *rv == v => {
+                        self.f.vmap.push_as(v, VEntry::ZST);
+                        self.tail_call(*mfunc, params);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
             let entry = self.entry(entry, ty);
             self.f.vmap.push_as(v, entry);
         }
@@ -249,10 +271,12 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             lir::Entry::AlignOf(ty) => self.align_of(ty),
 
             lir::Entry::CallStatic(mfunc, params) => {
+                let params = self.params(params);
                 let fheader = &self.ctx.funcmap[*mfunc];
                 self.call_func(fheader.id, fheader.typing.clone(), params)
             }
             lir::Entry::CallExtern(key, params) => {
+                let params = self.params(params);
                 let fheader = &self.ctx.externmap[key];
                 self.call_func(fheader.id, fheader.typing.clone(), params)
             }
@@ -387,10 +411,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
     fn flow(&mut self, flow: &lir::ControlFlow) {
         match flow {
             lir::ControlFlow::JmpFunc(mfunc, params) => {
-                let fheader = self.ctx.funcmap[*mfunc].clone();
-                // TODO: tail calls
-                let entry = self.call_func(fheader.id, fheader.typing, params);
-                self.return_(entry);
+                self.tail_call(*mfunc, params);
             }
             lir::ControlFlow::JmpBlock(block, params) => {
                 let params = self.params(params);
@@ -403,8 +424,8 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             lir::ControlFlow::Unreachable => {
                 self.ins().trap(TrapCode::UnreachableCodeReached);
             }
-            lir::ControlFlow::Return(v) => {
-                let entry = self.value_to_entry(*v);
+            &lir::ControlFlow::Return(v) => {
+                let entry = self.value_to_entry(v);
                 self.return_(entry);
             }
             lir::ControlFlow::Select { value, on_true, on_false } => {
@@ -608,6 +629,8 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         ret: &MonoType,
         params: &mut Vec<Value>,
     ) -> Option<(ir::StackSlot, Value)> {
+        // TODO: if we fix the struct return pointer being the first instead of last;
+        // we need to make sure to also update `copy_rptr_if_needed`
         match self.ctx.structs.ftype(ret) {
             FType::Struct(PassBy::Pointer, mk) => {
                 let size_t = self.ctx.size_t();

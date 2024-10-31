@@ -912,7 +912,12 @@ impl<'a> FuncLower<'a> {
                 Some(key) => format!("{}>{mk}", self.mir.name_of_type(key)),
                 None => mk.to_string(),
             },
-            _ => MonoFormatter { types: &self.lir.mono.types, v: ty }.to_string(),
+            _ => MonoFormatter {
+                types: &self.lir.mono.types,
+                v: ty,
+                funcs: Some(&self.lir.functions),
+            }
+            .to_string(),
         }
     }
 }

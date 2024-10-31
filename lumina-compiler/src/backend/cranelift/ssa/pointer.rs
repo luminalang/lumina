@@ -274,9 +274,9 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let alloc = self.ctx.lir.alloc;
         let fheader = self.ctx.funcmap[alloc].clone();
 
-        let size = lir::Value::Int(size, IntSize::new(true, self.ctx.size_t().bits() as u8));
-
-        let entry = self.call_func(fheader.id, fheader.typing, &[size]);
+        let size_t = Type::int(self.ctx.size_t().bits() as u16).unwrap();
+        let size = self.ins().iconst(size_t, size as i64);
+        let entry = self.call_func(fheader.id, fheader.typing, vec![size]);
 
         match entry {
             VEntry::Scalar(Scalar { kind: ScalarKind::Pointer(_), point }) => point,
@@ -293,8 +293,9 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             size,
             IntSize::new(true, triple.pointer_width().unwrap().bits()),
         );
+        let params = self.params(&[ptr, size]);
 
-        let entry = self.call_func(fheader.id, fheader.typing, &[ptr, size]);
+        let entry = self.call_func(fheader.id, fheader.typing, params);
 
         match entry {
             VEntry::ZST => {}

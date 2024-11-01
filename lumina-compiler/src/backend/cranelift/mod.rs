@@ -7,7 +7,6 @@ use cranelift::codegen::ir;
 use cranelift::prelude::*;
 use cranelift_module::{DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use owo_colors::OwoColorize;
 use std::sync::Arc;
 use tracing::info_span;
 
@@ -95,26 +94,29 @@ pub fn run(target: Target, dwarf: BinDebugInfo, lir: lir::Output) -> Vec<u8> {
         .functions
         .iter()
         .map(|(mfunc, func)| {
-            let entry = lir::Block::entry();
+            todo!("I think it'd be better to do this lazily?");
+            // especially since a lot of functions will likely dissapear from inline
 
-            info!(
-                "lowering signature of {mfunc} {}",
-                format!("// {}", func.symbol).dimmed()
-            );
+            // let entry = lir::Block::entry();
 
-            let typing = structs.records.get_abi_typing(
-                func.blocks.params(entry).map(|v| func.blocks.type_of(v)),
-                &func.returns,
-            );
+            // info!(
+            //     "lowering signature of {mfunc} {}",
+            //     format!("// {}", func.symbol).dimmed()
+            // );
 
-            let sig = structs.signature(&typing);
+            // let typing = structs.records.get_abi_typing(
+            //     func.blocks.params(entry).map(|v| func.blocks.type_of(v)),
+            //     &func.returns,
+            // );
 
-            assert!(!func.symbol.is_empty());
-            let id = objmodule
-                .declare_function(&func.symbol, Linkage::Hidden, &sig)
-                .unwrap();
+            // let sig = structs.signature(&typing);
 
-            FuncHeader { id, typing }
+            // assert!(!func.symbol.is_empty());
+            // let id = objmodule
+            //     .declare_function(&func.symbol, Linkage::Hidden, &sig)
+            //     .unwrap();
+
+            // FuncHeader { id, typing }
         })
         .collect();
 

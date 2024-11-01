@@ -19,6 +19,7 @@ impl<'a> FuncLower<'a> {
 
             branches,
             predecessors: pred,
+            visits: vec![0; pred.len()].into(),
 
             f: self,
 
@@ -42,6 +43,7 @@ pub struct PatLower<'f, 'v, 'a> {
 
     branches: &'v Map<key::DecisionTreeTail, mir::Expr>,
     predecessors: &'v Map<key::DecisionTreeTail, u16>,
+    visits: Map<key::DecisionTreeTail, u16>,
     expressions: Map<key::DecisionTreeTail, Option<Block>>,
 
     constructors: Vec<VecDeque<Value>>,
@@ -51,12 +53,12 @@ pub struct PatLower<'f, 'v, 'a> {
 }
 
 impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
-    fn ssa(&mut self) -> &mut ssa::Blocks {
+    fn ssa(&mut self) -> &mut ssa::SSA {
         self.f.ssa()
     }
 
     fn block(&self) -> Block {
-        self.f.lir.functions[self.f.current.mfkey].blocks.block()
+        self.f.lir.functions[self.f.current.mfkey].ssa.block()
     }
 
     pub fn run(mut self, on: ssa::Value, tree: &mir::DecTree) -> Value {
@@ -111,7 +113,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                 let branch_expr_block = match &mut self.expressions[*tail] {
                     Some(existing) => existing,
                     None => {
-                        let branch_expr_block = self.ssa().new_block(table.binds.len() as u32);
+                        let branch_expr_block = self.ssa().new_block();
                         self.expressions[*tail] = Some(branch_expr_block);
                         self.expressions[*tail].as_mut().unwrap()
                     }
@@ -136,11 +138,12 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         tail: key::DecisionTreeTail,
         table: &mir::pat::PointTable,
     ) {
+        self.visits[tail] += 1;
+
         let branch_expr_block = self.expressions[tail].unwrap();
-        let pred = self.ssa().predecessors(branch_expr_block);
 
         // If this is the last predecessor then jump to and lower the branch expr
-        if pred == self.predecessors[tail] {
+        if self.visits[tail] == self.predecessors[tail] {
             for (bind, depth) in table.binds.iter() {
                 let v = self.map[*depth];
                 let ty = self.f.type_of_value(v);
@@ -188,7 +191,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                 return self.next(next);
             }
 
-            let [on_true, on_false] = [self.ssa().new_block(0), self.ssa().new_block(0)];
+            let [on_true, on_false] = [self.ssa().new_block(), self.ssa().new_block()];
 
             let check = if range.end == range.start {
                 // TODO: jump-table optimisation for adjecent single-numbers
@@ -263,7 +266,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
         let resetpoint = self.make_reset();
 
-        let [on_true, on_false] = [self.ssa().new_block(0), self.ssa().new_block(0)];
+        let [on_true, on_false] = [self.ssa().new_block(), self.ssa().new_block()];
 
         self.ssa()
             .select(on, [(on_true, vec![]), (on_false, vec![])]);
@@ -320,7 +323,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let is_just = self.is_just(maybe);
 
         let [con_block, nil_block] = [mir::pat::LIST_CONS, mir::pat::LIST_NIL].map(|constr| {
-            let vblock = self.ssa().new_block(0);
+            let vblock = self.ssa().new_block();
             self.ssa().switch_to_block(vblock);
 
             let resetpoint = self.make_reset();
@@ -401,7 +404,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let mut falsely;
 
         for (str, next) in &next.branches {
-            falsely = self.ssa().new_block(0);
+            falsely = self.ssa().new_block();
             self.string_branch((on, falsely), (&str.checks, next));
             self.reset(falsely, reset.clone());
         }
@@ -434,7 +437,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                         self.f.string_equals([lhs, str])
                     };
 
-                    let next_check_block = self.ssa().new_block(0);
+                    let next_check_block = self.ssa().new_block();
 
                     self.ssa()
                         .select(eq, [(next_check_block, vec![]), (falsely, vec![])]);
@@ -457,7 +460,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     let is_null = self.ssa().eq([x, null], u8);
                     let ok = self.ssa().not(is_null);
 
-                    let next_check_block = self.ssa().new_block(0);
+                    let next_check_block = self.ssa().new_block();
 
                     self.ssa()
                         .select(ok, [(next_check_block, vec![]), (falsely, vec![])]);
@@ -484,7 +487,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
                     let is_just = self.is_just(maybe);
 
-                    let next_check_block = self.ssa().new_block(0);
+                    let next_check_block = self.ssa().new_block();
 
                     self.ssa()
                         .select(is_just, [(next_check_block, vec![]), (falsely, vec![])]);
@@ -537,7 +540,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             .branches
             .iter()
             .map(|(var, next)| {
-                let vblock = self.ssa().new_block(0);
+                let vblock = self.ssa().new_block();
                 self.ssa().switch_to_block(vblock);
 
                 let resetpoint = self.make_reset();
@@ -578,7 +581,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         match self.continuation_block {
             Some((block, _)) => block,
             None => {
-                let block = self.ssa().new_block(1);
+                let block = self.ssa().new_block();
                 self.continuation_block = Some((block, ty));
                 block
             }

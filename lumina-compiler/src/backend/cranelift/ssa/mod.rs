@@ -21,6 +21,8 @@ mod pointer;
 mod record;
 mod sum;
 
+use num::binops_from_kind;
+
 #[derive(new)]
 pub struct Translator<'c, 'a, 'f> {
     ctx: &'c mut Context<'a>,
@@ -139,11 +141,14 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         cctx.func.signature = ctx.structs.signature(&header.typing);
         let mut builder = FunctionBuilder::new(&mut cctx.func, fctx);
 
-        let blockmap = func
-            .blocks
-            .blocks()
-            .map(|_| (builder.create_block(), 0))
-            .collect();
+        let mut blockmap = todo!(
+            "I think we want to do this lazily instead so it doesn't need a one-to-one mapping"
+        );
+        // let blockmap = func
+        //     .blocks
+        //     .blocks()
+        //     .map(|_| (builder.create_block(), 0))
+        //     .collect();
 
         let f_dbg_ctx = ctx.def_function(key);
 
@@ -165,7 +170,8 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
         self.f.builder.seal_block(*clblock);
         self.f.switch_to_block(self.f.block);
-        self.block();
+        todo!("we don't want to do it this way anymore");
+        // self.block();
 
         self.f.builder.finalize();
     }
@@ -176,24 +182,25 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
         let builder = &mut self.f.builder;
 
-        self.f.func.blocks.params(self.f.block).for_each(|v| {
-            let t = self.f.func.blocks.type_of(v);
+        todo!("perhaps if we just iterate the `V`s directly; we'll do this on the fly");
+        // self.f.func.blocks.params(self.f.block).for_each(|v| {
+        //     let t = self.f.func.blocks.type_of(v);
 
-            match self.ctx.structs.ftype(t) {
-                FType::StructZST => {}
-                FType::Scalar(scalar) => {
-                    builder.append_block_param(clblock, scalar.point);
-                }
-                FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) => {
-                    builder.append_block_param(clblock, size_t);
-                }
-                FType::Struct(PassBy::Value, mk) => {
-                    self.ctx.structs.iter_s_stable_fields(mk, &mut |scalar| {
-                        builder.append_block_param(clblock, scalar.point);
-                    });
-                }
-            }
-        });
+        //     match self.ctx.structs.ftype(t) {
+        //         FType::StructZST => {}
+        //         FType::Scalar(scalar) => {
+        //             builder.append_block_param(clblock, scalar.point);
+        //         }
+        //         FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) => {
+        //             builder.append_block_param(clblock, size_t);
+        //         }
+        //         FType::Struct(PassBy::Value, mk) => {
+        //             self.ctx.structs.iter_s_stable_fields(mk, &mut |scalar| {
+        //                 builder.append_block_param(clblock, scalar.point);
+        //             });
+        //         }
+        //     }
+        // });
 
         if self.f.block == lir::Block::entry() {
             // Attach the structret pointer as a parameter if needed
@@ -206,66 +213,70 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         }
     }
 
-    fn block(&mut self) {
-        self.set_up_block_params();
+    // fn block(&mut self) {
+    //     self.set_up_block_params();
 
-        let mut raw_params = self.f.builder.block_params(self.f.blockmap[self.f.block].0);
-        let raw_params_ref: &mut &[Value] = &mut raw_params;
+    //     let mut raw_params = self.f.builder.block_params(self.f.blockmap[self.f.block].0);
+    //     let raw_params_ref: &mut &[Value] = &mut raw_params;
 
-        // Map the block parameters to ventries
-        let pvalues = self.f.func.blocks.params(self.f.block);
-        let ptypes = self.f.func.blocks.param_types(self.f.block);
-        for (v, ty) in pvalues.zip(ptypes) {
-            let ventry = self.fparam_to_ventry(false, ty, raw_params_ref);
-            self.f.vmap.push_as(v, ventry);
-        }
+    //     // Map the block parameters to ventries
+    //     // let pvalues = self.f.func.blocks.params(self.f.block);
+    //     // let ptypes = self.f.func.blocks.param_types(self.f.block);
+    //     // for (v, ty) in pvalues.zip(ptypes) {
+    //     //     let ventry = self.fparam_to_ventry(false, ty, raw_params_ref);
+    //     //     self.f.vmap.push_as(v, ventry);
+    //     // }
+    //     //
+    //     // TODO: I think we'll want to do this on-the-fly
 
-        if self.f.builder.func.signature.uses_struct_return_param()
-            && self.f.block == lir::Block::entry()
-        {
-            let _struct_return = next_value(raw_params_ref);
-        }
+    //     if self.f.builder.func.signature.uses_struct_return_param()
+    //         && self.f.block == lir::Block::entry()
+    //     {
+    //         let _struct_return = next_value(raw_params_ref);
+    //     }
 
-        assert_eq!(raw_params_ref, &[]);
+    //     assert_eq!(raw_params_ref, &[]);
 
-        let mut entries = self.f.func.blocks.entries(self.f.block).peekable();
-        loop {
-            let Some(v) = entries.next() else {
-                break;
-            };
-            let entry = self.f.func.blocks.entry_of(v);
-            let ty = self.f.func.blocks.type_of(v);
-            let n = self.f.builder.func.dfg.num_values();
-            trace!("at v{n} ; lowering {v} {} {entry} : {ty:?}", '='.symbol());
+    //     // let mut entries = self.f.func.blocks.entries(self.f.block).peekable();
+    //     // loop {
+    //     //     let Some(v) = entries.next() else {
+    //     //         break;
+    //     //     };
+    //     //     let entry = self.f.func.blocks.entry_of(v);
+    //     //     let ty = self.f.func.blocks.type_of(v);
+    //     //     let n = self.f.builder.func.dfg.num_values();
+    //     //     trace!("at v{n} ; lowering {v} {} {entry} : {ty:?}", '='.symbol());
 
-            // Edge-case for merging the last bind and tail to form a tail call
-            if entries.peek().is_none() {
-                match (entry, self.f.func.blocks.flow_of(self.f.block)) {
-                    (
-                        lir::Entry::CallStatic(mfunc, params),
-                        lir::ControlFlow::Return(lir::Value::V(rv)),
-                    ) if *rv == v => {
-                        self.f.vmap.push_as(v, VEntry::ZST);
-                        self.tail_call(*mfunc, params);
-                        return;
-                    }
-                    _ => {}
-                }
-            }
+    //     //     // Edge-case for merging the last bind and tail to form a tail call
+    //     //     if entries.peek().is_none() {
+    //     //         match (entry, self.f.func.blocks.flow_of(self.f.block)) {
+    //     //             (
+    //     //                 lir::Entry::CallStatic(mfunc, params),
+    //     //                 lir::ControlFlow::Return(lir::Value::V(rv)),
+    //     //             ) if *rv == v => {
+    //     //                 self.f.vmap.push_as(v, VEntry::ZST);
+    //     //                 self.tail_call(*mfunc, params);
+    //     //                 return;
+    //     //             }
+    //     //             _ => {}
+    //     //         }
+    //     //     }
 
-            let entry = self.entry(entry, ty);
-            self.f.vmap.push_as(v, entry);
-        }
+    //     //     let entry = self.entry(entry, ty);
+    //     //     self.f.vmap.push_as(v, entry);
+    //     // }
 
-        let flow = self.f.func.blocks.flow_of(self.f.block);
-        trace!("lowering flow {flow}");
-        self.flow(flow)
-    }
+    //     let flow = self.f.func.blocks.flow_of(self.f.block);
+    //     trace!("lowering flow {flow}");
+    //     self.flow(flow)
+    // }
 
     fn entry(&mut self, entry: &lir::Entry, ty: &MonoType) -> VEntry {
         match entry {
-            lir::Entry::Copy(value) => self.value_to_entry(*value),
-            lir::Entry::BlockParam(v) => self.value_to_entry(lir::Value::V(*v)),
+            &lir::Entry::BlockParam(block, i) => {
+                let _v = self.f.func.ssa.get_block_param(block, i);
+                todo!("declare the block parameter? or just value_to_entry the `V`? ")
+            }
             lir::Entry::Transmute(value) => self.transmute(*value, ty),
             lir::Entry::SizeOf(ty) => self.size_of(ty),
             lir::Entry::AlignOf(ty) => self.align_of(ty),
@@ -323,32 +334,13 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 self.cast_from_sum(entry, ty)
             }
 
-            lir::Entry::IntAdd(left, right) => self.ibinary(
-                ty,
-                [*left, *right],
-                InstBuilder::sadd_overflow,
-                InstBuilder::uadd_overflow,
-                InstBuilder::iadd,
-            ),
-            lir::Entry::IntSub(left, right) => self.ibinary(
-                ty,
-                [*left, *right],
-                InstBuilder::ssub_overflow,
-                InstBuilder::usub_overflow,
-                InstBuilder::isub,
-            ),
-            lir::Entry::IntMul(left, right) => self.ibinary(
-                ty,
-                [*left, *right],
-                InstBuilder::smul_overflow,
-                InstBuilder::umul_overflow,
-                InstBuilder::imul,
-            ),
-            lir::Entry::IntDiv(left, right) => self.int_div([*left, *right], as_int(ty)),
+            lir::Entry::BinOp(lir::BinOp::And, ints) => self.bit_and(*ints),
+            lir::Entry::BinOp(lir::BinOp::Div, ints) => self.int_div(*ints, as_int(ty)),
+            lir::Entry::BinOp(kind, values) => self.ibinary(ty, *values, binops_from_kind(*kind)),
             lir::Entry::IntAbs(v) => self.iunary(*v, as_int(ty), |ins, _, v| ins.iabs(v)),
 
-            lir::Entry::IntCmpInclusive(left, cmp, right, bitsize) => {
-                self.int_cmpi([*left, *right], *cmp, *bitsize)
+            lir::Entry::IntCmpInclusive(values, cmp, bitsize) => {
+                self.int_cmpi(*values, *cmp, *bitsize)
             }
 
             lir::Entry::Reduce(v) => self.iunary(*v, as_int(ty), InstBuilder::ireduce),
@@ -358,7 +350,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             lir::Entry::FloatToInt(v, intsize) => self.float_to_int(*v, *intsize),
             lir::Entry::IntToFloat(v, intsize) => self.int_to_float(*v, *intsize),
 
-            lir::Entry::BitAnd(ints) => self.bit_and(*ints),
             lir::Entry::BitNot(v) => self.bit_not(*v),
 
             lir::Entry::Alloc => self.alloc(ty),
@@ -372,6 +363,77 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 VEntry::ZST
             }
             lir::Entry::Deref(ptr) => self.deref_ptr(*ptr, ty),
+
+            lir::Entry::JmpFunc(mfunc, params) => {
+                self.tail_call(*mfunc, params);
+                todo!();
+            }
+            lir::Entry::JmpBlock(jump) => {
+                let params = self.params(&jump.params);
+
+                let clblock = self.f.blockmap[jump.id].0;
+                self.ins().jump(clblock, &params);
+
+                todo!();
+                // self.lower_block_if_last_predecessor(*block);
+            }
+            lir::Entry::Trap(code) => {
+                self.ins().trap(*code);
+                todo!();
+            }
+            &lir::Entry::Return(v) => {
+                let entry = self.value_to_entry(v);
+                self.return_(entry);
+                todo!();
+            }
+            lir::Entry::Select { value, on_true, on_false } => {
+                let int = self.value_to_entry(*value).as_direct();
+
+                let then_params = self.params(&on_true.params);
+                let else_params = self.params(&on_false.params);
+
+                let [block_then, block_else] =
+                    [on_true.id, on_false.id].map(|block| self.f.blockmap[block].0);
+
+                self.ins()
+                    .brif(int, block_then, &then_params, block_else, &else_params);
+
+                todo!();
+                // for block in [on_true.0, on_false.0] {
+                //     self.lower_block_if_last_predecessor(block);
+                // }
+            }
+            lir::Entry::JmpTable(of, blocks) => {
+                let indice = self.value_to_entry(*of).as_direct();
+
+                let def = self.f.builder.create_block();
+
+                let pool = &mut self.f.builder.func.dfg.value_lists;
+
+                let table: Vec<ir::BlockCall> = blocks
+                    .iter()
+                    .map(|block| ir::BlockCall::new(self.f.blockmap[*block].0, &[], pool))
+                    .collect();
+
+                let defcall = ir::BlockCall::new(def, &[], pool);
+
+                let jump_data = JumpTableData::new(defcall, &table);
+                let table = self.f.builder.create_jump_table(jump_data);
+
+                let indice = self.resize_uint(indice, types::I32);
+
+                self.ins().br_table(indice, table);
+
+                self.f.builder.seal_block(def);
+                self.f.builder.switch_to_block(def);
+                self.ins().trap(TrapCode::UnreachableCodeReached);
+
+                todo!();
+
+                // for block in blocks {
+                //     self.lower_block_if_last_predecessor(*block);
+                // }
+            }
         }
     }
 
@@ -405,79 +467,6 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 VEntry::direct(self.ins().iconst(ty, n as i64))
             }
             lir::Value::Float(_) => todo!(),
-        }
-    }
-
-    fn flow(&mut self, flow: &lir::ControlFlow) {
-        match flow {
-            lir::ControlFlow::JmpFunc(mfunc, params) => {
-                self.tail_call(*mfunc, params);
-            }
-            lir::ControlFlow::JmpBlock(block, params) => {
-                let params = self.params(params);
-
-                let clblock = self.f.blockmap[*block].0;
-                self.ins().jump(clblock, &params);
-
-                self.lower_block_if_last_predecessor(*block);
-            }
-            lir::ControlFlow::Unreachable => {
-                self.ins().trap(TrapCode::UnreachableCodeReached);
-            }
-            &lir::ControlFlow::Return(v) => {
-                let entry = self.value_to_entry(v);
-                self.return_(entry);
-            }
-            lir::ControlFlow::Select { value, on_true, on_false } => {
-                let int = self.value_to_entry(*value).as_direct();
-
-                let then_params = self.params(&on_true.1);
-                let else_params = self.params(&on_false.1);
-
-                let [block_then, block_else] =
-                    [on_true.0, on_false.0].map(|block| self.f.blockmap[block].0);
-
-                self.ins()
-                    .brif(int, block_then, &then_params, block_else, &else_params);
-
-                for block in [on_true.0, on_false.0] {
-                    self.lower_block_if_last_predecessor(block);
-                }
-            }
-            lir::ControlFlow::JmpTable(of, against, blocks) => {
-                let indice = self.value_to_entry(*of).as_direct();
-
-                let def = self.f.builder.create_block();
-
-                let pool = &mut self.f.builder.func.dfg.value_lists;
-
-                let table: Vec<ir::BlockCall> = blocks
-                    .iter()
-                    .map(|block| ir::BlockCall::new(self.f.blockmap[*block].0, &[], pool))
-                    .collect();
-
-                let defcall = ir::BlockCall::new(def, &[], pool);
-
-                let jump_data = JumpTableData::new(defcall, &table);
-                let table = self.f.builder.create_jump_table(jump_data);
-
-                if !against.is_empty() {
-                    unimplemented!("block params to branchs of jumpt able");
-                }
-
-                let indice = self.resize_uint(indice, types::I32);
-
-                self.ins().br_table(indice, table);
-
-                self.f.builder.seal_block(def);
-                self.f.builder.switch_to_block(def);
-                self.ins().trap(TrapCode::UnreachableCodeReached);
-
-                for block in blocks {
-                    self.lower_block_if_last_predecessor(*block);
-                }
-            }
-            lir::ControlFlow::Empty => panic!("missing control flow in LIR block"),
         }
     }
 
@@ -652,19 +641,20 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         }
     }
 
-    #[track_caller]
-    fn lower_block_if_last_predecessor(&mut self, block: lir::Block) {
-        let (clblock, predecessors) = &mut self.f.blockmap[block];
-        *predecessors += 1;
+    // #[track_caller]
+    // fn lower_block_if_last_predecessor(&mut self, block: lir::Block) {
+    //     let (clblock, predecessors) = &mut self.f.blockmap[block];
+    //     *predecessors += 1;
 
-        debug_assert!(*predecessors <= self.f.func.blocks.predecessors(block));
+    //     debug_assert!(*predecessors <= self.f.func.blocks.predecessors(block));
 
-        if *predecessors == self.f.func.blocks.predecessors(block) {
-            self.f.builder.seal_block(*clblock);
-            self.f.switch_to_block(block);
-            self.block();
-        }
-    }
+    //     if *predecessors == self.f.func.blocks.predecessors(block) {
+    //         self.f.builder.seal_block(*clblock);
+    //         self.f.switch_to_block(block);
+    //         todo!("will we even need this anymore?");
+    //         // self.block();
+    //     }
+    // }
 
     fn transmute(&mut self, v: lir::Value, ty: &MonoType) -> VEntry {
         match self.value_to_entry(v) {

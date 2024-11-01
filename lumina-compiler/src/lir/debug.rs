@@ -19,17 +19,11 @@ impl<'a> Debugger<'a> {
             let _span = info_span!("running LIR debugger", entity = func.symbol);
             let _handle = _span.enter();
 
-            for block in func.blocks.blocks() {
-                for v in func.blocks.entries(block) {
-                    let entry = func.blocks.entry_of(v);
-                    info!("{v} = {entry}");
-                    let exp = func.blocks.type_of(v);
-                    self.entry(v, exp, entry)
-                }
-
-                let flow = func.blocks.flow_of(block);
-                info!("{flow}");
-                self.flow(flow);
+            for v in func.ssa.iterv() {
+                let entry = func.ssa.entry_of(v);
+                let exp = func.ssa.type_of(v);
+                trace!("{v} = {entry} : {}", self.lir.mono.fmt(exp));
+                self.entry(v, exp, entry)
             }
         }
     }
@@ -53,8 +47,8 @@ impl<'a> Debugger<'a> {
             self.check(&g, e);
         }
 
-        assert_eq!(given.next(), None);
-        assert_eq!(expected.next(), None);
+        assert_eq!(given.next(), None, "excess parameter");
+        assert_eq!(expected.next(), None, "missing parameter");
     }
 
     #[track_caller]
@@ -65,37 +59,6 @@ impl<'a> Debugger<'a> {
                 self.tfmt(got),
                 self.tfmt(exp)
             );
-        }
-    }
-
-    fn flow(&mut self, flow: &ControlFlow) {
-        match flow {
-            ControlFlow::JmpFunc(mfunc, params) => {
-                let expected = self.lir.functions[*mfunc]
-                    .blocks
-                    .param_types(ssa::Block::entry());
-
-                self.params(params, expected);
-            }
-            ControlFlow::JmpBlock(block, params) => {
-                let expected = self.lir.functions[self.mfunc].blocks.param_types(*block);
-                self.params(params, expected)
-            }
-            ControlFlow::Unreachable => {}
-            ControlFlow::Empty => {}
-            ControlFlow::Return(v) => {
-                let ty = self.lir.type_of_value(self.mfunc, *v);
-                let exp = &self.lir.functions[self.mfunc].returns;
-                self.check(&ty, exp);
-            }
-            ControlFlow::Select { value, .. } => {
-                let ty = self.lir.type_of_value(self.mfunc, *value);
-                self.check(&ty, &MonoType::bool());
-            }
-            ControlFlow::JmpTable(v, _, _) => {
-                let ty = self.lir.type_of_value(self.mfunc, *v);
-                self.as_int(&ty, "jump table");
-            }
         }
     }
 
@@ -122,7 +85,7 @@ impl<'a> Debugger<'a> {
                 self.check_declaredn(at, params);
 
                 let expected = self.lir.functions[*mfunc]
-                    .blocks
+                    .ssa
                     .param_types(ssa::Block::entry());
 
                 self.params(params, expected);
@@ -171,10 +134,7 @@ impl<'a> Debugger<'a> {
                     ),
                 }
             }
-            Entry::Copy(v) => {
-                self.check_declared(at, *v);
-                assert_eq!(exp, &self.lir.type_of_value(self.mfunc, *v))
-            }
+
             Entry::Construct(values) => {
                 self.check_declaredn(at, values);
 
@@ -266,11 +226,7 @@ impl<'a> Debugger<'a> {
                     _ => panic!("SumField of non-opaque sum data: {}", self.tfmt(&of)),
                 }
             }
-            Entry::IntCmpInclusive(lhs, _, rhs, _)
-            | Entry::IntAdd(lhs, rhs)
-            | Entry::IntSub(lhs, rhs)
-            | Entry::IntMul(lhs, rhs)
-            | Entry::IntDiv(lhs, rhs) => {
+            Entry::IntCmpInclusive([lhs, rhs], _, _) | Entry::BinOp(_, [lhs, rhs]) => {
                 self.check_declared(at, *lhs);
                 self.check_declared(at, *rhs);
 
@@ -319,21 +275,16 @@ impl<'a> Debugger<'a> {
                 self.as_float(&ty, "cast");
                 assert_eq!(*size, self.as_int(exp, "cast"));
             }
-            Entry::BitAnd(values) => values
-                .map(|v| {
-                    self.check_declared(at, v);
-                    self.lir.type_of_value(self.mfunc, v)
-                })
-                .iter()
-                .chain(std::iter::once(exp))
-                .for_each(|v| assert_eq!(self.as_int(v, "bitand").bits(), 8)),
+
             Entry::BitNot(v) => {
                 self.check_declared(at, *v);
                 let ty = self.lir.type_of_value(self.mfunc, *v);
                 self.as_int(&ty, "bitnot");
             }
-            Entry::BlockParam(v) => {
-                let ty = self.lir.functions[self.mfunc].blocks.type_of(*v);
+            Entry::BlockParam(block, i) => {
+                let ssa = &self.lir.functions[self.mfunc].ssa;
+                let v = ssa.get_block_param(*block, *i);
+                let ty = ssa.type_of(v);
                 assert_eq!(exp, ty);
             }
             Entry::Alloc { .. } => {}
@@ -361,6 +312,31 @@ impl<'a> Debugger<'a> {
                 let ty = self.lir.type_of_value(self.mfunc, *ptr);
                 let inner = self.as_ptr(&ty);
                 assert_eq!(exp, inner);
+            }
+            Entry::JmpFunc(mfunc, params) => {
+                let expected = self.lir.functions[*mfunc]
+                    .ssa
+                    .param_types(ssa::Block::entry());
+
+                self.params(params, expected);
+            }
+            Entry::JmpBlock(jump) => {
+                let expected = self.lir.functions[self.mfunc].ssa.param_types(jump.id);
+                self.params(&jump.params, expected)
+            }
+            Entry::Trap(_) => {}
+            Entry::Return(v) => {
+                let ty = self.lir.type_of_value(self.mfunc, *v);
+                let exp = &self.lir.functions[self.mfunc].returns;
+                self.check(&ty, exp);
+            }
+            Entry::Select { value, .. } => {
+                let ty = self.lir.type_of_value(self.mfunc, *value);
+                self.check(&ty, &MonoType::bool());
+            }
+            Entry::JmpTable(v, _) => {
+                let ty = self.lir.type_of_value(self.mfunc, *v);
+                self.as_int(&ty, "jump table");
             }
         }
     }

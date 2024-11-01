@@ -42,7 +42,7 @@ pub use mono::{
     fmt as ty_fmt, MonoFormatter, MonoType, MonoTypeData, MonoTypeKey, MonomorphisedTypes, TypeMap,
     Types,
 };
-pub use ssa::{Block, Blocks, ControlFlow, Entry, Value, V};
+pub use ssa::{BinOp, Block, BlockJump, Entry, Value, SSA, V};
 mod dyn_dispatch;
 mod expr;
 mod pat;
@@ -148,7 +148,7 @@ struct Current {
 pub struct Function {
     pub symbol: String,
     pub kind: Item,
-    pub blocks: ssa::Blocks,
+    pub ssa: ssa::SSA,
     pub returns: MonoType,
     pub invocations: u32,
 
@@ -160,7 +160,7 @@ pub struct Function {
 
 impl Function {
     pub fn as_fnpointer(&self) -> MonoType {
-        let params = self.blocks.param_types(Block::entry()).cloned().collect();
+        let params = self.ssa.param_types(Block::entry()).cloned().collect();
         let ret = self.returns.clone();
         MonoType::FnPointer(params, Box::new(ret))
     }
@@ -398,8 +398,7 @@ impl LIR {
                             .format(" ")
                     );
 
-                    let mut ssa =
-                        ssa::Blocks::new(typing.params.len() as u32 + captures.len() as u32);
+                    let mut ssa = ssa::SSA::new();
 
                     for (bind, ty) in captures.values() {
                         let v = ssa.add_block_param(entryblock, ty.clone());
@@ -408,7 +407,7 @@ impl LIR {
 
                     ssa
                 } else {
-                    ssa::Blocks::new(typing.params.len() as u32)
+                    ssa::SSA::new()
                 };
 
                 info!("adding block parameters for {}", self.mono.fmt(&typing));
@@ -450,7 +449,7 @@ impl LIR {
     fn type_of_value(&self, mfkey: MonoFunc, value: ssa::Value) -> MonoType {
         match value {
             ssa::Value::ReadOnly(ro) => MonoType::pointer(self.read_only_table[ro].1.clone()),
-            ssa::Value::V(v) => self.functions[mfkey].blocks.type_of(v).clone(),
+            ssa::Value::V(v) => self.functions[mfkey].ssa.type_of(v).clone(),
             ssa::Value::Int(_, intsize) => MonoType::Int(intsize),
             ssa::Value::Float(_) => MonoType::Float,
             ssa::Value::FuncPtr(ptr) => {
@@ -468,7 +467,7 @@ impl LIR {
         &mut self,
         symbol: String,
         kind: Item,
-        blocks: ssa::Blocks,
+        blocks: ssa::SSA,
         returns: MonoType,
     ) -> MonoFunc {
         let func = Function::new(symbol, kind, blocks, returns, 1);
@@ -476,7 +475,7 @@ impl LIR {
     }
 
     fn mfunc_to_fnpointer_type(&self, mfunc: MonoFunc) -> MonoType {
-        let ptypes = self.functions[mfunc].blocks.func_params();
+        let ptypes = self.functions[mfunc].ssa.func_param_types();
         let ret = self.functions[mfunc].returns.clone();
         MonoType::FnPointer(ptypes, Box::new(ret))
     }
@@ -509,8 +508,8 @@ impl Item {
 }
 
 impl<'a> FuncLower<'a> {
-    fn ssa(&mut self) -> &mut ssa::Blocks {
-        &mut self.lir.functions[self.current.mfkey].blocks
+    fn ssa(&mut self) -> &mut ssa::SSA {
+        &mut self.lir.functions[self.current.mfkey].ssa
     }
 
     fn types(&self) -> &Types {
@@ -616,7 +615,7 @@ impl<'a> FuncLower<'a> {
 
                 let types: Vec<_> = raw_params.iter().map(|ty| morph.apply(ty)).collect();
 
-                let mut ssa = Blocks::new(raw_params.len() as u32);
+                let mut ssa = SSA::new();
                 let block_params = types
                     .iter()
                     .cloned()

@@ -1,0 +1,21 @@
+---
+source: lumina-compiler/src/lir/ssa/rewrite.rs
+assertion_line: 265
+expression: "format!(\"{before}\\n{after}\")"
+---
+BEFORE:
+block0(v0: u0):
+  v1 = add v0 1
+  v2 = jump block1(v1)
+block1(v3: u3):
+  v4 = (construct v0 v1 v2 v3)
+  v5 = return v4
+
+AFTER:
+block0(v0: u0):
+  v1 = add v0 1
+  v2 = (construct v0 v1 v2 v1)
+  v3 = return v3
+block1(v4: u3):
+  v5 = (construct v0 v1 v2 v4)
+  v6 = return v5

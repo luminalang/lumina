@@ -134,7 +134,7 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &lir::Function> {
             self.v.symbol,
             "returning".keyword(),
             self.fork(&self.v.returns),
-            self.fork(&self.v.blocks),
+            self.fork(&self.v.ssa),
         )
     }
 }
@@ -280,6 +280,10 @@ impl MonomorphisedTypes {
 }
 
 impl MonoType {
+    pub fn unit() -> Self {
+        Self::Monomorphised(UNIT)
+    }
+
     pub fn bool() -> Self {
         Self::Int(IntSize::new(false, 8))
     }

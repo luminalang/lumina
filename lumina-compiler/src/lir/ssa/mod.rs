@@ -1,15 +1,15 @@
 use super::{mono::MonoFormatter, Function, MonoFunc, MonoType, MonoTypeKey, UNIT};
 use crate::{MAYBE_JUST, MAYBE_NONE};
 use derive_more::{Add, AddAssign, From};
+use derive_new::new;
 use itertools::Itertools;
 use key::{Map, M};
-use lumina_collections::map_key_impl;
+use lumina_collections::{map_key_impl, KeysIter};
 use lumina_key as key;
 use lumina_typesystem::IntSize;
 use lumina_util::{Highlighting, ParamFmt};
 use owo_colors::OwoColorize;
 use std::fmt;
-use std::ops::Sub;
 use tracing::{info, trace};
 
 mod opts;
@@ -23,53 +23,47 @@ map_key_impl!(Block(u32), "block");
 pub struct V(pub u32);
 map_key_impl!(V(u32), "v");
 
-impl Add<u32> for V {
-    type Output = Self;
-
-    fn add(self, rhs: u32) -> Self::Output {
-        V(self.0 + rhs)
-    }
-}
-
-impl Sub<u32> for V {
-    type Output = Self;
-
-    fn sub(self, rhs: u32) -> Self::Output {
-        V(self.0 - rhs)
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct BasicBlock {
-    parameters: u32,
-    offset: Option<(V, V)>,
-    predecessors: u16,
-    tail: ControlFlow,
+    start: V,
+    // predecessors: u16,
+    // parameters: u32,
+    // flow: ControlFlow,
 }
 
 impl BasicBlock {
-    pub fn new(parameters: u32) -> BasicBlock {
-        Self {
-            offset: None,
-            predecessors: 0,
-            parameters,
-            tail: ControlFlow::Empty,
-        }
+    pub fn new() -> BasicBlock {
+        Self { start: V(u32::MAX) }
     }
 }
 
-pub struct Blocks {
+pub struct SSA {
     current: Block,
-    pub(super) blocks: Map<Block, BasicBlock>,
+    blocks: Map<Block, BasicBlock>,
     ventries: Map<V, Entry>,
     vtypes: Map<V, MonoType>,
 }
 
-impl Blocks {
-    pub fn placeholder() -> Self {
-        Blocks {
+/// Information retrieved with the `SSA::block_info` method.
+pub struct BlockInfo<'a> {
+    pub start: V,
+    pub binds: u32,
+    pub params: u32,
+    pub tail: &'a Entry,
+}
+
+impl<'a> BlockInfo<'a> {
+    pub fn is_param(&self, v: V) -> Option<usize> {
+        (v.0 >= self.start.0 && v.0 < self.start.0 + self.params)
+            .then(|| (v.0 - self.start.0) as usize)
+    }
+}
+
+impl SSA {
+    pub fn new() -> Self {
+        SSA {
             current: Block::entry(),
-            blocks: Map::new(),
+            blocks: [BasicBlock::new()].into(),
             ventries: Map::new(),
             vtypes: Map::new(),
         }
@@ -77,61 +71,127 @@ impl Blocks {
 
     pub fn add_block_param(&mut self, block: Block, ty: MonoType) -> V {
         self.in_block(block, |this| {
-            let v = this.vtypes.next_key();
-            let entry = Entry::BlockParam(v);
-            let Value::V(got) = this.assign(entry, ty) else {
+            if this.blocks[block].start == V(u32::MAX) {
+                this.blocks[block].start = this.ventries.next_key();
+            }
+
+            let i = this.block_params(block).count() as u32;
+            let entry = Entry::BlockParam(block, i);
+            let Value::V(v) = this.assign(entry, ty) else {
                 unreachable!();
             };
-            assert_eq!(v, got);
             v
         })
     }
 
-    pub fn new(params: u32) -> Self {
-        let mut blocks = Blocks::placeholder();
-        blocks.blocks.push(BasicBlock::new(params));
-        blocks
+    pub fn block_info(&self, block: Block) -> BlockInfo<'_> {
+        let start = self.blocks[block].start;
+
+        let mut iter = KeysIter::range(start, usize::MAX);
+        let mut params = 0;
+        let mut binds = 0;
+
+        loop {
+            let v = iter.next().expect("no tail for block");
+
+            match &self.ventries[v] {
+                Entry::BlockParam(..) => {
+                    params += 1;
+                }
+                entry if entry.is_terminator() => {
+                    break BlockInfo { binds, params, tail: entry, start }
+                }
+                _ => binds += 1,
+            }
+        }
     }
 
-    pub fn blocks(&self) -> impl Iterator<Item = Block> + 'static {
-        self.blocks.keys()
+    /// Checks whether this blocks parmaeters are only used within the block
+    pub fn parameters_are_local(&self, block: Block) -> bool {
+        let start = self.blocks[block].start;
+        self.block_params(block)
+            .all(|p| self.usage_count(start, p) == 0)
     }
 
-    pub fn params(&self, block: Block) -> impl Iterator<Item = V> + 'static + Clone {
-        let params = self.blocks[block].parameters;
-        let (start, _) = self.blocks[block].offset.unwrap_or((V(0), V(0)));
+    pub fn usage_count(&self, from: V, target: V) -> usize {
+        KeysIter::range(from, usize::MAX)
+            .take_while(|&v| self.ventries.has(v))
+            .map(|v| {
+                let mut count = 0;
+                rewrite::for_entry(&self.ventries[v], &mut |v| {
+                    if v == target {
+                        count += 1;
+                    }
+                });
+                count
+            })
+            .sum()
+    }
 
-        // TODO: known-size iterator optimises this right?
-        self.vtypes
-            .keys()
-            .skip(start.0 as usize)
-            .take(params as usize)
+    pub fn get_block_param(&self, block: Block, i: u32) -> V {
+        let start = self.blocks[block].start;
+        assert_ne!(start, V(u32::MAX));
+        let v = V(start.0 + i);
+        debug_assert!(
+            matches!(&self.ventries[v], Entry::BlockParam(b, bi) if *b == block && *bi == i)
+        );
+        v
+    }
+
+    pub fn block_params(&self, block: Block) -> impl Iterator<Item = V> + 'static {
+        let start = self.blocks[block].start;
+        let mut params = 0;
+
+        assert_ne!(
+            start,
+            V(u32::MAX),
+            "attempted to iterate block params of non-setup block"
+        );
+
+        for v in KeysIter::range(start, usize::MAX) {
+            if !self.ventries.has(v) {
+                break;
+            }
+
+            match &self.ventries[v] {
+                Entry::BlockParam(b, _) if *b == block => params += 1,
+                _ => break,
+            }
+        }
+
+        // block(x, y):
+        //  bparam x
+        //  bparam y
+        //  jump other()
+
+        dbg!(block, &start, &params);
+
+        KeysIter::range(start, params)
     }
 
     pub fn param_types(&self, block: Block) -> impl Iterator<Item = &MonoType> {
-        self.params(block).map(|v| &self.vtypes[v])
+        let vs = self.block_params(block);
+        vs.map(|v| &self.vtypes[v])
     }
 
-    pub fn func_params(&self) -> Vec<MonoType> {
+    pub fn func_param_types(&self) -> Vec<MonoType> {
         self.param_types(Block::entry()).cloned().collect()
     }
 
-    pub fn predecessors(&self, block: Block) -> u16 {
-        self.blocks[block].predecessors
+    pub fn iterv(&self) -> impl Iterator<Item = V> + 'static {
+        self.ventries.keys()
     }
 
-    pub fn new_block(&mut self, params: u32) -> Block {
+    // pub fn predecessors(&self, block: Block) -> u16 {
+    //     self.blocks[block].predecessors
+    // }
+
+    pub fn new_block(&mut self) -> Block {
         debug_assert_ne!(self.blocks.len(), 0);
-        self.blocks.push(BasicBlock::new(params))
+        self.blocks.push(BasicBlock::new())
     }
 
-    pub fn get_block_param(&self, block: Block, pid: u32) -> V {
-        let params = self.blocks[block].parameters;
-        assert!(params > pid);
-        let (start, _) = self.blocks[block].offset.unwrap_or((V(0), V(0)));
-        V(start.0 + pid)
-    }
-
+    /// Switch block for added instructions
     pub fn switch_to_block(&mut self, block: Block) {
         self.current = block;
     }
@@ -139,13 +199,8 @@ impl Blocks {
     fn assign(&mut self, entry: Entry, ty: MonoType) -> Value {
         let block = self.current;
 
-        match self.blocks[block].tail {
-            ControlFlow::Empty => {}
-            ControlFlow::Unreachable => {
-                info!("skipping unreacahble assignment {entry}");
-                return Value::Int(0, IntSize::new(false, 64));
-            }
-            _ => panic!("assignment in block that's already been sealed"),
+        if self.blocks[block].start == V(u32::MAX) {
+            self.blocks[block].start = self.ventries.next_key();
         }
 
         trace!(
@@ -156,44 +211,16 @@ impl Blocks {
             format!("// {block}").dimmed()
         );
         let v = self.ventries.push(entry);
-
         assert_eq!(self.vtypes.push(ty), v);
-
-        match &mut self.blocks[block].offset {
-            None => self.blocks[block].offset = Some((v, V(v.0 + 1))),
-            Some((_, end)) => end.0 += 1,
-        }
 
         v.value()
     }
 
-    pub fn entries_count(&self) -> usize {
-        self.ventries.len()
-    }
-
-    pub fn entries(&self, block: Block) -> impl Iterator<Item = V> + 'static {
-        let (start, end) = self.blocks[block].offset.unwrap_or((V(0), V(0)));
-        let start = start + V(self.blocks[block].parameters);
-        debug_assert!(
-            start.0 <= end.0,
-            "{start} <= {end} where {}",
-            self.blocks[block].parameters
-        );
-        VIter { start, end }
-    }
-
-    pub fn flow_of(&self, block: Block) -> &ControlFlow {
-        &self.blocks[block].tail
-    }
     pub fn type_of(&self, v: V) -> &MonoType {
         &self.vtypes[v]
     }
     pub fn entry_of(&self, v: V) -> &Entry {
         &self.ventries[v]
-    }
-
-    pub fn last_value(&self, block: Block) -> Option<V> {
-        self.blocks[block].offset.map(|(_, end)| end - 1)
     }
 
     /// Perform a change to a block without switching to it
@@ -207,41 +234,6 @@ impl Blocks {
     /// Get the current block
     pub fn block(&self) -> Block {
         self.current
-    }
-
-    #[track_caller]
-    fn set_tail(&mut self, flow: ControlFlow) {
-        let block = self.current;
-
-        if self.blocks[block].tail == ControlFlow::Unreachable {
-            return;
-        }
-        match &self.blocks[block].tail {
-            ControlFlow::Empty => {}
-            ControlFlow::Unreachable => return,
-            other => panic!("already assigned tail for {block}: {other}"),
-        }
-
-        // Increment predecessors
-        match &flow {
-            ControlFlow::JmpBlock(block, _) => {
-                self.blocks[*block].predecessors += 1;
-            }
-            ControlFlow::Select { on_true, on_false, .. } => {
-                self.blocks[on_true.0].predecessors += 1;
-                self.blocks[on_false.0].predecessors += 1;
-            }
-            ControlFlow::JmpTable(_, _, blocks) => {
-                for &block in blocks {
-                    self.blocks[block].predecessors += 1;
-                }
-            }
-            _ => {}
-        }
-
-        trace!("setting tail of {block} to:\n{flow}");
-
-        self.blocks[block].tail = flow;
     }
 
     pub fn write(&mut self, ptr: Value, value: Value) -> Value {
@@ -295,11 +287,6 @@ impl Blocks {
         self.assign(entry, MonoType::Int(tagsize))
     }
 
-    pub fn copy(&mut self, value: Value, ty: MonoType) -> Value {
-        let entry = Entry::Copy(value);
-        self.assign(entry, ty)
-    }
-
     pub fn reduce(&mut self, value: Value, ty: MonoType) -> Value {
         let entry = Entry::Reduce(value);
         self.assign(entry, ty)
@@ -323,7 +310,7 @@ impl Blocks {
     }
 
     pub fn cmp(&mut self, v: [Value; 2], ord: std::cmp::Ordering, bitsize: IntSize) -> Value {
-        let entry = Entry::IntCmpInclusive(v[0], ord, v[1], bitsize);
+        let entry = Entry::IntCmpInclusive(v, ord, bitsize);
         let ty = MonoType::bool();
         self.assign(entry, ty)
     }
@@ -344,19 +331,19 @@ impl Blocks {
 
     // return type overloaded numeric operations
     pub fn add(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
-        let entry = Entry::IntAdd(v, by);
+        let entry = Entry::BinOp(BinOp::Add, [v, by]);
         self.assign(entry, ty)
     }
     pub fn sub(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
-        let entry = Entry::IntSub(v, by);
+        let entry = Entry::BinOp(BinOp::Sub, [v, by]);
         self.assign(entry, ty)
     }
     pub fn mul(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
-        let entry = Entry::IntMul(v, by);
+        let entry = Entry::BinOp(BinOp::Mul, [v, by]);
         self.assign(entry, ty)
     }
     pub fn div(&mut self, v: Value, by: Value, ty: MonoType) -> Value {
-        let entry = Entry::IntDiv(v, by);
+        let entry = Entry::BinOp(BinOp::Div, [v, by]);
         self.assign(entry, ty)
     }
     pub fn abs(&mut self, v: Value, ty: MonoType) -> Value {
@@ -425,51 +412,53 @@ impl Blocks {
         self.assign(entry, ty)
     }
 
-    pub fn bit_and(&mut self, values: [Value; 2], ty: MonoType) -> Value {
-        let entry = Entry::BitAnd(values);
+    pub fn bit_and(&mut self, v: [Value; 2], ty: MonoType) -> Value {
+        let entry = Entry::BinOp(BinOp::And, v);
         self.assign(entry, ty)
     }
 
     #[track_caller]
-    pub fn jump<J: Jumpable>(&mut self, j: J, params: Vec<Value>) {
-        let flow = J::construct(j, params);
-        self.set_tail(flow);
+    pub fn jump<J: Jumpable>(&mut self, j: J, params: Vec<Value>) -> Value {
+        let entry = J::construct(j, params);
+        self.assign(entry, MonoType::unit())
     }
 
-    pub fn unreachable(&mut self) {
-        let flow = ControlFlow::Unreachable;
-        self.set_tail(flow)
+    pub fn unreachable(&mut self, ty: MonoType) -> Value {
+        let entry = Entry::Trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
+        self.assign(entry, ty)
     }
 
-    pub fn return_(&mut self, value: Value) {
-        let flow = ControlFlow::Return(value);
-        self.set_tail(flow)
+    pub fn return_(&mut self, value: Value) -> Value {
+        let entry = Entry::Return(value);
+        self.assign(entry, MonoType::unit())
     }
 
-    pub fn select(&mut self, value: Value, [on_true, on_false]: [(Block, Vec<Value>); 2]) {
-        let flow = ControlFlow::Select { value, on_true, on_false };
-        self.set_tail(flow)
+    pub fn select(&mut self, value: Value, [on_true, on_false]: [(Block, Vec<Value>); 2]) -> Value {
+        let on_true = BlockJump { id: on_true.0, params: on_true.1 };
+        let on_false = BlockJump { id: on_false.0, params: on_false.1 };
+        let entry = Entry::Select { value, on_true, on_false };
+        self.assign(entry, MonoType::unit())
     }
 
-    pub fn jump_table(&mut self, on: Value, blocks: Vec<Block>) {
-        let flow = ControlFlow::JmpTable(on, vec![], blocks);
-        self.set_tail(flow)
+    pub fn jump_table(&mut self, on: Value, blocks: Vec<Block>) -> Value {
+        let entry = Entry::JmpTable(on, blocks);
+        self.assign(entry, MonoType::unit())
     }
 }
 
 pub trait Jumpable {
-    fn construct(self, params: Vec<Value>) -> ControlFlow;
+    fn construct(self, params: Vec<Value>) -> Entry;
 }
 
 impl Jumpable for MonoFunc {
-    fn construct(self, params: Vec<Value>) -> ControlFlow {
-        ControlFlow::JmpFunc(self, params)
+    fn construct(self, params: Vec<Value>) -> Entry {
+        Entry::JmpFunc(self, params)
     }
 }
 
 impl Jumpable for Block {
-    fn construct(self, params: Vec<Value>) -> ControlFlow {
-        ControlFlow::JmpBlock(self, params)
+    fn construct(self, params: Vec<Value>) -> Entry {
+        Entry::JmpBlock(BlockJump { id: self, params })
     }
 }
 
@@ -502,6 +491,9 @@ impl Value {
     pub fn u(n: i128, bits: u8) -> Value {
         Value::Int(n, IntSize::new(false, bits))
     }
+    pub fn i(n: i128, bits: u8) -> Value {
+        Value::Int(n, IntSize::new(true, bits))
+    }
 
     pub fn bool(b: bool) -> Value {
         Value::Int(b as i128, IntSize::new(false, 8))
@@ -523,45 +515,54 @@ impl Value {
     }
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub enum ControlFlow {
-    JmpFunc(MonoFunc, Vec<Value>),
-    JmpBlock(Block, Vec<Value>),
-    Unreachable,
-    Empty,
-    Return(Value),
-
-    // Since bools are just ints, the difference is that `Select` allows different block parameters
-    // for the conditional jumps.
-    Select {
-        value: Value,
-        on_true: (Block, Vec<Value>),
-        on_false: (Block, Vec<Value>),
-    },
-    // Are we ever using these parameters?
-    JmpTable(Value, Vec<Value>, Vec<Block>),
-}
-
 impl Block {
     pub fn entry() -> Block {
         Block(0)
     }
 }
 
+#[derive(Clone, Debug, new)]
+pub struct BlockJump {
+    pub id: Block,
+    pub params: Vec<Value>,
+}
+
+#[derive(Clone, Debug, Copy)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    And,
+}
+
 #[derive(Clone, Debug)]
 pub enum Entry {
+    // Function Calls
     CallStatic(MonoFunc, Vec<Value>),
     CallExtern(M<key::Func>, Vec<Value>),
     CallValue(Value, Vec<Value>),
 
-    // Value Manipulation
-    Copy(Value),
+    // Control Flow
+    JmpFunc(MonoFunc, Vec<Value>),
+    JmpBlock(BlockJump),
+    Return(Value),
+    Select {
+        value: Value,
+        on_true: BlockJump,
+        on_false: BlockJump,
+    },
+    JmpTable(Value, Vec<Block>),
+    Trap(cranelift_codegen::ir::TrapCode),
+
+    // Value Construction
     Construct(Vec<Value>),
     Replicate(Value, u64),
     Variant(key::Variant, Vec<Value>),
-
     RefStaticVal(M<key::Val>),
+    BlockParam(Block, u32),
 
+    // Value Destruction
     Field {
         of: Value,
         key: MonoTypeKey,
@@ -573,18 +574,15 @@ pub enum Entry {
     TagFromSum {
         of: Value,
     },
-    // Overloaded for tuples and arrays, access element by indice
     Indice {
         of: Value,
         indice: Value,
     },
 
-    IntAdd(Value, Value),
-    IntSub(Value, Value),
-    IntMul(Value, Value),
-    IntDiv(Value, Value),
+    // Binary Operators
+    BinOp(BinOp, [Value; 2]),
+    IntCmpInclusive([Value; 2], std::cmp::Ordering, IntSize),
     IntAbs(Value),
-    IntCmpInclusive(Value, std::cmp::Ordering, Value, IntSize),
 
     Transmute(Value), // Transmute two values of equal size
     SizeOf(MonoType),
@@ -596,10 +594,7 @@ pub enum Entry {
     IntToFloat(Value, IntSize),
     FloatToInt(Value, IntSize),
 
-    BitAnd([Value; 2]),
     BitNot(Value),
-
-    BlockParam(V),
 
     // Pointer Manipulation
     Alloc,
@@ -627,53 +622,45 @@ pub enum Value {
     #[from] Float(f64),
 }
 
-impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t Blocks> {
+impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t SSA> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (block, data) in &self.v.blocks {
-            writeln!(
-                f,
-                "{block}{}{}{}: {}",
-                '('.symbol(),
-                self.v
-                    .params(block)
-                    .format_with(", ", |v, f| f(&format_args!(
-                        "{v}: {}",
-                        self.fork(self.v.type_of(v)),
-                    ))),
-                ')'.symbol(),
-                format!("// {} predecessors", data.predecessors).dimmed()
-            )?;
+        let mut values = self.v.ventries.iter();
 
-            if let Some((from, to)) = data.offset {
-                for v in self
-                    .v
-                    .ventries
-                    .keys()
-                    .skip_while(|t| *t != from)
-                    .take_while(|t| *t != to)
-                    .skip(data.parameters as usize)
-                {
-                    let entry = &self.v.ventries[v];
-                    let ty = &self.v.vtypes[v];
-                    writeln!(
-                        f,
-                        "{v} {} {} {} {}",
-                        '='.symbol(),
-                        self.fork(entry),
-                        ':'.symbol(),
-                        self.fork(ty),
-                    )?;
+        while let Some((v, entry)) = values.next() {
+            if let Some(block) = self.v.blocks.find(|bdata| bdata.start == v) {
+                write!(f, "{block}(")?;
+
+                for paramv in self.v.block_params(block) {
+                    if paramv == v {
+                        self.param(f, block, v, entry)
+                    } else {
+                        let entry = values.next().unwrap().1;
+                        self.param(f, block, v, entry)
+                    }?
                 }
+                writeln!(f, "):")?;
+
+                continue;
             }
 
-            writeln!(f, "{}", &data.tail)?;
-
-            if block.0 as usize != self.v.blocks.len() - 1 {
-                writeln!(f)?;
-            }
+            writeln!(f, "  {v} {} {}", '='.symbol(), self.fork(entry))?;
         }
 
         Ok(())
+    }
+}
+
+impl<'a, 't> MonoFormatter<'a, &'t SSA> {
+    fn param(&self, f: &mut fmt::Formatter, block: Block, v: V, entry: &Entry) -> fmt::Result {
+        match entry {
+            Entry::BlockParam(b, _) => assert_eq!(*b, block),
+            other => panic!("{other:?}"),
+        }
+        let ty = self.v.type_of(v);
+        if v != self.v.blocks[block].start {
+            write!(f, ", ")?;
+        }
+        write!(f, "{v}: {}", self.fork(ty))
     }
 }
 
@@ -726,8 +713,7 @@ impl<'a, 'e> fmt::Display for EntryFmt<'a, 'e> {
             Entry::SizeOf(v) => write!(f, "{} {v:#?}", "size-of".keyword()),
             Entry::AlignOf(v) => write!(f, "{} {v:#?}", "align-of".keyword()),
             Entry::RefStaticVal(val) => write!(f, "&{val}"),
-            Entry::Copy(v) => write!(f, "{} {v}", "copy".keyword()),
-            Entry::BlockParam(param) => write!(f, "{} {param}", "fparam".keyword()),
+            Entry::BlockParam(block, i) => write!(f, "{} {block}[{i}]", "bparam".keyword()),
             Entry::Deref(v) => write!(f, "{} {v}", "deref".keyword()),
             Entry::Construct(elems) => ParamFmt::new(&"construct".keyword(), elems).fmt(f),
             Entry::Replicate(elem, times) => {
@@ -741,15 +727,15 @@ impl<'a, 'e> fmt::Display for EntryFmt<'a, 'e> {
                     elems.iter().format(" ")
                 )
             }
-            Entry::IntCmpInclusive(left, cmp, right, _) => {
-                let header = match cmp {
+            Entry::IntCmpInclusive([left, right], cmp, size) => {
+                let kind = match cmp {
                     std::cmp::Ordering::Less => "lt",
                     std::cmp::Ordering::Equal => "eq",
                     std::cmp::Ordering::Greater => "gt",
                 };
+                let header = format!("{kind}.{size}");
                 write!(f, "{} {} {}", header.keyword(), left, right)
             }
-            Entry::BitAnd([left, right]) => write!(f, "{} {left} {right}", "bit-and".keyword()),
             Entry::BitNot(v) => write!(f, "{} {v}", "bit-not".keyword()),
             Entry::Alloc => write!(f, "{}", "alloc".keyword(),),
             Entry::Alloca => write!(f, "{}", "alloca".keyword()),
@@ -762,10 +748,7 @@ impl<'a, 'e> fmt::Display for EntryFmt<'a, 'e> {
             Entry::TagFromSum { of } => {
                 write!(f, "{} {of}", "cast-tag".keyword())
             }
-            Entry::IntAdd(v, n) => write!(f, "{} {v} {n}", "add".keyword()),
-            Entry::IntSub(v, n) => write!(f, "{} {v} {n}", "sub".keyword()),
-            Entry::IntMul(v, n) => write!(f, "{} {v} {n}", "mul".keyword()),
-            Entry::IntDiv(v, n) => write!(f, "{} {v} {n}", "div".keyword()),
+            Entry::BinOp(kind, [a, b]) => write!(f, "{} {a} {b}", kind.keyword()),
             Entry::IntAbs(v) => write!(f, "{} {v}", "abs".keyword()),
             Entry::Reduce(v) => write!(f, "{} {v}", "reduce".keyword()),
             Entry::ExtendUnsigned(v) => write!(f, "{} {v}", "uextend".keyword()),
@@ -779,7 +762,49 @@ impl<'a, 'e> fmt::Display for EntryFmt<'a, 'e> {
             Entry::FloatToInt(v, intsize) => {
                 write!(f, "{} {intsize} {v}", "float_to_int".keyword())
             }
+            Entry::JmpFunc(mfunc, params) => {
+                write!(f, "{} {}", "jump".keyword(), CStyle(mfunc, params))
+            }
+            Entry::JmpBlock(jump) => {
+                write!(f, "{} {}", "jump".keyword(), CStyle(&jump.id, &jump.params))
+            }
+            Entry::Return(value) => write!(f, "{} {value}", "return".keyword()),
+            Entry::Trap(code) => write!(f, "{} {code}", "trap".keyword()),
+            Entry::Select { value, on_true, on_false, .. } => {
+                writeln!(f, "{} {value}", "select".keyword())?;
+                let mut f = |str: &str, b: &BlockJump| {
+                    writeln!(
+                        f,
+                        "{} {} {} {}",
+                        '|'.symbol(),
+                        str.keyword(),
+                        "->".symbol(),
+                        CStyle(&b.id, &b.params),
+                    )
+                };
+                f("true ", on_true)?;
+                f("false", on_false)
+            }
+            Entry::JmpTable(on, blocks) => {
+                writeln!(f, "{} {on}", "select".keyword())?;
+                blocks.iter().enumerate().try_for_each(|(i, block)| {
+                    writeln!(f, "{i} {} {} {}()", "->".symbol(), "jump".keyword(), block)
+                })
+            }
         }
+    }
+}
+
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BinOp::Add => "add",
+            BinOp::Sub => "sub",
+            BinOp::Mul => "mul",
+            BinOp::Div => "div",
+            BinOp::And => "and",
+        }
+        .fmt(f)
     }
 }
 
@@ -787,20 +812,6 @@ impl Value {
     pub fn for_values_mut(&mut self, f: &mut dyn Fn(&mut V)) {
         match self {
             Value::V(v) => f(v),
-            _ => {}
-        }
-    }
-}
-
-impl ControlFlow {
-    pub fn for_each_block(&self, mut f: impl FnMut(Block)) {
-        match self {
-            ControlFlow::JmpBlock(bl, _) => f(*bl),
-            ControlFlow::Select { on_true, on_false, .. } => {
-                f(on_true.0);
-                f(on_false.0);
-            }
-            ControlFlow::JmpTable(_, _, blocks) => blocks.iter().copied().for_each(f),
             _ => {}
         }
     }
@@ -821,68 +832,6 @@ impl fmt::Display for Value {
             Value::FuncPtr(ptr) => ptr.fmt(f),
             Value::ExternFuncPtr(ptr) => ptr.fmt(f),
             Value::Float(n) => write!(f, "{n:?}"),
-        }
-    }
-}
-
-impl fmt::Display for ControlFlow {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ControlFlow::JmpFunc(mfunc, params) => {
-                write!(f, "{} {}", "jump".keyword(), CStyle(mfunc, params))
-            }
-            ControlFlow::JmpBlock(block, params) => {
-                write!(f, "{} {}", "jump".keyword(), CStyle(block, params))
-            }
-            ControlFlow::Empty => "<empty>".keyword().fmt(f),
-            ControlFlow::Unreachable => "unreachable".keyword().fmt(f),
-            ControlFlow::Return(value) => write!(f, "{} {value}", "return".keyword()),
-            ControlFlow::Select { value, on_true, on_false, .. } => {
-                writeln!(f, "{} {value}", "select".keyword())?;
-                let mut f = |str: &str, b: &(Block, Vec<Value>)| {
-                    writeln!(
-                        f,
-                        "{} {} {} {}",
-                        '|'.symbol(),
-                        str.keyword(),
-                        "->".symbol(),
-                        CStyle(&b.0, &b.1),
-                    )
-                };
-                f("true ", on_true)?;
-                f("false", on_false)
-            }
-            ControlFlow::JmpTable(on, params, blocks) => {
-                writeln!(f, "{} {on}", "select".keyword())?;
-                blocks.iter().enumerate().try_for_each(|(i, block)| {
-                    writeln!(
-                        f,
-                        "{i} {} {} {}",
-                        "->".symbol(),
-                        "jump".keyword(),
-                        CStyle(block, params),
-                    )
-                })
-            }
-        }
-    }
-}
-
-pub struct VIter {
-    start: V,
-    end: V,
-}
-
-impl Iterator for VIter {
-    type Item = V;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.start == self.end {
-            None
-        } else {
-            let this = self.start;
-            self.start.0 += 1;
-            Some(this)
         }
     }
 }

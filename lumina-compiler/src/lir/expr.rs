@@ -20,7 +20,7 @@ impl<'a> FuncLower<'a> {
     pub fn param_to_value(&self, pid: key::Param) -> Value {
         let offset = self.current.captures.unwrap_or(0);
         self.lir.functions[self.current.mfkey]
-            .blocks
+            .ssa
             .get_block_param(ssa::Block::entry(), pid.0 + offset as u32)
             .value()
     }
@@ -300,23 +300,19 @@ impl<'a> FuncLower<'a> {
                     }
                 }
             }
-            mir::Expr::Unreachable(_) => {
-                self.ssa().unreachable();
-                // TODO: Do we need to create a tuple of bytes with the same size as `ty` then
-                // transmute? or is this fine?
-                Value::Int(0, self.lir.target.uint())
-                // let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
-                // self.ssa().unreachable(ty).value()
+            mir::Expr::Unreachable(ty) => {
+                let ty = to_morphization!(self.lir, self.mir, &mut self.current.tmap).apply(ty);
+                self.ssa().unreachable(ty)
             }
-            mir::Expr::Poison => todo!(),
+            mir::Expr::Poison => panic!("poisoned reached in LIR lower"),
         }
     }
 
     fn lazy_binop(&mut self, name: &'static str, params: &[mir::Expr; 2]) -> Value {
         let left = self.expr_to_value(&params[0]);
 
-        let contb = self.ssa().new_block(1);
-        let rhsb = self.ssa().new_block(0);
+        let contb = self.ssa().new_block();
+        let rhsb = self.ssa().new_block();
 
         match name {
             "&&" => {

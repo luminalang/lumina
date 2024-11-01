@@ -92,9 +92,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         &'b mut self,
         ty: &MonoType,
         [left, right]: [lir::Value; 2],
-        signed: fn(FuncInstBuilder<'b, 'f>, Value, Value) -> (Value, Value),
-        unsigned: fn(FuncInstBuilder<'b, 'f>, Value, Value) -> (Value, Value),
-        simple: fn(FuncInstBuilder<'b, 'f>, Value, Value) -> Value,
+        BinOpFuncs { signed, unsigned, simple }: BinOpFuncs<'b, 'f>,
     ) -> VEntry {
         let [left, right] = [left, right].map(|v| self.value_to_entry(v).as_intable().0);
 
@@ -128,4 +126,23 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             }
         }
     }
+}
+
+pub fn binops_from_kind<'b, 'f>(op: lir::BinOp) -> BinOpFuncs<'b, 'f> {
+    use cranelift_codegen::ir::InstBuilder as F;
+
+    match op {
+        lir::BinOp::Add => BinOpFuncs::new(F::sadd_overflow, F::uadd_overflow, F::iadd),
+        lir::BinOp::Sub => BinOpFuncs::new(F::ssub_overflow, F::usub_overflow, F::isub),
+        lir::BinOp::Mul => BinOpFuncs::new(F::smul_overflow, F::umul_overflow, F::imul),
+        lir::BinOp::Div => unreachable!(),
+        lir::BinOp::And => unreachable!(),
+    }
+}
+
+#[derive(new)]
+pub(super) struct BinOpFuncs<'b, 'f> {
+    signed: fn(FuncInstBuilder<'b, 'f>, Value, Value) -> (Value, Value),
+    unsigned: fn(FuncInstBuilder<'b, 'f>, Value, Value) -> (Value, Value),
+    simple: fn(FuncInstBuilder<'b, 'f>, Value, Value) -> Value,
 }

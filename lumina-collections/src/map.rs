@@ -1,6 +1,7 @@
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem;
+use std::ops::Range;
 use std::ops::{Index, IndexMut};
 
 pub trait MapKey:
@@ -174,6 +175,12 @@ pub struct KeysIter<K> {
 }
 
 impl<K: MapKey> KeysIter<K> {
+    pub fn range(key: K, len: usize) -> Self {
+        let start = key.into();
+        let end = start.checked_add(len).unwrap_or(usize::MAX);
+        KeysIter { range: start..end, _key: PhantomData }
+    }
+
     pub fn up_to(key: K) -> Self {
         KeysIter { range: 0..key.into(), _key: PhantomData }
     }

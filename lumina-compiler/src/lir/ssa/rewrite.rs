@@ -66,13 +66,10 @@ impl<'p> Rewrite<'p> {
             panic!("underflow caused by optimization");
         }
 
-        dbg!(v, self.new_block_params);
-
         if let Some((start, bparams)) = self.new_block_params {
             let pend = start.0 + bparams.len() as u32;
-            dbg!(&pend, v, start);
 
-            if dbg!(v.0 >= start.0) && dbg!(v.0 < pend) {
+            if v.0 >= start.0 && v.0 < pend {
                 let i = v.0 - start.0;
                 return bparams[i as usize];
             }
@@ -170,21 +167,20 @@ impl<'p> Rewrite<'p> {
                 // TODO: we do this in multiple places, we should create a helper
                 if let Some((s, e)) = bdata.offset.as_mut() {
                     if s.0 > start.0 {
-                        s.0 = dbg!(s.0.wrapping_add_signed(removedv));
-                        e.0 = dbg!(e.0.wrapping_add_signed(removedv));
+                        s.0 = s.0.wrapping_add_signed(removedv);
+                        e.0 = e.0.wrapping_add_signed(removedv);
                     }
                 }
             }
         }
 
         // Offset values to compensate
-        ssa.ventries.values_mut().for_each(|entry| {
-            dbg!(&entry);
-            *entry = dbg!(r.entry(entry))
-        });
+        ssa.ventries
+            .values_mut()
+            .for_each(|entry| *entry = r.entry(entry));
 
         for (_, bdata) in ssa.blocks.iter_mut() {
-            bdata.tail = dbg!(r.flow(&bdata.tail));
+            bdata.tail = r.flow(&bdata.tail);
         }
     }
 }

@@ -1108,7 +1108,8 @@ fn check_param_len<'s>(
             }
         }
         Ordering::Greater => {
-            let span = Span::from_params(ptypes.values(), |v| v.span);
+            // let span = Span::from_params(ptypes.values(), |v| v.span);
+            let span = nspan.extend_by_params(&params);
             ast.sources
                 .error("missing parameter type(s)")
                 .m(module)

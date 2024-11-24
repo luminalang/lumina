@@ -28,10 +28,10 @@ pub fn get i vec as uint, Vec a -> Maybe a =
     then Nothing
     else Just (unsafe_get i vec)
 
-fn unsafe_get i {ptr, len} as uint, Vec a -> a =
+pub fn unsafe_get i {ptr, len} as uint, Vec a -> a =
   ptr:offsetu ptr (Type(a):size * i) . ptr:deref
 
-fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
+pub fn unsafe_set i v {ptr, len} as uint, a, Vec a -> () =
    let at = ptr:offsetu ptr (Type(a):size * i) in
     ptr:write at v
 
@@ -39,7 +39,7 @@ pub fn from_range (start, end) f as (uint, uint), fn(uint -> a) -> Vec a =
   if start > end then
     crash ("error: from_range end larger than start " <++> show end <++> " > " <++> show start)
   else
-  let count = (end - start) in
+  let count = (end - start) in 
   let vec = capacity count in
     do list:itimes #(\i -> unsafe_set i (f (i + start)) vec) count
     then vec

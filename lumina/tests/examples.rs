@@ -1,47 +1,15 @@
-use lumina::build_project;
-use lumina_util::test_logger;
-use std::path::PathBuf;
-
 fn run(path: &str, expected: &str) {
-    test_logger();
+    let output = lumina::run(path);
 
-    let manifest = env!("CARGO_MANIFEST_DIR");
+    if output.stdout != expected.as_bytes() {
+        panic!(
+            "unexpected output from example:\n  expected:\n{expected}\n  got:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
 
-    let environment = lumina::cli::Environment {
-        current_directory: PathBuf::from(format!("{manifest}/../{path}")),
-        lumina_directory: PathBuf::from(format!("{manifest}/../luminapath")),
-    };
-
-    let buildflags = lumina::cli::BuildFlags {
-        target: None,
-        epanic: true,
-        output: None,
-        super_debug: false,
-        project: Some(environment.current_directory.clone()),
-    };
-
-    match build_project(environment, true, buildflags) {
-        Ok(binary) => {
-            let output = std::process::Command::new(binary)
-                .output()
-                .expect("failed to run produced binary");
-
-            if !output.stderr.is_empty() {
-                println!("{}", String::from_utf8_lossy(&output.stderr));
-            }
-
-            if output.stdout != expected.as_bytes() {
-                panic!(
-                    "unexpected output from example:\n  expected:\n{expected}\n  got:\n{}",
-                    String::from_utf8_lossy(&output.stdout)
-                );
-            }
-
-            if !output.status.success() {
-                panic!("non-success error code: {}", output.status);
-            }
-        }
-        Err(code) => panic!("running project {path} failed with status code {code:#?}"),
+    if !output.status.success() {
+        panic!("non-success error code: {}", output.status);
     }
 }
 

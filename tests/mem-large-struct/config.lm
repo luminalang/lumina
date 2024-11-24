@@ -1,0 +1,6 @@
+val name = "mem-large-struct"
+val version = "1.0"
+val authors = []
+val prelude = "ext:minimal-env:src:prelude"
+
+val dependencies = []

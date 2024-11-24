@@ -1,0 +1,19 @@
+type LargeStruct {
+  a i32
+  b i8
+  c i32
+  d i64
+  e i32
+  f i32
+}
+
+fn passes v as LargeStruct -> LargeStruct = v
+
+fn returns a b c d e f as i32, i8, i32, i64, i32, i32 -> LargeStruct =
+  { a, b, c, d, e, f }
+
+fn exits {a, b, c, d, e, f} as LargeStruct -> () =
+  do libc_exit (a + (b as i32) + c + (d as i32) + e + f) then ()
+
+fn main =
+  exits (passes (returns 1 2 3 4 5 6))

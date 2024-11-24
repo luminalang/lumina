@@ -1,0 +1,15 @@
+type SmallStruct {
+  x i32
+  y i32
+}
+
+fn passes v as SmallStruct -> SmallStruct = v
+
+fn returns x y as i32, i32 -> SmallStruct =
+  { x, y }
+
+fn exits {x, y} as SmallStruct -> () =
+  do libc_exit (x + y) then ()
+
+fn main =
+  exits (passes (returns 1 2))

@@ -4,6 +4,7 @@ use crate::prelude::*;
 use ast::attr::Repr;
 use cranelift::codegen::ir::ArgumentPurpose;
 use cranelift::prelude::*;
+use cranelift_codegen::isa::CallConv;
 use lumina_collections::{map_key_impl, KeysIter};
 use lumina_typesystem::ConstValue;
 use std::cell::RefCell;
@@ -29,49 +30,186 @@ pub struct Struct {
     //
     // Therefore; we need to map the original fields to their new indice.
     pub field_map: Map<key::Field, Field>,
-    pub fields: Map<Field, FieldV>,
+    pub fields: Map<Field, StructField>,
 }
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
-pub enum PassBy {
-    Pointer,
-    Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FieldV {
+#[derive(Clone, Debug)]
+pub enum StructField {
     Flat(MonoType),
-    AutoBoxed(MonoTypeKey),
+    AutoBoxed(MonoType),
 
     SumPayloadPointer { sum: MonoTypeKey },
     SumPayloadInline(Type),
 }
 
-pub enum FType<T> {
-    StructZST,
-    Struct(PassBy, MonoTypeKey),
-    ArrayPointer(u64, MonoType),
-    Scalar(Scalar<T>),
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PassBy {
+    Transparent(MonoType),
+    Pointer,
+    Value,
+}
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum Stability {
+    F,
+    S,
+    FRet,
+}
+
+/// During the lower from LIR to CLIR, we have three categories of values.
+///
+/// * S_Stable
+/// S_Stable values are those which are in the memory layout that's expected when stored inside
+/// another struct, either behind a pointer or embedded.
+///
+/// * F_Stable
+/// F_Stable values are those which are in the memory layout that's expected by other functions when
+/// handed as a parameter. They may contain parameters pointing to the callés stack, thus may need
+/// to be memcpy'd into a heap allocation if they are to escape.
+///
+/// * Unstable
+/// Unstable values have much looser requirements and thus much greater variation in their layout
+/// which is checked dynamically during the lower of a function. Unstable values are never allowed
+/// to escape the function they're created in.
+///
+/// All S_Stable values can be treated as F_Stable.
+/// All S_Stable and F_Stable values can be treated as Unstable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Layout<T> {
+    Scalar(Scalar, T),
+    AutoBoxed(MonoType, T),
+
+    // Inlined Aggregates
+    ZST,
+    ArrayFlat(MonoType, Vec<Layout<T>>),
+    StructFlat(MonoTypeKey, Map<Field, Layout<T>>),
+
+    // Implicitly added special representations
+    SpecialPointer(SpecialPointer, T),
+    OutPointer(SpecialPointer, T),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Scalar {
+    Pointer(MonoType),
+    FuncPointer(Box<FuncLayout>),
+    Direct,
+    SumPayloadInline,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SpecialPointer {
+    StackSumPayload { sum: MonoTypeKey },
+    HeapSumPayload { sum: MonoTypeKey },
+
+    // Struct/Arrays implicitly passed as a pointer
+    StackStruct(MonoTypeKey),
+    HeapStruct(MonoTypeKey),
+    StackArray(MonoType, u64),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FuncLayout {
+    pub conv: CallConv,
+    pub params: Map<key::Param, Layout<Type>>,
+    pub ret: Layout<Type>,
+}
+
+impl<T: Copy> Layout<T> {
+    pub fn direct(v: T) -> Self {
+        Layout::Scalar(Scalar::Direct, v)
+    }
+    pub fn pointer(ty: MonoType, v: T) -> Self {
+        Layout::Scalar(Scalar::Pointer(ty), v)
+    }
+
+    pub fn as_direct(&self) -> T {
+        match self {
+            Layout::Scalar(Scalar::Direct, v) => *v,
+            _ => panic!("as_direct called on non-direct layout"),
+        }
+    }
+
+    pub fn as_scalar(&self) -> T {
+        match self {
+            Layout::Scalar(_, v) => *v,
+            _ => panic!("as_intable called on non-intable layout"),
+        }
+    }
+
+    pub fn as_pointer(&self) -> (&MonoType, T) {
+        match self {
+            Layout::Scalar(Scalar::Pointer(ty), ptr) => (ty, *ptr),
+            _ => panic!("as_pointer called on non-pointer layout"),
+        }
+    }
+
+    pub fn assert_no_stack_leak(&self) {
+        if self.has_stack_pointers() {
+            panic!("stack leak");
+        }
+    }
+
+    pub fn has_stack_pointers(&self) -> bool {
+        match self {
+            Layout::Scalar(_, _) | Layout::AutoBoxed(_, _) | Layout::ZST => false,
+            Layout::ArrayFlat(_, elems) => elems.iter().any(Layout::has_stack_pointers),
+            Layout::StructFlat(_, fields) => fields.values().any(Layout::has_stack_pointers),
+            Layout::SpecialPointer(kind, _) | Layout::OutPointer(kind, _) => match kind {
+                SpecialPointer::HeapSumPayload { .. } | SpecialPointer::HeapStruct(_) => false,
+                _ => true,
+            },
+        }
+    }
+
+    pub fn map_layout<U, F, OF>(&self, f: &mut F, out_pointer: &mut OF) -> Layout<U>
+    where
+        F: FnMut(T) -> U,
+        OF: FnMut(SpecialPointer, T) -> Layout<U>,
+    {
+        match self {
+            Layout::Scalar(kind, t) => Layout::Scalar(kind.clone(), f(*t)),
+            Layout::SpecialPointer(special, ptr) => {
+                Layout::SpecialPointer(special.clone(), f(*ptr))
+            }
+            Layout::ArrayFlat(ty, elems) => {
+                Layout::ArrayFlat(ty.clone(), Self::map_layouts(elems, f, out_pointer))
+            }
+            Layout::ZST => Layout::ZST,
+            Layout::StructFlat(mk, fields) => {
+                Layout::StructFlat(*mk, Self::map_layouts(fields.as_slice(), f, out_pointer))
+            }
+
+            Layout::AutoBoxed(ty, ptr) => Layout::AutoBoxed(ty.clone(), f(*ptr)),
+
+            Layout::OutPointer(kind, size_t) => out_pointer(kind.clone(), size_t.clone()),
+        }
+    }
+
+    pub fn map_layouts<U, F, OF, C>(layouts: &[Self], f: &mut F, out_pointer: &mut OF) -> C
+    where
+        F: FnMut(T) -> U,
+        OF: FnMut(SpecialPointer, T) -> Layout<U>,
+        C: FromIterator<Layout<U>>,
+    {
+        layouts
+            .iter()
+            .map(|layout| layout.map_layout(f, out_pointer))
+            .collect()
+    }
+
+    pub fn out_pointers<F: FnMut(SpecialPointer, T)>(&self, f: &mut F) {
+        // TODO: optimize with imut visitor
+        self.map_layout(&mut |ty| ty, &mut |kind, ptr| {
+            f(kind, ptr);
+            Layout::ZST
+        });
+    }
 }
 
 impl Struct {
     fn is_lowered(&self) -> bool {
         self.align != u32::MAX
-    }
-}
-
-impl lir::Types {
-    pub(super) fn get_abi_typing<'t, I>(&self, params: I, ret: &MonoType) -> Typing
-    where
-        I: IntoIterator<Item = &'t MonoType>,
-    {
-        // TODO: Internally this can be represented as `Key(MonoFunc) | ([MonoType], Type)` instead
-        // which would be much more efficient.
-        Typing {
-            params: params.into_iter().cloned().collect(),
-            ret: ret.clone(),
-            conv: isa::CallConv::Tail,
-        }
     }
 }
 
@@ -160,52 +298,6 @@ impl<'a> Structs<'a> {
         struct_
     }
 
-    fn scalars_of_ty<F: FnMut(Scalar<Type>)>(&self, ty: &MonoType, f: &mut F) {
-        let ptr = || Type::int(self.records.pointer_bits as u16).unwrap();
-
-        match ty {
-            MonoType::Int(intsize) => f(Scalar::direct(Type::int(intsize.bits() as u16).unwrap())),
-            MonoType::Pointer(inner) => f(Scalar::pointer(ptr(), &*inner)),
-            MonoType::FnPointer(params, ret) => {
-                let typing = self.records.get_abi_typing(params, ret);
-                f(Scalar::fn_pointer(ptr(), typing))
-            }
-            MonoType::Float => f(Scalar::direct(types::F64)),
-            MonoType::Const(v) => f(Scalar::direct(self.const_to_ty(v))),
-            MonoType::Array(len, inner) => {
-                for _ in 0..*len {
-                    self.scalars_of_ty(&**inner, f);
-                }
-            }
-            MonoType::Unreachable => unreachable!(),
-            MonoType::Monomorphised(key) => self.iter_s_stable_fields(*key, f),
-        }
-    }
-
-    /// Visitor over S_Stable representation of fields within a Struct
-    pub fn iter_s_stable_fields<F: FnMut(Scalar<Type>)>(&self, key: MonoTypeKey, f: &mut F) {
-        for field in self.structs[key].fields.values() {
-            let ptr = || Type::int(self.records.pointer_bits as u16).unwrap();
-
-            match field {
-                FieldV::Flat(ty) => self.scalars_of_ty(ty, f),
-                &FieldV::SumPayloadInline(size) => {
-                    f(Scalar::new(size, ScalarKind::SumInline(size)))
-                }
-                &FieldV::SumPayloadPointer { sum } => {
-                    // Since this is a field of a struct, we're assuming that the inner pointer
-                    // is S_Stable. However; make sure we're not accidentally breaking this
-                    // assumption somewhere.
-                    let largest = self.sum_payload_alloca_size(sum);
-                    f(Scalar::new(ptr(), ScalarKind::HeapSumPointer { largest }))
-                }
-                FieldV::AutoBoxed(ty) => {
-                    f(Scalar { point: ptr(), kind: ScalarKind::Pointer((*ty).into()) })
-                }
-            }
-        }
-    }
-
     // NOTE: This borrows `self` mutably even though most of the time it doesn't need to.
     //
     // Using `make()` followed by `get()` is generally a better idea.
@@ -228,10 +320,23 @@ impl<'a> Structs<'a> {
     // Whether this struct should be passed as inlined scalars or is implicitly put behind a pointer.
     pub fn pass_mode(&self, key: MonoTypeKey) -> PassBy {
         match &self.records[key] {
-            lir::MonoTypeData::Record { .. } => match self.c_class_of_aggregate(key) {
-                SystemVClass::Integer => PassBy::Value,
-                SystemVClass::Memory => PassBy::Pointer,
-            },
+            lir::MonoTypeData::Record { fields, .. } if fields.len() == 1 => {
+                PassBy::Transparent(fields[key::Field(0)].clone())
+            }
+            lir::MonoTypeData::Record { repr, .. } => {
+                let fields = &self.structs[key].fields;
+                let (size, _) = self.size_and_align_of_mk(key);
+
+                match self.c_class_of_aggregate_layout_struct(
+                    Some(key),
+                    size,
+                    *repr,
+                    fields.as_slice(),
+                ) {
+                    SystemVClass::Integer => PassBy::Value,
+                    SystemVClass::Memory => PassBy::Pointer,
+                }
+            }
             _ => PassBy::Value,
         }
     }
@@ -316,41 +421,43 @@ impl<'a> Structs<'a> {
         }
 
         trace!(
-            "{key}: lowering without type id {:?}",
+            "{key}: lowering with type id {:?}",
             self.records[key].original()
         );
 
+        let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
+
         match &self.records[key] {
-            lir::MonoTypeData::Sum { tag, key: _, variants } => {
+            lir::MonoTypeData::Sum { tag, variants, .. } => {
                 trace!(
                     "{key}: lowering variant types {}",
                     variants.values().format(" & ")
                 );
 
-                let tagfield = FieldV::Flat(MonoType::Int(*tag));
-                let ptr = Type::int(self.records.pointer_bits as u16).unwrap();
+                // let tagfield = Layout::Direct(Type::int(tag.bits() as u16).unwrap());
+                let tagfield = StructField::Flat(MonoType::Int(*tag));
+                let ptr = size_t;
 
                 let (scalarcount, largest) = self.largest_sum_variant(variants);
 
-                trace!("for sum {key}: scalarcount={scalarcount} largest={largest}");
+                trace!("for sum {key}: scalarcount={scalarcount}");
 
-                // TODO: once iconcat/isplit scalar compression is fully implemented we want to
-                // check scalarcount <= 2 instead
-                let allowed_to_compress = || scalarcount == 1 && largest <= 8;
-
-                self.structs[key] = if largest == 0 {
-                    assert_eq!(scalarcount, 0);
+                self.structs[key] = if scalarcount == 0 {
                     Struct::new(tag.bytes() as u32, [Field(0)].into(), [tagfield].into())
-                } else if allowed_to_compress() {
-                    // Assuming all sum types are tag+arch makes things easier for now.
-                    // They'd likely be padded to that regardless so it doesn't seem all
-                    // that wasteful.
-                    let fields = [FieldV::SumPayloadInline(ptr), tagfield].into();
+                } else if scalarcount == 1 {
+                    assert!(largest <= ptr.bytes());
+                    let payload =
+                        StructField::SumPayloadInline(Type::int(largest as u16 * 8).unwrap());
+                    let fields = [payload, tagfield].into();
+                    Struct::new(ptr.bytes(), [1, 0].map(Field).into(), fields)
+                } else if scalarcount == 2 && largest <= ptr.bytes() {
+                    let size = Type::int(largest as u16 * 8).unwrap_or(ptr);
+                    let fields = [StructField::SumPayloadInline(size), tagfield].into();
                     Struct::new(ptr.bytes(), [1, 0].map(Field).into(), fields)
                 } else {
-                    let fields = [FieldV::SumPayloadPointer { sum: key }, tagfield].into();
+                    let fields = [StructField::SumPayloadPointer { sum: key }, tagfield].into();
                     Struct::new(ptr.bytes(), [1, 0].map(Field).into(), fields)
-                };
+                }
             }
             lir::MonoTypeData::Record { repr, key: _, fields } => {
                 if fields.is_empty() {
@@ -397,14 +504,13 @@ impl<'a> Structs<'a> {
             }
             lir::MonoTypeData::DynTraitObject { vtable, .. } => {
                 let align = self.records.pointer_bits / 8;
+
+                let data_field = StructField::Flat(MonoType::u8_pointer());
+
                 self.structs[key] = Struct {
                     align,
                     field_map: [0, 1].map(Field).into(),
-                    fields: [
-                        FieldV::Flat(MonoType::u8_pointer()),
-                        FieldV::Flat(vtable.clone()),
-                    ]
-                    .into(),
+                    fields: [data_field, StructField::Flat(vtable.clone())].into(),
                 };
             }
             lir::MonoTypeData::Placeholder => unreachable!(),
@@ -422,10 +528,10 @@ impl<'a> Structs<'a> {
 
             if self.should_autobox_field(key, fty) {
                 trace!("{key}:{fty:?}: recursive autobox");
-                let autoboxed = FieldV::AutoBoxed(key);
+                let autoboxed = StructField::AutoBoxed(fty.clone());
                 self.structs[key].fields.push(autoboxed);
             } else {
-                let flat = FieldV::Flat(fty.clone());
+                let flat = StructField::Flat(fty.clone());
                 self.structs[key].fields.push(flat);
             }
         }
@@ -492,28 +598,49 @@ impl<'a> Structs<'a> {
         align
     }
 
-    pub fn size_and_align_of(&self, ty: &MonoType) -> (u32, u32) {
-        let (size, align) = match ty {
-            MonoType::Monomorphised(mk) => {
-                let align = self.structs[*mk].align;
-                if align == 0 {
-                    assert!(self.structs[*mk].fields.is_empty());
-                    return (0, 0);
-                }
+    pub fn size_and_align_of_mk(&self, mk: MonoTypeKey) -> (u32, u32) {
+        let align = self.structs[mk].align;
+        if align == 0 {
+            assert!(self.structs[mk].fields.is_empty());
+            return (0, 0);
+        }
 
-                let mut offset = 0;
+        let mut offset = 0;
 
-                for field in self.structs[*mk].fields.values() {
-                    let (size, align) = self.size_and_align_of_field(field);
-                    let padding = (align - offset % align) % align;
-                    offset += padding + size;
-                }
+        for field in self.structs[mk].fields.values() {
+            let (size, align) = self.size_and_align_of_field(field);
+            let padding = (align - offset % align) % align;
+            offset += padding + size;
+        }
 
-                let end_padding = (align - offset % align) % align;
-                let size = offset + end_padding;
+        let end_padding = (align - offset % align) % align;
+        let size = offset + end_padding;
 
+        (size, align)
+    }
+
+    pub fn size_and_align_of_ptr_dst(&self, special: &SpecialPointer) -> (u32, u32) {
+        match special {
+            &SpecialPointer::HeapSumPayload { sum, .. }
+            | &SpecialPointer::StackSumPayload { sum, .. } => {
+                let size = self.sum_payload_alloca_size(sum);
+                // TODO: this align seems weird. Not sure whether it's valid
+                let align = (self.records.pointer_bits / 8).min(size);
                 (size, align)
             }
+            &SpecialPointer::HeapStruct(mk) | &SpecialPointer::StackStruct(mk) => {
+                self.size_and_align_of_mk(mk)
+            }
+            SpecialPointer::StackArray(inner, n) => {
+                let (size, _, align) = self.size_and_align_of_array(inner, *n);
+                (size, align)
+            }
+        }
+    }
+
+    pub fn size_and_align_of(&self, ty: &MonoType) -> (u32, u32) {
+        match ty {
+            MonoType::Monomorphised(mk) => self.size_and_align_of_mk(*mk),
             MonoType::Const(const_) => {
                 let size = self.const_to_ty(const_).bytes();
                 (size, size)
@@ -528,9 +655,7 @@ impl<'a> Structs<'a> {
                 (size, size)
             }
             MonoType::Unreachable => (0, 0),
-        };
-
-        (size, align)
+        }
     }
 
     fn const_to_ty(&self, const_: &ConstValue) -> Type {
@@ -540,17 +665,6 @@ impl<'a> Structs<'a> {
             }
             lumina_typesystem::ConstValue::Bool(_) => types::I8,
             lumina_typesystem::ConstValue::Char(_) => types::I32,
-        }
-    }
-
-    pub fn size_and_align_of_field(&self, f: &FieldV) -> (u32, u32) {
-        match f {
-            FieldV::Flat(ty) => self.size_and_align_of(ty),
-            FieldV::SumPayloadInline(clty) => (clty.bytes(), clty.bytes()),
-            FieldV::AutoBoxed(_) | FieldV::SumPayloadPointer { .. } => {
-                let ptr = self.records.pointer_bits / 8;
-                (ptr, ptr)
-            }
         }
     }
 
@@ -571,20 +685,41 @@ impl<'a> Structs<'a> {
         self.size_and_align_of(ty).0
     }
 
-    fn struct_has_unaligned_fields(&self, key: MonoTypeKey) -> bool {
-        let struct_ = self.get(key);
-        struct_.align == 0
+    fn struct_has_unaligned_fields(&self, key: Option<MonoTypeKey>) -> bool {
+        match key {
+            Some(key) => {
+                let struct_ = self.get(key);
+                struct_.align == 0 && !struct_.fields.is_empty()
+            }
+            None => false,
+        }
     }
 
     fn is_non_trivial(&self) -> bool {
         false
     }
 
+    pub fn size_and_align_of_field(&self, f: &StructField) -> (u32, u32) {
+        match f {
+            StructField::Flat(ty) => self.size_and_align_of(ty),
+            StructField::SumPayloadInline(clty) => (clty.bytes(), clty.bytes()),
+            StructField::AutoBoxed(_) | StructField::SumPayloadPointer { .. } => {
+                let ptr = self.records.pointer_bits / 8;
+                (ptr, ptr)
+            }
+        }
+    }
+
     // ref: System V Application Binary Interface Version 1.0
     //      page 24
-    fn c_class_of_aggregate(&self, key: MonoTypeKey) -> SystemVClass {
+    fn c_class_of_aggregate_layout_struct(
+        &self,
+        key: Option<MonoTypeKey>,
+        struct_size: u32,
+        repr: Repr,
+        fields: &[StructField],
+    ) -> SystemVClass {
         let eightbyte = self.records.pointer_bits / 8;
-        let struct_size = self.size_of(&key.into());
 
         if struct_size > (eightbyte * 8) || self.struct_has_unaligned_fields(key) {
             // 1. always pass large structs through the stack
@@ -593,36 +728,35 @@ impl<'a> Structs<'a> {
             // 2. use Memory for non-trivial objects
             unreachable!("not possible to define non-trivial C structs in Lumina");
         } else {
-            let mut class = None;
-
             // 4. use the class of the fields. Prioritise Memory over Integer.
-            for i in self.structs[key].fields.keys() {
-                let field_class = match self.structs[key].fields[i].clone() {
-                    FieldV::Flat(ty) => self.c_class_of(&ty),
-                    _ => SystemVClass::Integer,
-                };
+            let class = fields
+                .iter()
+                .fold(None, |class, field| {
+                    // let field_class = self.c_class_of_aggregate_of_layout(layout);
+                    let field_class = match field {
+                        StructField::Flat(ty) => self.c_class_of(&ty),
+                        _ => SystemVClass::Integer,
+                    };
 
-                match class {
-                    None => class = Some(field_class),
-                    Some(SystemVClass::Memory) => {}
-                    Some(SystemVClass::Integer) => match field_class {
-                        SystemVClass::Memory => class = Some(SystemVClass::Memory),
-                        SystemVClass::Integer => {}
-                    },
-                }
-            }
+                    match class {
+                        None => Some(field_class),
+                        Some(SystemVClass::Memory) => Some(SystemVClass::Memory),
+                        Some(SystemVClass::Integer) => match field_class {
+                            SystemVClass::Memory => Some(SystemVClass::Memory),
+                            SystemVClass::Integer => Some(SystemVClass::Integer),
+                        },
+                    }
+                })
+                .unwrap_or(SystemVClass::Integer);
 
-            let max_struct_regs = match &self.records[key] {
-                lir::MonoTypeData::Record { repr, .. } if *repr == Repr::Lumina => 4,
-                _ => 2,
-            };
+            let max_struct_regs = if repr == Repr::Lumina { 4 } else { 2 };
 
             // 5c. if the size exceeds two eightbytes and there are no floats or
             // vectors (which we don't support C repr of) then also use the stack.
             if struct_size > (eightbyte * max_struct_regs) {
                 SystemVClass::Memory
             } else {
-                class.expect("empty repr C structs are not valid")
+                class
             }
         }
     }
@@ -649,7 +783,15 @@ impl<'a> Structs<'a> {
             MonoType::FnPointer(_, _) | MonoType::Pointer(_) | MonoType::Int(_) => {
                 SystemVClass::Integer
             }
-            MonoType::Monomorphised(mk) => self.c_class_of_aggregate(*mk),
+            MonoType::Monomorphised(mk) => {
+                let fields = &self.structs[*mk].fields;
+                let (size, _) = self.size_and_align_of_mk(*mk);
+                let repr = match &self.records[*mk] {
+                    lir::MonoTypeData::Record { repr, .. } => *repr,
+                    _ => Repr::Lumina,
+                };
+                self.c_class_of_aggregate_layout_struct(Some(*mk), size, repr, fields.as_slice())
+            }
             MonoType::Array(len, inner) => self.c_class_of_array(*len, inner),
             _ => panic!("unsupported type in repr C struct: {ty:?}"),
         }
@@ -664,159 +806,225 @@ enum SystemVClass {
     // NoClass,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Typing {
-    pub conv: isa::CallConv,
-    pub params: Map<key::Param, MonoType>,
-    pub ret: MonoType,
-}
-
-/// A singular S_Stable hardware value with attached metadata
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Scalar<T> {
-    pub point: T,
-    pub kind: ScalarKind,
-}
-
-impl<T> Scalar<T> {
-    pub fn new(point: T, kind: ScalarKind) -> Self {
-        Self { point, kind }
-    }
-
-    pub fn direct(point: T) -> Self {
-        Self { point, kind: ScalarKind::Direct }
-    }
-
-    pub fn pointer(point: T, inner: &MonoType) -> Self {
-        Self { point, kind: ScalarKind::Pointer(inner.clone()) }
-    }
-
-    pub fn fn_pointer(point: T, typing: Typing) -> Self {
-        Self { point, kind: ScalarKind::FuncPointer(Box::new(typing)) }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ScalarKind {
-    Direct,
-
-    // TODO: We want to re-use signatures, currently we create a new signature each time this
-    // function pointer is invoked.
-    FuncPointer(Box<Typing>),
-
-    // Since we stack-allocate large payloads by default; we cannot treat the payload differently
-    // on a variant-basis since whether we need to heap-allocate or not for escape analysis
-    // wouldn't be statically known.
-    // All variants are either treated as having inline or pointer, no mixture.
-    SumInline(Type),
-    HeapSumPointer { largest: u32 },
-
-    Pointer(MonoType),
-    AutoBoxed(MonoType),
-}
-
-pub enum ScalarOrAggr<T> {
-    Scalar(Scalar<T>),
-    Mono(MonoTypeKey),
-    Array(u64, MonoType),
-}
-
-impl<T> ScalarOrAggr<T> {
-    pub fn map_scalar<U>(self, f: impl FnOnce(Scalar<T>) -> Scalar<U>) -> ScalarOrAggr<U> {
-        match self {
-            ScalarOrAggr::Scalar(scalar) => ScalarOrAggr::Scalar(f(scalar)),
-            ScalarOrAggr::Mono(mk) => ScalarOrAggr::Mono(mk),
-            ScalarOrAggr::Array(len, inner) => ScalarOrAggr::Array(len, inner),
-        }
-    }
-}
-
 impl<'a> Structs<'a> {
-    pub fn scalar_or_aggr(&self, ty: &MonoType) -> ScalarOrAggr<Type> {
-        let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
+    pub fn flayout<'t, 'f, P>(
+        &self,
+        conv: CallConv,
+        params: P,
+        ret: &MonoType,
+    ) -> (FuncLayout, Signature)
+    where
+        P: IntoIterator<Item = &'t MonoType>,
+    {
+        let params = params
+            .into_iter()
+            .map(|ty| self.type_to_layout(ty, Stability::F))
+            .collect::<Map<_, _>>();
 
-        match ty {
-            MonoType::Int(intsize) => {
-                let ty = Type::int(intsize.bits() as u16).unwrap();
-                ScalarOrAggr::Scalar(Scalar::direct(ty))
-            }
-            MonoType::Pointer(inner) => ScalarOrAggr::Scalar(Scalar::pointer(size_t, &**inner)),
-            MonoType::Const(const_) => {
-                ScalarOrAggr::Scalar(Scalar::direct(self.const_to_ty(const_)))
-            }
-            MonoType::FnPointer(params, ret) => {
-                let typing = self.records.get_abi_typing(params, ret);
-                ScalarOrAggr::Scalar(Scalar::fn_pointer(size_t, typing))
-            }
-            MonoType::Float => ScalarOrAggr::Scalar(Scalar::direct(types::F64)),
-            MonoType::Unreachable => unreachable!(),
-            MonoType::Array(len, inner) => ScalarOrAggr::Array(*len, (**inner).clone()),
-            MonoType::Monomorphised(mk) => ScalarOrAggr::Mono(*mk),
-        }
+        let ret = self.type_to_layout(&ret, Stability::FRet);
+
+        let flayout = FuncLayout { conv, params, ret };
+        let sig = self.signature(&flayout);
+
+        (flayout, sig)
     }
 
-    pub fn signature(&mut self, typing: &Typing) -> Signature {
-        let mut sig = Signature::new(typing.conv);
+    pub fn signature(&self, layout: &FuncLayout) -> Signature {
+        let mut sig = Signature::new(layout.conv);
 
-        let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
+        // Since the large struct return is added as the *first* parameter; we check the return first.
+        self.sig_return(&mut sig, &layout.ret);
 
-        let normal = AbiParam::new;
-
-        for ty in typing.params.values() {
-            let struct_purpose = |conv, size| match conv {
-                isa::CallConv::AppleAarch64
-                | isa::CallConv::SystemV
-                | isa::CallConv::WindowsFastcall => {
-                    // let size = self.size_of(&mk.into());
-                    ArgumentPurpose::StructArgument(size)
-                }
-                _ => ArgumentPurpose::Normal,
-            };
-
-            // self.ty_to_abi_param(false, ty, &mut sig);
-            match self.ftype(ty) {
-                FType::StructZST => {}
-                FType::ArrayPointer(len, inner) => {
-                    let (size, _, _) = self.size_and_align_of_array(&inner, len);
-                    let purpose = struct_purpose(sig.call_conv, size);
-                    sig.params.push(AbiParam::special(size_t, purpose));
-                }
-                FType::Struct(PassBy::Value, mk) => self
-                    .iter_s_stable_fields(mk, &mut |scalar| sig.params.push(normal(scalar.point))),
-                FType::Struct(PassBy::Pointer, mk) => {
-                    let size = self.size_of(&mk.into());
-                    let purpose = struct_purpose(sig.call_conv, size);
-                    sig.params.push(AbiParam::special(size_t, purpose));
-                }
-                FType::Scalar(scalar) => sig.params.push(normal(scalar.point)),
-            }
-        }
-
-        match self.ftype(&typing.ret) {
-            FType::StructZST => {}
-            FType::ArrayPointer(..) => {
-                sig.params
-                    .push(AbiParam::special(size_t, ArgumentPurpose::StructReturn));
-            }
-            FType::Struct(PassBy::Value, mk) => {
-                self.iter_s_stable_fields(mk, &mut |scalar| sig.returns.push(normal(scalar.point)))
-            }
-            FType::Struct(PassBy::Pointer, _) => {
-                sig.params
-                    .push(AbiParam::special(size_t, ArgumentPurpose::StructReturn));
-            }
-            FType::Scalar(scalar) => sig.returns.push(normal(scalar.point)),
+        for layout in layout.params.values() {
+            self.sig_param(&mut sig, layout);
         }
 
         sig
     }
 
-    pub fn ftype(&self, ty: &MonoType) -> FType<Type> {
-        match self.scalar_or_aggr(ty) {
-            ScalarOrAggr::Scalar(scalar) => FType::Scalar(scalar),
-            ScalarOrAggr::Mono(mk) if self.is_zst(mk) => FType::StructZST,
-            ScalarOrAggr::Mono(mk) => FType::Struct(self.pass_mode(mk), mk),
-            ScalarOrAggr::Array(len, inner) => FType::ArrayPointer(len, inner),
+    fn sig_return(&self, sig: &mut Signature, layout: &Layout<Type>) {
+        match layout {
+            Layout::OutPointer(kind, size_t) => {
+                let purpose = match kind {
+                    // Cranelift dissallows mixing StructReturn and register returns.
+                    // Since that's exactly what we want to do for tagged unions,
+                    // I hope there isn't a good reason for that...
+                    SpecialPointer::HeapSumPayload { .. }
+                    | SpecialPointer::StackSumPayload { .. } => ArgumentPurpose::Normal,
+                    _ => ArgumentPurpose::StructReturn,
+                };
+                sig.params.push(AbiParam::special(*size_t, purpose));
+            }
+            Layout::AutoBoxed(_, size_t) => {
+                sig.returns.push(AbiParam::new(*size_t));
+            }
+            Layout::ZST => {}
+            Layout::ArrayFlat(_, elems) => {
+                for v in elems {
+                    self.sig_return(sig, v);
+                }
+            }
+            Layout::StructFlat(_, fields) => {
+                for v in fields.values() {
+                    self.sig_return(sig, v);
+                }
+            }
+            Layout::Scalar(_, clty) | Layout::SpecialPointer(_, clty) => {
+                sig.returns.push(AbiParam::new(*clty));
+            }
+        }
+    }
+
+    fn sig_param(&self, sig: &mut Signature, layout: &Layout<Type>) {
+        match layout {
+            Layout::OutPointer(_, _) => {
+                panic!("out pointer as parameter for signature");
+            }
+            Layout::AutoBoxed(_, size_t) => {
+                sig.params.push(AbiParam::new(*size_t));
+            }
+            Layout::ZST => {}
+            Layout::ArrayFlat(_, elems) => {
+                for v in elems {
+                    self.sig_param(sig, v);
+                }
+            }
+            Layout::StructFlat(_, fields) => {
+                for v in fields.values() {
+                    self.sig_param(sig, v);
+                }
+            }
+            Layout::Scalar(_, clty) | Layout::SpecialPointer(_, clty) => {
+                sig.params.push(AbiParam::new(*clty));
+            }
+        }
+    }
+
+    fn try_sum_to_layout(&self, mk: MonoTypeKey, stab: Stability) -> Option<Layout<Type>> {
+        if let lir::MonoTypeData::Sum { .. } = &self.records[mk] {
+            let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
+
+            match self.structs[mk].fields.len() {
+                1 => None,
+                2 if matches!(stab, Stability::S) => None,
+                2 => {
+                    assert_eq!(self.structs[mk].field_map.as_slice(), &[Field(1), Field(0)]);
+                    let tag =
+                        self.field_to_layout(&self.structs[mk].fields[Field(1)], Stability::S);
+                    let payload = match &self.structs[mk].fields[Field(0)] {
+                        StructField::SumPayloadPointer { .. }
+                            if matches!(stab, Stability::FRet) =>
+                        {
+                            let kind = SpecialPointer::StackSumPayload { sum: mk };
+                            Layout::OutPointer(kind, size_t)
+                        }
+                        StructField::SumPayloadPointer { .. } => {
+                            let kind = SpecialPointer::StackSumPayload { sum: mk };
+                            Layout::SpecialPointer(kind, size_t)
+                        }
+                        StructField::SumPayloadInline(clty) => {
+                            Layout::Scalar(Scalar::SumPayloadInline, *clty)
+                        }
+                        _ => unreachable!(),
+                    };
+                    Some(Layout::StructFlat(mk, [payload, tag].into()))
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn type_to_layout<'t, 'f>(&self, ty: &MonoType, stab: Stability) -> Layout<Type> {
+        let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
+
+        match ty {
+            MonoType::Int(size) => Layout::direct(Type::int(size.bits() as u16).unwrap()),
+            MonoType::Pointer(inner) => Layout::pointer((**inner).clone(), size_t),
+            MonoType::Const(ConstValue::Bool(_)) => Layout::direct(types::I8),
+            MonoType::Const(ConstValue::Char(_)) => Layout::direct(types::I8), // TODO: unicode char
+            MonoType::Const(ConstValue::Usize(_)) => Layout::direct(size_t),
+            MonoType::FnPointer(params, ret) => {
+                let (flayout, _sig) = self.flayout(CallConv::Tail, params, &ret);
+                Layout::Scalar(Scalar::FuncPointer(Box::new(flayout)), size_t)
+            }
+            MonoType::Float => Layout::direct(types::F64),
+            MonoType::Array(n, inner) => {
+                if *n == 0 || self.size_of(inner) == 0 {
+                    return Layout::ZST;
+                }
+
+                match self.arr_pass_mode(*n, inner) {
+                    PassBy::Pointer if matches!(stab, Stability::F) => Layout::SpecialPointer(
+                        SpecialPointer::StackArray(*inner.clone(), *n),
+                        size_t,
+                    ),
+                    PassBy::Pointer if matches!(stab, Stability::FRet) => {
+                        Layout::OutPointer(SpecialPointer::StackArray(*inner.clone(), *n), size_t)
+                    }
+                    _ => {
+                        let layout = self.type_to_layout(&inner, Stability::S);
+                        Layout::ArrayFlat((**inner).clone(), vec![layout; *n as usize])
+                    }
+                }
+            }
+            &MonoType::Monomorphised(mk) => {
+                if self.is_zst(mk) {
+                    return Layout::ZST;
+                }
+
+                // Edge-case to not heap-allocate sum payload even though it's technically a field
+                if let Some(layout) = self.try_sum_to_layout(mk, stab) {
+                    return layout;
+                }
+
+                match self.pass_mode(mk) {
+                    PassBy::Transparent(ty) => {
+                        Layout::StructFlat(mk, [self.type_to_layout(&ty, stab)].into())
+                    }
+                    PassBy::Pointer if matches!(stab, Stability::F) => {
+                        Layout::SpecialPointer(SpecialPointer::StackStruct(mk), size_t)
+                    }
+                    PassBy::Pointer if matches!(stab, Stability::FRet) => {
+                        Layout::OutPointer(SpecialPointer::StackStruct(mk), size_t)
+                    }
+                    _ => {
+                        let fields = self.structs[mk]
+                            .fields
+                            .values()
+                            .map(|f| self.field_to_layout(f, Stability::S))
+                            .collect();
+
+                        Layout::StructFlat(mk, fields)
+                    }
+                }
+            }
+            MonoType::Unreachable => todo!("unreachable type"),
+        }
+    }
+
+    fn field_to_layout(&self, field: &StructField, stab: Stability) -> Layout<Type> {
+        let size_t = Type::int(self.records.pointer_bits as u16).unwrap();
+
+        match field {
+            StructField::Flat(ty) => self.type_to_layout(ty, stab),
+            StructField::AutoBoxed(inner) => Layout::AutoBoxed(inner.clone(), size_t),
+            &StructField::SumPayloadPointer { sum } => match stab {
+                Stability::FRet => {
+                    let kind = SpecialPointer::StackSumPayload { sum };
+                    Layout::OutPointer(kind, size_t)
+                }
+                Stability::S => {
+                    let kind = SpecialPointer::HeapSumPayload { sum };
+                    Layout::SpecialPointer(kind, size_t)
+                }
+                Stability::F => {
+                    let kind = SpecialPointer::StackSumPayload { sum };
+                    Layout::SpecialPointer(kind, size_t)
+                }
+            },
+            &StructField::SumPayloadInline(clty) => Layout::Scalar(Scalar::SumPayloadInline, clty),
         }
     }
 

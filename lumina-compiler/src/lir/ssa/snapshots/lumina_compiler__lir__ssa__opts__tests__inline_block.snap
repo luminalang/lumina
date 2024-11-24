@@ -1,0 +1,20 @@
+---
+source: lumina-compiler/src/lir/ssa/opts.rs
+expression: "format!(\"{before}\\n{after}\")"
+---
+BEFORE:
+
+block0(v0: u0): predecessors=1
+  v1 = add v0 1 : u1
+  jump block1(v1) // v2
+
+block1(v3: u3): predecessors=1
+  v4 = (construct v0 v1 v1 v3) : u4
+  return v4 // v5
+
+AFTER:
+
+block0(v0: u0): predecessors=1
+  v1 = add v0 1 : u1
+  v2 = (construct v0 v1 v1 v1) : u4
+  return v2 // v3

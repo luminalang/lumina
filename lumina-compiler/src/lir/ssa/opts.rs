@@ -1,26 +1,29 @@
 //! Optimizations that are more specific to Lumina and more appropriate for a higher-level IR than
 //! our backends.
 
-use super::rewrite::Rewrite;
 use crate::lir::{
-    mono::Types, Block, Blocks, ControlFlow, Entry, Function, MonoFunc, Value, LIR, V,
+    ssa::rewrite::for_entry_mut, ty_fmt, Block, BlockJump, Entry, Function, MonoFunc, Value, LIR,
+    SSA, V,
 };
-use lumina_collections::{Map, MapKey};
+use lumina_collections::KeysIter;
+use smallvec::SmallVec;
+use std::mem::take;
 use tracing::{info, info_span, trace};
 
 pub const ENABLE_OPTS: bool = true;
 
 impl LIR {
     pub fn perform_optimizations(&mut self) {
-        let mut opt = Optimizer { lir: self, changed: true };
+        let mut opt = Optimizer { lir: self };
         opt.optimizations();
     }
 }
 
 struct Optimizer<'a> {
     lir: &'a mut LIR,
-    changed: bool,
 }
+
+type Changed = bool;
 
 impl<'a> Optimizer<'a> {
     fn optimizations(&mut self) {
@@ -32,572 +35,355 @@ impl<'a> Optimizer<'a> {
         self.func_opts();
     }
 
-    fn func_opts(&mut self) {
-        for fkey in self.lir.functions.keys() {
-            self.changed = true;
-
-            let _span = info_span!(
-                "running LIR optimizer",
-                entity = self.lir.functions[fkey].symbol,
-                key = fkey.to_string(),
-            );
-            let _handle = _span.enter();
-
-            let mut fuel = 10000;
-
-            while fuel > 0 && self.changed {
-                self.changed = false;
-
-                'block_iter: for block in self.lir.functions[fkey].blocks.blocks() {
-                    let func = &mut self.lir.functions[fkey];
-
-                    let Some(_) = func.blocks.blocks.as_slice().get(block.0 as usize) else {
-                        break 'block_iter;
-                    };
-
-                    // Optimizations on the block entries
-                    for v in self.lir.functions[fkey].blocks.entries(block) {
-                        let entry = self.lir.functions[fkey].blocks.entry_of(v);
-
-                        trace!("optimizing {v} = {entry}");
-
-                        match entry {
-                            Entry::CallStatic(mfunc, params) => {
-                                if self.should_inline(*mfunc) {
-                                    self.changed = true;
-
-                                    info!("inlining the call to {mfunc} in {fkey}");
-                                    let params = params.clone();
-                                    let [fin, ftarget] =
-                                        self.lir.functions.get_many_mut([fkey, *mfunc]);
-                                    let types = &self.lir.mono.types;
-                                    Optimizer::inline_function(
-                                        types, ftarget, fin, block, v, params,
-                                    );
-                                    break 'block_iter;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                fuel -= 1;
-            }
-
-            if self.lir.functions[fkey].symbol.contains("main::testing") {
-                println!(
-                    "OPTIMIZED FORM: \n{}",
-                    self.lir
-                        .mono
-                        .fmt(&self.lir.functions[fkey])
-                        .fns(&self.lir.functions)
-                );
-            }
-        }
-    }
-
     fn block_opts(&mut self) {
+        const FUEL: usize = 1000;
+
         for fkey in self.lir.functions.keys() {
-            self.changed = true;
-
-            if self.lir.functions[fkey].symbol.contains("main::testing") {
-                println!(
-                    "BEFORE FORM: \n{}",
-                    self.lir
-                        .mono
-                        .fmt(&self.lir.functions[fkey])
-                        .fns(&self.lir.functions)
-                );
-            }
-
             let _span = info_span!(
-                "running LIR optimizer",
-                entity = self.lir.functions[fkey].symbol,
-                key = fkey.to_string(),
+                "running block optimizations",
+                entity = self.lir.functions[fkey].symbol.clone(),
             );
             let _handle = _span.enter();
+            info!(
+                "BEFORE OPTIMIZATIONS:\n{}",
+                self.lir
+                    .mono
+                    .fmt(&self.lir.functions[fkey])
+                    .fns(&self.lir.functions)
+            );
 
-            let mut fuel = 10000;
+            let any_change = self.with_fuel(FUEL, |lir| {
+                let func = &mut lir.functions[fkey];
+                let changed = func
+                    .ssa
+                    .blocks
+                    .keys()
+                    .any(|block| block_opt_iter(func, fkey, block));
 
-            while fuel > 0 && self.changed {
-                self.changed = false;
-
-                'block_iter: for block in self.lir.functions[fkey].blocks.blocks() {
-                    let func = &mut self.lir.functions[fkey];
-
-                    let Some(_) = func.blocks.blocks.as_slice().get(block.0 as usize) else {
-                        break 'block_iter;
-                    };
-
-                    if Optimizer::is_unused(func, block) {
-                        self.changed = true;
-                        info!("deleting unused block {block}");
-                        Rewrite::delete_unused_block(&mut func.blocks, block);
-                        break 'block_iter;
+                if func.symbol.contains("tuple::show::mfunc96") {
+                    if changed {
+                        info!(
+                            "MIDDLE OPTIMIZATION:\n{}",
+                            ty_fmt(&lir.mono.types, &lir.functions[fkey]).fns(&lir.functions)
+                        );
                     }
-
-                    match Optimizer::should_inline_block(func, block) {
-                        BlockInline::JumpSubst { dst } => {
-                            self.changed = true;
-                            Optimizer::jump_subst_block_inline(&mut func.blocks, block, dst);
-                            break 'block_iter;
-                        }
-                        BlockInline::FlowSubst { removed } => {
-                            self.changed = true;
-                            Optimizer::flow_subst_block_inline(&mut func.blocks, block, removed);
-                            break 'block_iter;
-                        }
-                        BlockInline::Impossible => {}
-                    }
-
-                    trace!("entering {block}");
                 }
-                fuel -= 1;
+                changed
+            });
+
+            if any_change {
+                trace!(
+                    "post-optimizations:\n{}",
+                    self.lir.mono.fmt(&self.lir.functions[fkey])
+                );
             }
         }
     }
 
-    // inlining breaks when the inline function has unreachable branches. not sure why
-    fn has_unreachable_branches(&self, f: MonoFunc) -> bool {
-        self.lir.functions[f]
-            .blocks
-            .blocks
-            .values()
-            .any(|block| matches!(&block.tail, ControlFlow::Unreachable))
+    fn func_opts(&mut self) {
+        const FUEL: usize = 1000;
+
+        for fkey in self.lir.functions.keys() {
+            self.with_fuel(FUEL, |lir| {
+                let ssa = &lir.functions[fkey].ssa;
+                ssa.blocks
+                    .keys()
+                    .any(|block| func_opt_iter(lir, fkey, block))
+            });
+        }
     }
 
-    fn is_unused(func: &Function, block: Block) -> bool {
-        block != Block::entry() && func.blocks.blocks[block].predecessors == 0
+    fn with_fuel(&mut self, mut fuel: usize, mut f: impl FnMut(&'_ mut LIR) -> Changed) -> Changed {
+        let mut changed = true;
+        let mut any_change = false;
+
+        while fuel != 0 && changed {
+            changed = f(self.lir);
+            any_change |= changed;
+
+            fuel -= 1;
+        }
+
+        any_change
+    }
+}
+
+fn block_opt_iter(func: &mut Function, fkey: MonoFunc, block: Block) -> Changed {
+    if func.ssa.blocks[block].predecessors == 0 {
+        info!("purging {block}");
+        func.ssa.purge_block(block);
+        return true;
     }
 
-    fn should_inline(&self, f: MonoFunc) -> bool {
-        let func = &self.lir.functions[f];
-        !func.directly_recursive
-            && ((func.invocations == 1 || self.inlineable(f)) && !self.has_unreachable_branches(f))
-    }
+    let start = func.ssa.blocks[block].start;
 
-    fn should_inline_block(_: &Function, _: Block) -> BlockInline {
-        // Turns out; this way of doing optimizations is *highly* unsound.
-        //
-        // However; I've got a completely different idea of doing LIR optimizations entirely, and
-        // suspect I've fundamentally missunderstood the benefits of A-Normal.
-        //
-        // So; time to try something different
-        BlockInline::Impossible
-        // if block == Block::entry() {
-        //     return BlockInline::Impossible;
-        // }
+    for v in KeysIter::range(start, usize::MAX) {
+        if !func.ssa.ventries.has(v) {
+            break;
+        }
 
-        // let iblock = &func.blocks.blocks[block];
+        match &func.ssa.ventries[v] {
+            // block0():
+            //  v1 = 0
+            //  jump block1(v1)
+            //
+            // block1(v2): // predecessors = 1
+            //  return v2
+            // -----
+            // block0():
+            //  v1 = 0
+            //  return v1
+            //  ...
+            Entry::JmpBlock(jump)
+                if func.ssa.blocks[jump.id].predecessors == 1 && jump.id == Block(block.0 + 1) =>
+            {
+                info!("inlining {} in {}", jump.id, block);
+                let jump = jump.clone();
 
-        // // If it has its own entries, we do not inline it
-        // match iblock.offset {
-        //     Some((start, end)) if end.0 - start.0 != iblock.parameters => {
-        //         return BlockInline::Impossible
-        //     }
-        //     _ => {}
-        // }
+                for vv in KeysIter::range(v, usize::MAX) {
+                    if !func.ssa.ventries.has(vv) {
+                        break;
+                    }
 
-        // // If the block does nothing but jump to another block with
-        // // parameters then we can inline it in more situations, and without shifting values.
-        // if let ControlFlow::JmpBlock(dst, params) = &iblock.tail {
-        //     if params.is_empty()
-        //         || (func.blocks.blocks[*dst].predecessors == 1
-        //             && all_predecessors_support_block_args(&func.blocks, *dst))
-        //     {
-        //         // TODO: we need to check for jump tables and not use JumpSubst if they exist
-        //         return BlockInline::JumpSubst { dst: *dst };
-        //     }
-        // }
-
-        // // Otherwise we can only inline it if all references to it
-        // // are from places that can be substituted by a new Flow instead of
-        // // just a different block Jump.
-        // let does_not_require_block_id = func.blocks.blocks.iter().all(|(b, bdata)| {
-        //     match &bdata.tail {
-        //         ControlFlow::Select { on_true, on_false, .. } => {
-        //             on_true.0 != block && on_false.0 != block
-        //         }
-        //         ControlFlow::JmpTable(_, _, blocks) => blocks.iter().all(|&b| b != block),
-        //         // Don't inline self-recursive blocks
-        //         ControlFlow::JmpBlock(jump, _) if b == block => b != *jump,
-        //         _ => true,
-        //     }
-        // });
-
-        // if does_not_require_block_id {
-        //     let removed = iblock.offset;
-        //     dbg!(removed);
-        //     return BlockInline::FlowSubst { removed };
-        // }
-
-        // return BlockInline::Impossible;
-    }
-
-    fn inlineable(&self, f: MonoFunc) -> bool {
-        self.lir.functions[f].blocks.entries_count() < 5
-    }
-
-    fn jump_subst_block_inline(ssa: &mut Blocks, iblock: Block, dst: Block) {
-        info!("inlining {iblock}'s re-jump to {dst} in all blocks");
-
-        let ControlFlow::JmpBlock(ddst, dst_params) = ssa.blocks[iblock].tail.clone() else {
-            unreachable!()
-        };
-        assert_eq!(ddst, dst);
-
-        let iblock_params = ssa.params(iblock);
-
-        ssa.blocks[dst].parameters += iblock_params.clone().count() as u32;
-        let start = match ssa.blocks[dst].offset.as_mut() {
-            Some((start, _)) => {
-                start.0 -= iblock_params.clone().count() as u32;
-                Some(*start)
-            }
-            None => iblock_params.clone().next().inspect(|&start| {
-                ssa.blocks[dst].offset = Some((start, start + iblock_params.clone().count() as u32))
-            }),
-        };
-
-        let inlines = ssa
-            .blocks
-            .iter_mut()
-            .map(|(block, bdata)| {
-                if block == iblock {
-                    return 0;
+                    for_entry_mut(&mut func.ssa.ventries[vv], |vv| {
+                        if vv.0 > v.0 && vv.0 <= v.0 + jump.params.len() as u32 {
+                            let start = v.0 + 1;
+                            let i = vv.0 - start;
+                            let new = jump.params[i as usize];
+                            info!("at {v}, {vv} detected as parameter {i}, rewriting to {new}");
+                            new
+                        } else {
+                            vv.value()
+                        }
+                    });
                 }
 
-                let subst = |b: &mut Block, params: &mut Vec<_>| {
-                    if *b == iblock {
-                        *b = dst;
-                        if params.is_empty() {
-                            params.extend(dst_params.iter().cloned());
-                        } else {
-                            let start = start.unwrap();
-                            let r = Rewrite::new().and_block_params(start, params);
-                            let dst_params: Vec<_> =
-                                dst_params.iter().map(|&v| r.value(v)).collect();
-                            params.extend(dst_params);
-                        }
-                        1
-                    } else {
-                        0
+                // Remove the jump instruction, and parameter declarations of the block we'll remove
+                func.ssa.blocks.as_mut_vec().remove(jump.id.0 as usize);
+                func.ssa.delete_range(v, 1 + jump.params.len());
+                func.ssa.for_each_block(V(0), |b| {
+                    if b.0 > block.0 {
+                        b.0 -= 1;
                     }
+                });
+
+                return true;
+            }
+            // Substitute tail call to self with a jump to the entry block instead
+            Entry::JmpFunc(mfunc, _) if *mfunc == fkey => {
+                info!("substiuting call to self with jump to entry block");
+                let Entry::JmpFunc(_, params) = &mut func.ssa.ventries[v] else {
+                    unreachable!()
+                };
+                let jump = BlockJump::new(Block::entry(), take(params));
+                func.ssa.ventries[v] = Entry::JmpBlock(jump);
+            }
+            Entry::Select { on_true, on_false, .. } => {
+                let new_on_true = try_inline_block_rejump(&func.ssa, on_true);
+                let new_on_false = try_inline_block_rejump(&func.ssa, on_false);
+
+                let Entry::Select { on_true, on_false, .. } = &mut func.ssa.ventries[v] else {
+                    unreachable!()
                 };
 
-                match &mut bdata.tail {
-                    ControlFlow::JmpBlock(b, params) => subst(b, params),
-                    ControlFlow::Select { on_true, on_false, .. } => {
-                        subst(&mut on_true.0, &mut on_true.1)
-                            + subst(&mut on_false.0, &mut on_false.1)
+                let mut changed = false;
+                if let Some(jump) = new_on_true {
+                    changed = true;
+                    info!("{} => {}", on_true.id, jump.id);
+                    func.ssa.blocks[on_true.id].predecessors -= 1;
+                    *on_true = jump;
+                }
+                if let Some(jump) = new_on_false {
+                    changed = true;
+                    info!("{} => {}", on_false.id, jump.id);
+                    func.ssa.blocks[on_false.id].predecessors -= 1;
+                    *on_false = jump;
+                }
+
+                return changed;
+            }
+
+            // v0 = call mfunc0()
+            // return v0
+            //   ----
+            // jump mfunc0()
+            Entry::CallStatic(..)
+                if func.ssa.ventries[V(v.0 + 1)] == Entry::Return(Value::V(v)) =>
+            {
+                info!("substituting call+ret into tail call");
+
+                let Entry::CallStatic(mfunc, params) = &mut func.ssa.ventries[v] else {
+                    unreachable!();
+                };
+
+                let params = take(params);
+                func.ssa.ventries[v] = Entry::JmpFunc(*mfunc, params);
+                func.ssa.delete_range(V(v.0 + 1), 1);
+
+                return true;
+            }
+            Entry::JmpTable(_, blocks) => {
+                let rejumps = blocks
+                    .iter()
+                    .map(|block| {
+                        let jmp = BlockJump::new(*block, vec![]);
+                        try_inline_block_rejump(&func.ssa, &jmp)
+                    })
+                    .collect::<SmallVec<[_; 5]>>();
+
+                let Entry::JmpTable(_, blocks) = &mut func.ssa.ventries[v] else {
+                    unreachable!();
+                };
+
+                let changed = !rejumps.is_empty();
+
+                for (rejump, jump) in rejumps.into_iter().zip(blocks) {
+                    if let Some(new) = rejump {
+                        *jump = new.id;
                     }
-                    ControlFlow::JmpTable(_, _, blocks) => {
-                        let mut params = vec![];
-                        let c = blocks.iter_mut().map(|b| subst(b, &mut params)).sum();
-                        if c > 0 {
-                            assert_eq!(
-                                iblock_params.clone().count(),
-                                0,
-                                "jump tables do not support block params"
-                            );
-                        }
-                        c
-                    }
-                    _ => 0,
                 }
-            })
-            .sum::<u16>();
 
-        assert_eq!(inlines, ssa.blocks[iblock].predecessors);
-
-        ssa.blocks[dst].predecessors += inlines - 1;
-        ssa.blocks[iblock].predecessors -= inlines;
-        ssa.blocks[iblock].offset = None;
-
-        Rewrite::delete_unused_block(ssa, iblock);
-    }
-
-    fn flow_subst_block_inline(ssa: &mut Blocks, iblock: Block, removed: Option<(V, V)>) {
-        info!("inlining {iblock}'s flow in all blocks");
-
-        let tail = ssa.blocks[iblock].tail.clone();
-
-        let mut inlines: i16 = 0;
-
-        for (block, bdata) in ssa.blocks.iter_mut() {
-            if block == iblock {
-                continue;
+                return changed;
             }
-
-            match &mut bdata.tail {
-                ControlFlow::JmpBlock(b, params) if *b == iblock => {
-                    let params = std::mem::take(params);
-                    let mut r = Rewrite::new();
-                    dbg!(removed);
-                    if let Some((start, _)) = removed {
-                        dbg!(start, &params);
-                        r = r.and_block_params(start, &params);
-                    }
-                    inlines += 1;
-                    bdata.tail = r.flow(&tail);
-                }
-                _ => {}
-            }
-        }
-
-        let predecessor_increment = inlines - 1;
-        tail.for_each_block(|block| {
-            let p = &mut ssa.blocks[block].predecessors;
-            *p = p.wrapping_add_signed(predecessor_increment);
-        });
-
-        Rewrite::delete_unused_block(ssa, iblock);
-    }
-
-    fn inline_function(
-        _types: &Types,
-        ftarget: &Function,
-        fin: &mut Function,
-        inbl: Block,
-        at: V,
-        mut params: Vec<Value>,
-    ) {
-        let added_values = ftarget.blocks.ventries.len() as i32;
-        let original_inbl_offset = fin.blocks.blocks[inbl].offset.unwrap();
-        let cont_param_v = at + added_values as u32;
-
-        // Update the ventries/vtypes maps to contain the inlined values
-        {
-            // merge the vtypes from what we want to inline into the current position
-            let inlined_vtypes = ftarget.blocks.vtypes.values().cloned();
-            let (after, call_bind_type) =
-                split_and_insert(at, &mut fin.blocks.vtypes, inlined_vtypes);
-
-            // continuation parameter is moved to after inlined values
-            fin.blocks.vtypes.push(call_bind_type);
-            fin.blocks.vtypes.as_mut_vec().extend(after);
-
-            // modify all `v` after `at` inside the entries to be offset by the amount of values
-            // that were added inbetween.
-            fin.blocks
-                .ventries
-                .values_mut()
-                .for_each(|v| *v = Rewrite::new().atv(at).byv(added_values).entry(v));
-
-            // for all the values we copy over, offset by `at` so the inlined values start at `0`
-            let inlined_ventries_with_offset = ftarget
-                .blocks
-                .ventries
-                .values()
-                .map(|entry| Rewrite::new().valways().byv(at.0 as i32).entry(&entry));
-            // merge the inlined values
-            let (after, _call_entry) =
-                split_and_insert(at, &mut fin.blocks.ventries, inlined_ventries_with_offset);
-
-            // continuation parameter is moved to after inlined values
-            fin.blocks
-                .ventries
-                .push_as(cont_param_v, Entry::BlockParam(V(0)));
-            fin.blocks.ventries.as_mut_vec().extend(after);
-        }
-
-        // +1 because this is before we add the continuation block
-        // which will be created before the inlined entry block.
-        let inline_block_offset = fin.blocks.blocks.len() as i32 + 1;
-
-        let mut old_tail = None;
-
-        // For each block prior to inlining
-        // Offset blocks and values inside the tail
-        // Offset block offsets if the block's V occurs after the inline.
-        //   or: Reduce end if this is the block we're inlining
-        let r = Rewrite::new().atv(at).byv(added_values);
-        for block in fin.blocks.blocks() {
-            let bdata = &mut fin.blocks.blocks[block];
-            bdata.tail = r.flow(&bdata.tail);
-
-            if let Some((start, end)) = bdata.offset.as_mut() {
-                if inbl == block {
-                    *end = at;
-                    let inline_entry = Block(inline_block_offset as u32);
-                    let jump = ControlFlow::JmpBlock(inline_entry, std::mem::take(&mut params));
-                    old_tail = Some(std::mem::replace(&mut bdata.tail, jump));
-                } else if start.0 > at.0 {
-                    start.0 = start.0.wrapping_add_signed(added_values);
-                    end.0 = end.0.wrapping_add_signed(added_values);
-                }
-            }
-        }
-
-        // Create continuation block
-        let continuation_block = {
-            let original_len = original_inbl_offset.1 .0 - original_inbl_offset.0 .0;
-            let remaining = original_len - (at.0 - original_inbl_offset.0 .0);
-            let continuation_block = fin.blocks.new_block(1);
-            let bdata = &mut fin.blocks.blocks[continuation_block];
-            bdata.offset = Some((cont_param_v, cont_param_v + remaining));
-            bdata.tail = old_tail.unwrap();
-            continuation_block
-        };
-
-        // Copy over and offset the blocks in ftarget into fin
-        // Offset the blocks and values inside the tail of each block
-        // Substitute any `return v` with `jump continuation(v)`
-        for block in ftarget.blocks.blocks() {
-            let mut blockdata = ftarget.blocks.blocks[block].clone();
-
-            if block == Block::entry() {
-                blockdata.predecessors += 1;
-            }
-
-            if let Some((start, end)) = blockdata.offset.as_mut() {
-                start.0 += at.0;
-                end.0 += at.0;
-            }
-
-            blockdata.tail = Rewrite::new()
-                .valways()
-                .balways()
-                .byv(at.0 as i32)
-                .byb(inline_block_offset)
-                .flow(&blockdata.tail);
-
-            match &blockdata.tail {
-                ControlFlow::JmpFunc(_, _) => todo!("this is a problem"),
-                &ControlFlow::Return(v) => {
-                    fin.blocks.blocks[continuation_block].predecessors += 1;
-                    blockdata.tail = ControlFlow::JmpBlock(continuation_block, vec![v]);
-                }
-                _ => {}
-            }
-
-            fin.blocks
-                .blocks
-                .push_as(Block(inline_block_offset as u32 + block.0), blockdata);
-        }
-    }
-}
-
-enum BlockInline {
-    JumpSubst { dst: Block },
-    FlowSubst { removed: Option<(V, V)> },
-    Impossible,
-}
-
-// Inserts `added` at `k` so that `k` remains but all keys after it are returned and replaced by `added`
-fn split_and_insert<K: MapKey, V: Clone + std::fmt::Debug>(
-    k: K,
-    map: &mut Map<K, V>,
-    added: impl Iterator<Item = V>,
-) -> (Vec<V>, V) {
-    let map = map.as_mut_vec();
-    let after = map.split_off(k.into() + 1);
-
-    // Remove the call instruction that we're inlining
-    let removed = map.pop().unwrap();
-
-    map.extend(added);
-    (after, removed)
-}
-
-// HACK: Since jump tables do not support block arguments, inlining a block with none that jumps to
-// a block with some is not possible.
-//
-// ideally we'd set some bitflags during lower instead or something
-fn all_predecessors_support_block_args(ssa: &Blocks, dst: Block) -> bool {
-    for bdata in ssa.blocks.values() {
-        match &bdata.tail {
-            ControlFlow::JmpTable(_, _, branches) if branches.contains(&dst) => return false,
             _ => {}
         }
     }
 
-    true
+    false
+}
+
+fn try_inline_block_rejump(ssa: &SSA, ijump: &BlockJump) -> Option<BlockJump> {
+    let binfo = ssa.block_info(ijump.id);
+    if binfo.binds == 0 {
+        if let Entry::JmpBlock(jump) = binfo.tail {
+            if ssa.parameters_are_local(ijump.id) {
+                // Substitute the parameters in iblock with the parameters given to the
+                // jump to iblock, to be used for the jump to the block jumped to by iblock.
+                let params = jump
+                    .params
+                    .iter()
+                    .map(|p| match p {
+                        Value::V(v) => {
+                            if let Some(i) = binfo.is_param(*v) {
+                                ijump.params[i]
+                            } else {
+                                *p
+                            }
+                        }
+                        _ => *p,
+                    })
+                    .collect();
+
+                return Some(BlockJump::new(jump.id, params));
+            }
+        }
+    }
+
+    None
+}
+
+fn func_opt_iter(lir: &mut LIR, fkey: MonoFunc, block: Block) -> Changed {
+    false
+}
+
+impl Entry {
+    pub fn is_terminator(&self) -> bool {
+        match self {
+            Entry::JmpFunc(..)
+            | Entry::JmpBlock(..)
+            | Entry::Return(..)
+            | Entry::Select { .. }
+            | Entry::JmpTable(..)
+            | Entry::Trap(..) => true,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lir::ssa::Blocks;
+    use crate::debuginfo::Item;
     use crate::lir::{ty_fmt, MonoType};
+    use lumina_key as key;
+    use lumina_key::{Map, M};
+    use tracing::info;
 
-    #[test]
-    fn jump_subst_block_inline() {
+    fn test_block_opts(name: &str, ssa: SSA) -> (String, String) {
+        let mut fuel = 5;
+
+        let item = Item::Defined(M(key::Module::from(0), key::Func::from(0)));
+        let mut func = Function::new(name.into(), item, ssa, MonoType::u(8), 1);
+
+        let mut changed = true;
+
+        let types = Map::new();
         lumina_util::enable_highlighting(false);
+        let before = format!("BEFORE:\n{}", ty_fmt(&types, &func.ssa));
 
-        let records = Map::new();
+        while fuel != 0 && changed {
+            changed = func
+                .ssa
+                .blocks
+                .keys()
+                .any(|block| block_opt_iter(&mut func, MonoFunc(0), block));
 
-        let mut ssa = Blocks::new(1);
-        let v0 = ssa.add_block_param(Block::entry(), MonoType::u(0)).value();
+            if changed {
+                info!("MIDDLE OPTIMIZATION:\n{}", ty_fmt(&types, &func));
+            }
 
-        let [truthy, cont] = [1, 2].map(|p| ssa.new_block(p));
-        ssa.set_tail(ControlFlow::Select {
-            value: Value::bool(true),
-            on_true: (truthy, vec![Value::u(1, 16)]),
-            on_false: (truthy, vec![Value::u(1, 16)]),
-        });
+            fuel -= 1;
+        }
 
-        ssa.switch_to_block(truthy);
-        let v1 = ssa.add_block_param(truthy, MonoType::u(16)).value();
-        let two = Value::u(2, 32);
-        ssa.set_tail(ControlFlow::JmpBlock(cont, vec![v1, two]));
+        let after = format!("AFTER:\n{}", ty_fmt(&types, &func.ssa));
 
-        ssa.switch_to_block(cont);
-        let v2 = ssa.add_block_param(cont, MonoType::u(16)).value();
-        let v3 = ssa.add_block_param(cont, MonoType::u(32)).value();
-        let v4 = ssa.construct(vec![v0, v1, v2, v3], MonoType::u(0 + 16 + 16 + 32));
-        ssa.set_tail(ControlFlow::Return(v4));
-
-        let mut comparison = format!("BEFORE OPTS:\n{}", ty_fmt(&records, &ssa));
-
-        Optimizer::jump_subst_block_inline(&mut ssa, truthy, cont);
-
-        comparison.push_str("\nAFTER OPTS:\n");
-        comparison += &ty_fmt(&records, &ssa).to_string();
-
-        insta::assert_snapshot!(comparison);
+        (before, after)
     }
 
     #[test]
-    fn flow_subst_block_inline() {
-        lumina_util::enable_highlighting(false);
+    fn inline_block() {
+        lumina_util::test_logger();
 
-        let records = Map::new();
+        let mut ssa = SSA::new();
 
-        let mut ssa = Blocks::new(1);
-        ssa.add_block_param(Block::entry(), MonoType::u(0));
+        let block = [Block::entry(), ssa.new_block()];
 
-        let [truthy, falsely, cont] = [1, 1, 2].map(|p| ssa.new_block(p));
-        ssa.set_tail(ControlFlow::Select {
-            value: Value::bool(true),
-            on_true: (truthy, vec![Value::u(1, 16)]),
-            on_false: (falsely, vec![Value::u(2, 16)]),
-        });
+        let v0 = ssa.add_block_param(block[0], MonoType::u(0));
+        let v1 = ssa.add(v0.value(), Value::u(1, 1), MonoType::u(1));
+        let _v2 = ssa.jump(block[1], vec![v1]);
 
-        ssa.switch_to_block(truthy);
-        let v1 = ssa.add_block_param(truthy, MonoType::u(16)).value();
-        let v2 = ssa.copy(Value::u(4, 32), MonoType::u(32));
-        ssa.set_tail(ControlFlow::JmpBlock(cont, vec![v1, v2]));
+        ssa.switch_to_block(block[1]);
+        let v3 = ssa.add_block_param(block[1], MonoType::u(3));
+        let v4 = ssa.construct(vec![v0.value(), v1, v1, v3.value()], MonoType::u(4));
+        let _v5 = ssa.return_(v4);
 
-        ssa.switch_to_block(cont);
-        let _v3 = ssa.add_block_param(cont, MonoType::u(16));
-        let v4 = ssa.add_block_param(cont, MonoType::u(32));
-        ssa.set_tail(ControlFlow::Return(v4.value()));
+        let (before, after) = test_block_opts("inline_block", ssa);
+        insta::assert_snapshot!(format!("{before}\n{after}"));
+    }
 
-        ssa.switch_to_block(falsely);
-        let v5 = ssa.add_block_param(falsely, MonoType::u(16)).value();
-        let v6 = ssa.copy(Value::u(6, 32), MonoType::u(32));
-        ssa.set_tail(ControlFlow::JmpBlock(cont, vec![v5, v6]));
+    #[test]
+    fn tricky() {
+        lumina_util::test_logger();
 
-        let mut comparison = format!("BEFORE OPTS:\n{}", ty_fmt(&records, &ssa));
+        let mut ssa = SSA::new();
 
-        let removed = Some((V(3), V(5)));
-        assert_eq!(ssa.blocks[cont].offset, removed);
-        Optimizer::flow_subst_block_inline(&mut ssa, cont, removed);
+        let block = [Block::entry(), ssa.new_block(), ssa.new_block()];
+        ssa.select(
+            Value::bool(true),
+            [
+                (block[1], vec![Value::u(1, 8)]),
+                (block[1], vec![Value::u(2, 8)]),
+            ],
+        );
 
-        comparison.push_str("\nAFTER OPTS:\n");
-        comparison += &ty_fmt(&records, &ssa).to_string();
+        ssa.switch_to_block(block[1]);
+        let p = ssa.add_block_param(block[1], MonoType::u(8));
+        ssa.jump(block[2], vec![]);
 
-        insta::assert_snapshot!(comparison);
+        ssa.switch_to_block(block[2]);
+        ssa.return_(p.value());
+
+        let (before, after) = test_block_opts("inline_block", ssa);
+        insta::assert_snapshot!(format!("{before}\n{after}"));
     }
 }

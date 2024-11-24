@@ -4,10 +4,12 @@ use crate::prelude::*;
 use crate::target::{Arch, LinuxPlatform, Platform};
 use crate::Target;
 use cranelift::codegen::ir;
+use cranelift::codegen::isa::CallConv;
 use cranelift::prelude::*;
+use cranelift_entity::PrimaryMap;
+use cranelift_module::FuncOrDataId;
 use cranelift_module::{DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use owo_colors::OwoColorize;
 use std::sync::Arc;
 use tracing::info_span;
 
@@ -16,7 +18,7 @@ use debuginfo::unwind;
 mod layout;
 mod ssa;
 
-use layout::{FType, PassBy};
+use layout::FuncLayout;
 
 impl Target {
     fn isa(&self) -> isa::Builder {
@@ -48,7 +50,7 @@ pub fn run(target: Target, dwarf: BinDebugInfo, lir: lir::Output) -> Vec<u8> {
     .unwrap();
     let mut objmodule = ObjectModule::new(objbuilder);
 
-    let mut structs = layout::Structs::new(&lir.types);
+    let structs = layout::Structs::new(&lir.types);
 
     let vals = lir.val_types.map(|val, ty| {
         let size = structs.size_of(ty) as usize;
@@ -75,53 +77,63 @@ pub fn run(target: Target, dwarf: BinDebugInfo, lir: lir::Output) -> Vec<u8> {
         id
     });
 
+    let mut flayouts = PrimaryMap::with_capacity(lir.functions.len() + lir.extern_funcs.len());
+
+    info!("lowering function signatures");
+
     let externmap = lir
         .extern_funcs
         .iter()
         .map(|(key, func)| {
-            let mut typing = structs.records.get_abi_typing(&func.params, &func.returns);
-            typing.conv = isa.default_call_conv();
+            let conv = isa.default_call_conv();
 
-            let sig = structs.signature(&typing);
-            let id = objmodule
-                .declare_function(&func.symbol, Linkage::Import, &sig)
-                .unwrap();
+            let id = match objmodule.get_name(&func.symbol) {
+                Some(FuncOrDataId::Func(id)) => {
+                    error!(
+                        "skipping FFI declaration {} because of name collision",
+                        func.symbol
+                    );
+                    id
+                }
+                Some(FuncOrDataId::Data(_)) => {
+                    panic!("name collision for FFI element {}", &func.symbol)
+                }
+                None => {
+                    let (flayout, sig) = structs.flayout(conv, &func.params, &func.returns);
+                    let id = objmodule
+                        .declare_function(&func.symbol, Linkage::Import, &sig)
+                        .unwrap();
+                    assert_eq!(id, flayouts.push(flayout));
+                    id
+                }
+            };
 
-            (*key, FuncHeader { id, typing })
+            (*key, id)
         })
         .collect();
 
-    let funcmap: Map<lir::MonoFunc, FuncHeader> = lir
+    let funcmap: Map<lir::MonoFunc, FuncId> = lir
         .functions
-        .iter()
-        .map(|(mfunc, func)| {
-            let entry = lir::Block::entry();
+        .values()
+        .map(|func| {
+            let conv = CallConv::Tail;
 
-            info!(
-                "lowering signature of {mfunc} {}",
-                format!("// {}", func.symbol).dimmed()
-            );
-
-            let typing = structs.records.get_abi_typing(
-                func.blocks.params(entry).map(|v| func.blocks.type_of(v)),
-                &func.returns,
-            );
-
-            let sig = structs.signature(&typing);
-
-            assert!(!func.symbol.is_empty());
+            let params = func.ssa.func_param_types();
+            let (flayout, sig) = structs.flayout(conv, params, &func.returns);
             let id = objmodule
                 .declare_function(&func.symbol, Linkage::Hidden, &sig)
                 .unwrap();
+            assert_eq!(id, flayouts.push(flayout));
 
-            FuncHeader { id, typing }
+            id
         })
         .collect();
 
     let unwindinfo = unwind::UnwindContext::new(&*isa, true);
 
     let mut ctx = Context::new(
-        isa, &vals, &lir, structs, objmodule, funcmap, externmap, rotable, unwindinfo, dwarf,
+        isa, &vals, &lir, structs, objmodule, funcmap, externmap, flayouts, rotable, unwindinfo,
+        dwarf,
     );
 
     let mut cctx = codegen::Context::new();
@@ -135,13 +147,12 @@ pub fn run(target: Target, dwarf: BinDebugInfo, lir: lir::Output) -> Vec<u8> {
         let _handle = _span.enter();
 
         let f_dbg_ctx = ssa::Translator::func(&mut ctx, &mut cctx, &mut fctx, func, mfunc);
+        let id = ctx.funcmap[mfunc];
 
-        let id = ctx.funcmap[mfunc].id;
         if let Err(err) = ctx.objmodule.define_function(id, &mut cctx) {
             panic!("definition error when defining {}:\n {err}", func.symbol);
         }
 
-        let id = ctx.funcmap[mfunc].id;
         ctx.unwindinfo.add_function(id, &cctx, &*ctx.isa);
 
         f_dbg_ctx.finalize(&mut ctx.debuginfo, id, &cctx);
@@ -165,9 +176,13 @@ pub struct Context<'a> {
     lir: &'a lir::Output,
     structs: layout::Structs<'a>,
     objmodule: ObjectModule,
-    funcmap: Map<lir::MonoFunc, FuncHeader>,
-    externmap: HashMap<M<key::Func>, FuncHeader>,
+
+    funcmap: Map<lir::MonoFunc, FuncId>,
+    externmap: HashMap<M<key::Func>, FuncId>,
+
+    flayouts: PrimaryMap<FuncId, FuncLayout>,
     rotable: MMap<key::ReadOnly, DataId>,
+
     unwindinfo: unwind::UnwindContext,
     debuginfo: BinDebugInfo,
 }
@@ -200,48 +215,31 @@ impl<'a> Context<'a> {
             .unwrap();
 
         for val in self.val_to_globals.iter() {
-            let header = &self.funcmap[self.lir.val_initializers[&val]];
-            let init = self
-                .objmodule
-                .declare_func_in_func(header.id, &mut builder.func);
+            let mfunc = self.lir.val_initializers[&val];
+            info!(
+                "lowering value initialiser {}",
+                &self.lir.functions[mfunc].symbol
+            );
 
+            let funcid = self.funcmap[mfunc];
             let dataid = self.val_to_globals[val];
-            let data = self
-                .objmodule
-                .declare_data_in_func(dataid, &mut builder.func);
-            let ptr = builder.ins().symbol_value(types::I64, data);
+            let flayout = &self.flayouts[funcid];
 
-            let ret_ftype = self.structs.ftype(&header.typing.ret);
+            let mut func_imports = HashMap::new();
+            let mut ins = ssa::InstHelper::new(
+                &mut builder,
+                &self.structs,
+                self.size_t(),
+                self.funcmap[self.lir.alloc],
+                self.isa.clone(),
+                &mut self.objmodule,
+                &mut func_imports,
+            );
+            let ptr = ins.dataid_as_pointer(dataid);
 
-            // Attach the struct-return pointer as last parameter if needed
-            let params = match &ret_ftype {
-                FType::Struct(PassBy::Pointer, _) => vec![ptr],
-                _ => vec![],
-            };
-
-            let ret = builder.ins().call(init, &params);
-
-            match ret_ftype {
-                FType::Struct(PassBy::Value, key) => {
-                    let align = self.structs.get(key).align;
-                    let mut offset = 0;
-
-                    for v in builder.inst_results(ret).to_vec() {
-                        let size = builder.func.dfg.value_type(v).bytes();
-
-                        builder.ins().store(MemFlags::trusted(), v, ptr, offset);
-
-                        let padding = (align - size % align) % align;
-                        offset += padding as i32 + size as i32;
-                    }
-                }
-                FType::Scalar(_) => {
-                    let r = builder.inst_results(ret)[0];
-                    builder.ins().store(MemFlags::trusted(), r, ptr, 0);
-                }
-                // already done as we passed the data as struct return directly
-                FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) | FType::StructZST => {}
-            }
+            let call = ins.new_call(0, &flayout.ret);
+            let vlayout = ins.call_direct(funcid, call);
+            ins.write_vlayout_to_ptr(ptr, &vlayout);
         }
 
         builder.ins().return_(&[]);
@@ -272,8 +270,8 @@ impl<'a> Context<'a> {
         builder.seal_block(entryblock);
         builder.switch_to_block(entryblock);
 
-        let lumina_main_id = self.funcmap[self.lir.main].id;
-        let sys_init_id = self.funcmap[self.lir.sys_init].id;
+        let lumina_main_id = self.funcmap[self.lir.main];
+        let sys_init_id = self.funcmap[self.lir.sys_init];
 
         let [lumina_main, val_inits, sys_init] =
             [lumina_main_id, val_inits_id, sys_init_id].map(|func_id| {
@@ -362,10 +360,4 @@ impl<'a> Context<'a> {
             }
         }
     }
-}
-
-#[derive(Clone, Debug)]
-struct FuncHeader {
-    id: FuncId,
-    typing: layout::Typing,
 }

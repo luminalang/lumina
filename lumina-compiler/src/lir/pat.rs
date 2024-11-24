@@ -321,9 +321,14 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let maybe = self.ssa().call(split, vec![on], ret);
 
         let is_just = self.is_just(maybe);
+        let lvars = [mir::pat::LIST_CONS, mir::pat::LIST_NIL];
 
-        let [con_block, nil_block] = [mir::pat::LIST_CONS, mir::pat::LIST_NIL].map(|constr| {
-            let vblock = self.ssa().new_block();
+        let [con_block, nil_block] = lvars.map(|_| self.ssa().new_block());
+
+        self.ssa()
+            .select(is_just, [(con_block, vec![]), (nil_block, vec![])]);
+
+        for (vblock, constr) in [con_block, nil_block].into_iter().zip(lvars) {
             self.ssa().switch_to_block(vblock);
 
             let resetpoint = self.make_reset();
@@ -362,12 +367,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
 
             self.next(next);
             self.reset(oblock, resetpoint);
-
-            vblock
-        });
-
-        self.ssa()
-            .select(is_just, [(con_block, vec![]), (nil_block, vec![])]);
+        }
     }
 
     fn record(&mut self, on: Value, next: &mir::DecTree) {
@@ -539,42 +539,40 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         let jmp_table_blocks = v
             .branches
             .iter()
-            .map(|(var, next)| {
-                let vblock = self.ssa().new_block();
-                self.ssa().switch_to_block(vblock);
+            .map(|(..)| self.ssa().new_block())
+            .collect::<Vec<_>>();
 
-                let resetpoint = self.make_reset();
+        self.ssa().jump_table(tag, jmp_table_blocks.clone());
 
-                let finst = GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
-                let raw_var_types = &self.f.mir.variant_types[sum][*var];
+        for (vblock, (var, next)) in jmp_table_blocks.into_iter().zip(&v.branches) {
+            self.ssa().switch_to_block(vblock);
 
-                let param_types: Vec<_> = raw_var_types
-                    .iter()
-                    .map(|ty| {
-                        let ty = (&finst).transform(ty);
-                        to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap)
-                            .apply(&ty)
-                    })
-                    .collect();
-                let param_tuple = self.f.lir.mono.get_or_make_tuple(param_types.clone());
+            let resetpoint = self.make_reset();
 
-                let params = self.ssa().cast_payload(on, param_tuple.into());
-                let params = (0..param_types.len() as u32)
-                    .map(key::Field)
-                    .zip(param_types)
-                    .map(|(field, ty)| self.ssa().field(params, param_tuple, field, ty))
-                    .collect();
+            let finst = GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
+            let raw_var_types = &self.f.mir.variant_types[sum][*var];
 
-                self.constructors.push(params);
+            let param_types: Vec<_> = raw_var_types
+                .iter()
+                .map(|ty| {
+                    let ty = (&finst).transform(ty);
+                    to_morphization!(self.f.lir, self.f.mir, &mut self.f.current.tmap).apply(&ty)
+                })
+                .collect();
+            let param_tuple = self.f.lir.mono.get_or_make_tuple(param_types.clone());
 
-                self.next(next);
-                self.reset(oblock, resetpoint);
+            let params = self.ssa().cast_payload(on, param_tuple.into());
+            let params = (0..param_types.len() as u32)
+                .map(key::Field)
+                .zip(param_types)
+                .map(|(field, ty)| self.ssa().field(params, param_tuple, field, ty))
+                .collect();
 
-                vblock
-            })
-            .collect();
+            self.constructors.push(params);
 
-        self.ssa().jump_table(tag, jmp_table_blocks);
+            self.next(next);
+            self.reset(oblock, resetpoint);
+        }
     }
 
     pub fn get_continuation(&mut self, ty: MonoType) -> Block {

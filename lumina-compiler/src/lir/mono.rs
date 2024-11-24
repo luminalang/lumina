@@ -95,7 +95,7 @@ impl MonoTypeData {
     pub fn as_sum(&self) -> (IntSize, M<key::Sum>, &Map<key::Variant, MonoTypeKey>) {
         match self {
             MonoTypeData::Sum { tag, variants, key } => (*tag, *key, variants),
-            other => panic!("not a record: {other:?}"),
+            other => panic!("not a sum: {other:?}"),
         }
     }
 
@@ -103,7 +103,7 @@ impl MonoTypeData {
     pub fn as_dyn_trait(&self) -> (M<key::Trait>, &MonoType) {
         match self {
             MonoTypeData::DynTraitObject { trait_, vtable } => (*trait_, vtable),
-            other => panic!("not a record: {other:?}"),
+            other => panic!("not a dyn trait: {other:?}"),
         }
     }
 }

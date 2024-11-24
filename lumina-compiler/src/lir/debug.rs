@@ -366,7 +366,7 @@ impl<'a> Debugger<'a> {
     fn as_ptr<'t>(&self, ty: &'t MonoType) -> &'t MonoType {
         match ty {
             MonoType::Pointer(inner) => inner,
-            _ => panic!("dealloc of non-pointer: {}", self.tfmt(ty)),
+            _ => panic!("as_ptr called on non-pointer: {}", self.tfmt(ty)),
         }
     }
 }

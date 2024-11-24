@@ -1,6 +1,6 @@
 //! Lowering for closures, dynamic trait objects and partial application
 
-use super::{ssa, FuncLower, Item, MonoFunc, MonoType, MonoTypeKey, Value, SSA, V};
+use super::{ssa, ty_fmt, FuncLower, Item, MonoFunc, MonoType, MonoTypeKey, Value, SSA, V};
 use crate::prelude::*;
 use either::Either;
 
@@ -19,7 +19,11 @@ impl<'a> FuncLower<'a> {
         self.lir.functions[target].pointed_to_by_func_pointer = true;
 
         let target_func = &self.lir.functions[target];
-        let mut types = target_func.ssa.func_param_types();
+        let mut types = target_func
+            .ssa
+            .func_param_types()
+            .cloned()
+            .collect::<Vec<_>>();
         let ret = target_func.returns.clone();
 
         let remaining = types.split_off(params.len());
@@ -34,8 +38,10 @@ impl<'a> FuncLower<'a> {
                 fnptr_ptypes.extend(remaining.iter().cloned());
 
                 let symbol = format!(
-                    "__Partial_{target}_{}",
-                    key.1.iter().map(|ty| self.ty_symbol(ty)).format(",")
+                    "__Partial_{}_{}_in_{}",
+                    &self.lir.functions[target].symbol,
+                    key.1.iter().map(|ty| self.ty_symbol(ty)).format(","),
+                    &self.lir.functions[self.current.mfkey].symbol,
                 );
 
                 let construct = |this: &mut Self, ssa: &mut SSA| {
@@ -133,7 +139,10 @@ impl<'a> FuncLower<'a> {
             ssa.return_(v);
         };
 
-        let symbol = format!("__Partial_{target}_in_{}", self.current.mfkey);
+        let symbol = format!(
+            "__Partial_{target}_in_{}",
+            self.lir.functions[self.current.mfkey].symbol
+        );
 
         let module = self.current.origin.module();
         let ret = inner_ret.clone();
@@ -285,7 +294,11 @@ impl<'a> FuncLower<'a> {
     ) -> MonoFunc {
         self.lir.functions[target].pointed_to_by_func_pointer = true;
 
-        let mut params = self.lir.functions[target].ssa.func_param_types();
+        let mut params = self.lir.functions[target]
+            .ssa
+            .func_param_types()
+            .cloned()
+            .collect::<Vec<_>>();
         let ret = self.lir.functions[target].returns.clone();
         params[self_ as usize] = MonoType::u8_pointer();
 
@@ -332,6 +345,10 @@ impl<'a> FuncLower<'a> {
         construct(self, &mut ssa);
 
         let mfunc = self.lir.push_function(symbol, item, ssa, ret);
+        info!(
+            "created deref funcwrapper:\n{}",
+            ty_fmt(&self.lir.mono.types, &self.lir.functions[mfunc]).fns(&self.lir.functions)
+        );
         self.lir.functions[mfunc].pointed_to_by_func_pointer = true;
 
         mfunc

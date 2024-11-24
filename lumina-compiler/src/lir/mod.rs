@@ -39,13 +39,15 @@ mod mono;
 mod reflect;
 mod ssa;
 pub use mono::{
-    fmt as ty_fmt, MonoFormatter, MonoType, MonoTypeData, MonoTypeKey, MonomorphisedTypes, TypeMap,
-    Types,
+    fmt as ty_fmt, MonoFormatter, MonoType, MonoTypeData, MonoTypeKey, MonomorphisedTypes,
+    Monomorphization, TypeMap, Types,
 };
 pub use ssa::{BinOp, Block, BlockJump, Entry, Value, SSA, V};
 mod dyn_dispatch;
 mod expr;
 mod pat;
+
+pub const TRAP_UNREACHABLE: u8 = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MonoFunc(u32);
@@ -475,7 +477,11 @@ impl LIR {
     }
 
     fn mfunc_to_fnpointer_type(&self, mfunc: MonoFunc) -> MonoType {
-        let ptypes = self.functions[mfunc].ssa.func_param_types();
+        let ptypes = self.functions[mfunc]
+            .ssa
+            .func_param_types()
+            .cloned()
+            .collect();
         let ret = self.functions[mfunc].returns.clone();
         MonoType::FnPointer(ptypes, Box::new(ret))
     }
@@ -548,11 +554,11 @@ impl<'a> FuncLower<'a> {
 
         self.expr_to_flow(&expr);
 
-        let func_slot = &mut self.lir.functions[self.current.mfkey];
+        let func_slot = &self.lir.functions[self.current.mfkey];
         info!(
             "resulting lir function for {}:\n{}",
             &func_slot.symbol,
-            self.lir.mono.fmt(&*func_slot)
+            self.lir.mono.fmt(&*func_slot).fns(&self.lir.functions)
         );
     }
 

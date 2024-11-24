@@ -1,170 +1,204 @@
 use super::*;
 
-impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
-    pub(super) fn call_func(
-        &mut self,
-        id: FuncId,
-        typing: layout::Typing,
-        mut params: Vec<Value>,
-    ) -> VEntry {
-        let slot = self.append_rptr_if_needed(&typing.ret, &mut params);
+pub struct Call<'a> {
+    pub params: Vec<Value>,
+    rlayout: &'a Layout<Type>,
+    ret_pointer: Option<Value>,
+}
 
+impl<'c, 'a, 'f> InstHelper<'c, 'a, 'f> {
+    pub fn new_call<'t>(&mut self, mut plen: usize, rlayout: &'t Layout<Type>) -> Call<'t> {
+        let mut ret_pointer = None;
+        rlayout.out_pointers(&mut |kind, size_t| {
+            let (size, align) = self.structs.size_and_align_of_ptr_dst(&kind);
+            let slot = self.create_struct_stack_slot(size, align as u8);
+            let ptr = self.ins().stack_addr(size_t, slot, 0);
+            ret_pointer = Some(ptr);
+        });
+        let params = if let Some(ptr) = ret_pointer {
+            plen += 1;
+            let mut params = Vec::with_capacity(plen + 1);
+            params.push(ptr);
+            params
+        } else {
+            Vec::with_capacity(plen)
+        };
+        Call { params, rlayout, ret_pointer }
+    }
+
+    pub fn call_direct<'t>(&mut self, id: FuncId, call: Call<'t>) -> VLayout {
         let fref = self.declare_func_in_func(id);
-        let call = self.ins().call(fref, &params);
+        let c = self.ins().call(fref, &call.params);
 
-        self.map_call_results_to_ventry(call, &typing.ret, slot)
+        //let rptr = call.return_pointer.map(|i| call.params[i]);
+        let inst_values = self.builder.inst_results(c).to_vec();
+        self.layout_from_raw_values(call.ret_pointer, call.rlayout, &mut inst_values.as_slice())
+        // self.map_call_results_to_vlayout(c, call.rlayout, rptr)
     }
 
-    pub(super) fn call_func_pointer(
-        &mut self,
-        fptr: Value,
-        typing: &layout::Typing,
-        params: &[lir::Value],
-    ) -> VEntry {
-        let mut appl = self.params(params);
-        let slot = self.append_rptr_if_needed(&typing.ret, &mut appl);
+    fn call_indirect<'t>(&mut self, ptr: Value, layout: &FuncLayout, call: Call<'t>) -> VLayout {
+        let sig = self.structs.signature(&layout);
+        let sigref = self.builder.import_signature(sig);
 
-        let sig = self.ctx.structs.signature(&typing);
-        let sigref = self.f.builder.import_signature(sig);
-        let call = self.ins().call_indirect(sigref, fptr, &appl);
+        let c = self.ins().call_indirect(sigref, ptr, &call.params);
 
-        self.map_call_results_to_ventry(call, &typing.ret, slot)
+        let inst_values = self.builder.inst_results(c).to_vec();
+        self.layout_from_raw_values(call.ret_pointer, call.rlayout, &mut inst_values.as_slice())
+    }
+}
+
+impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
+    pub fn call_func(&mut self, mfunc: MonoFunc, params: &[lir::Value]) -> VLayout {
+        let id = self.ctx.funcmap[mfunc];
+        self.call_func_id(id, params)
     }
 
-    pub(super) fn call_entry(&mut self, entry: VEntry, params: &[lir::Value]) -> VEntry {
-        match entry {
-            VEntry::Scalar(Scalar { kind: ScalarKind::FuncPointer(typing), point }) => {
-                self.call_func_pointer(point, &typing, params)
+    pub fn call_extern(&mut self, key: M<key::Func>, params: &[lir::Value]) -> VLayout {
+        let id = self.ctx.externmap[&key];
+        self.call_func_id(id, params)
+    }
+
+    pub fn call_func_id(&mut self, id: FuncId, lparams: &[lir::Value]) -> VLayout {
+        let layout = &self.ctx.flayouts[id];
+        let rlayout = layout.ret.clone();
+        let plen = layout.params.len();
+        let mut call = self.ins().new_call(plen, &rlayout);
+        self.fparams_from_funcid(id, lparams, &mut call.params);
+        self.ins().call_direct(id, call)
+    }
+
+    pub fn call_vlayout(&mut self, vlayout: VLayout, params: &[lir::Value]) -> VLayout {
+        match vlayout {
+            Layout::Scalar(Scalar::FuncPointer(layout), point) => {
+                let mut call = self.ins().new_call(layout.params.len(), &layout.ret);
+                self.fparams_from_layout(layout.params.as_slice(), params, &mut call.params);
+                self.ins().call_indirect(point, &layout, call)
             }
             _ => panic!("call to non-function"),
         }
     }
 
-    pub(super) fn params(&mut self, src: &[lir::Value]) -> Vec<Value> {
-        let mut buf = Vec::with_capacity(src.len());
-        src.iter().enumerate().for_each(|(i, p)| {
-            let entry = self.value_to_entry(*p);
-            trace!("{i} as {entry:?}");
-            self.entry_to_fstable(false, &entry, &mut buf)
-        });
+    pub fn bparams(&mut self, jump: &lir::BlockJump) -> Vec<Value> {
+        let clblock = self.f.blockmap[jump.id].0;
+        let mut buf = Vec::with_capacity(self.f.builder.block_params(clblock).len());
+
+        for (i, p) in jump.params.iter().enumerate() {
+            let got = self.value_to_vlayout(*p);
+
+            let v = self.f.func.ssa.get_block_param(jump.id, i as u32);
+            let ty = self.f.func.ssa.type_of(v);
+            let exp = self.ctx.structs.type_to_layout(ty, Stability::F);
+
+            let unified = self.ins().make_compatible(&exp, got);
+            self.ins().layout_into_raw_values(&unified, &mut buf);
+        }
+
         buf
     }
 
-    fn copy_rptr_if_needed(&self, params: &mut Vec<Value>) {
-        let ret = &self.f.func.returns;
-        match self.ctx.structs.ftype(ret) {
-            FType::ArrayPointer(..) | FType::Struct(PassBy::Pointer, _) => {
-                let entry = self.f.blockmap[lir::Block::entry()].0;
-                let rptr = self.f.builder.block_params(entry).last().unwrap();
-                let size_t = self.ctx.size_t();
-                assert_eq!(self.f.builder.func.dfg.value_type(*rptr), size_t);
-                params.push(*rptr);
-            }
-            _ => {}
-        }
+    pub fn fparams_from_layout(
+        &mut self,
+        exp: &[Layout<Type>],
+        src: &[lir::Value],
+        buf: &mut Vec<Value>,
+    ) {
+        src.iter().zip(exp).enumerate().for_each(|(i, (p, exp))| {
+            let vlayout = self.value_to_vlayout(*p);
+            trace!("param{i} as {vlayout:?} for {exp:?}");
+            let unified = self.ins().make_compatible(&exp, vlayout);
+            self.ins().layout_into_raw_values(&unified, buf);
+        });
     }
 
-    pub(super) fn tail_call(&mut self, mfunc: MonoFunc, params: &[lir::Value]) {
-        let mut params = self.params(&params);
+    pub fn fparams_from_funcid(&mut self, id: FuncId, src: &[lir::Value], buf: &mut Vec<Value>) {
+        src.iter().enumerate().for_each(|(i, p)| {
+            let vlayout = self.value_to_vlayout(*p);
+            let exp = self.ctx.flayouts[id].params[key::Param(i as u32)].clone();
+            trace!("param{i} as {vlayout:?} for {exp:?}");
+            let unified = self.ins().make_compatible(&exp, vlayout);
+            self.ins().layout_into_raw_values(&unified, buf);
+        });
+    }
 
-        let fheader = self.ctx.funcmap[mfunc].clone();
+    fn copy_tail_rptr(&self, params: &mut Vec<Value>) -> Option<Value> {
+        let mut out_pointer = None;
+        self.ctx.flayouts[self.f.id]
+            .ret
+            .out_pointers(&mut |_, size_t| {
+                let entry = self.f.blockmap[lir::Block::entry()].0;
+                warn!("assuming first parameter is return pointer");
+                let rptr = self.f.builder.block_params(entry)[0];
+                assert_eq!(self.f.type_of_value(rptr), size_t);
+                out_pointer = Some(rptr);
+                params.push(rptr);
+            });
+        out_pointer
+    }
 
-        let fname = self.ctx.lir.functions[mfunc].symbol.to_string();
+    pub fn tail_call(&mut self, mfunc: MonoFunc, cparams: &[lir::Value]) {
+        let mut params = Vec::with_capacity(cparams.len());
+
+        let id = self.ctx.funcmap[mfunc];
+        let fname = &self.ctx.lir.functions[mfunc].symbol;
+        let cname = &self.ctx.lir.functions[self.f.fkey].symbol;
+
+        let rlayout = &self.ctx.flayouts[id].ret;
+        let current_rlayout = &self.ctx.flayouts[self.f.id].ret;
 
         if mfunc == self.f.fkey {
             info!("performing a self-tail call to {mfunc} in {fname}");
 
-            self.copy_rptr_if_needed(&mut params);
+            self.copy_tail_rptr(&mut params);
+            self.fparams_from_funcid(id, cparams, &mut params);
+
             let entry = self.f.blockmap[lir::Block::entry()].0;
-            self.ins().jump(entry, &params);
-        } else if fheader.typing.ret == self.f.func.returns {
-            info!("performing a ret-tail call to {mfunc} in {fname}");
+            self.cins().jump(entry, &params);
+        } else if rlayout == current_rlayout {
+            info!("performing a ret-tail call to {fname} in {cname}");
 
-            self.copy_rptr_if_needed(&mut params);
-            let fref = self.declare_func_in_func(fheader.id);
-            self.ins().return_call(fref, &params);
+            let out_pointer = self.copy_tail_rptr(&mut params);
+            self.fparams_from_funcid(id, cparams, &mut params);
+
+            let fref = self.ins().declare_func_in_func(id);
+
+            if self.has_references_to_current_stack(self.ctx.flayouts[id].params.as_slice()) {
+                // We can still re-use the same out pointer but we can't invalidate the current stack
+                let c = self.cins().call(fref, &params);
+                let inst_values = self.f.builder.inst_results(c).to_vec();
+                let rlayout = self.ctx.flayouts[id].ret.clone();
+                let layout = self.ins().layout_from_raw_values(
+                    out_pointer,
+                    &rlayout,
+                    &mut inst_values.as_slice(),
+                );
+                self.return_(layout);
+            } else {
+                self.cins().return_call(fref, &params);
+            }
         } else {
-            match self.ctx.structs.ftype(&fheader.typing.ret) {
-                FType::ArrayPointer(_, _) | FType::Struct(PassBy::Pointer, _) => {
-                    info!("refusing tail call due to ret mismatch");
+            let mut has_rptr = false;
+            rlayout.out_pointers(&mut |_, _| has_rptr = true);
 
-                    self.f.vmap.as_mut_vec().pop();
-                    self.call_func(fheader.id, fheader.typing, params);
-                }
-                _ => {
-                    info!("performing a ret-tail call to {mfunc} in {fname} without rptr");
+            if has_rptr
+                || self.has_references_to_current_stack(&self.ctx.flayouts[id].params.as_slice())
+            {
+                info!("refusing tail call due to ret mismatch");
 
-                    let fref = self.declare_func_in_func(fheader.id);
-                    self.ins().return_call(fref, &params);
-                }
+                let layout = self.call_func_id(id, cparams);
+                self.return_(layout);
+            } else {
+                info!("performing a ret-tail call to {mfunc} in {fname} without rptr");
+
+                self.fparams_from_funcid(id, cparams, &mut params);
+                let fref = self.ins().declare_func_in_func(id);
+                self.cins().return_call(fref, &params);
             }
         }
     }
 
-    fn struct_to_fstable(
-        &mut self,
-        key: MonoTypeKey,
-        fields: &Map<layout::Field, VEntry>,
-        dst: &mut Vec<Value>,
-    ) {
-        match self.ctx.structs.pass_mode(key) {
-            PassBy::Pointer => {
-                let (size, align) = self.ctx.structs.size_and_align_of(&key.into());
-                let slot = self.create_struct_stack_slot(size, align as u8);
-                let size_t = self.ctx.size_t();
-                let ptr = self.ins().stack_addr(size_t, slot, 0);
-                self.write_fields_to_structptr(key, fields, ptr);
-                dst.push(ptr);
-            }
-            PassBy::Value => self.fields_to_fstable(fields.as_slice(), dst),
-        }
-    }
-
-    fn fields_to_fstable(&mut self, fields: &[VEntry], dst: &mut Vec<Value>) {
-        fields
-            .iter()
-            .for_each(|entry| self.entry_to_fstable(true, entry, dst))
-    }
-
-    fn entry_to_fstable(&mut self, embed: bool, entry: &VEntry, dst: &mut Vec<Value>) {
-        match entry {
-            // All scalars are assumed to be S_Stable
-            VEntry::Scalar(scalar) => dst.push(scalar.point),
-            VEntry::ZST => {}
-
-            VEntry::StructFlat(mk, inner_fields) => {
-                if embed {
-                    self.fields_to_fstable(inner_fields.as_slice(), dst)
-                } else {
-                    // Difference is that this might append an implicit struct pointer to `dst` instead
-                    self.struct_to_fstable(*mk, inner_fields, dst)
-                }
-            }
-            VEntry::ArrayFlat(_, inner_elems) => {
-                if embed {
-                    self.fields_to_fstable(inner_elems, dst)
-                } else {
-                    todo!("array_to_fstable");
-                }
-            }
-
-            // A `Struct` which we've implicitly been passing around as a pointer.
-            &VEntry::StructHeapPointer(inner, ptr) | &VEntry::StructStackPointer(inner, ptr) => {
-                match self.ctx.structs.pass_mode(inner) {
-                    PassBy::Pointer => dst.push(ptr),
-                    PassBy::Value => {
-                        self.deref_struct_into_raw(&mut |point| dst.push(point), inner, ptr);
-                    }
-                }
-            }
-            VEntry::ArrayStackPointer(_, _, ptr) => {
-                dst.push(*ptr);
-                // self.deref_array_into_raw(&mut |point| dst.push(point), inner, *len, *ptr)
-            }
-
-            // Here we make the assumption that no sum-types which take inlined payloads will ever
-            // be constructed with a pointer payload.
-            VEntry::SumPayloadStackPointer { ptr, .. } => dst.push(*ptr),
-        }
+    // TODO: We could track whether stack pointers originate from the current function or parent
+    // function, and if we do we can optimize tail calls in more situations.
+    fn has_references_to_current_stack(&self, params: &[Layout<Type>]) -> bool {
+        params.iter().any(Layout::has_stack_pointers)
     }
 }

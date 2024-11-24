@@ -1,21 +1,17 @@
 use super::*;
 use crate::lir::MonoType;
 use lumina_collections::MapKey;
-
-// pub struct Rewrite {
-//     offv: V,
-//
-// }
+use tracing::error;
 
 fn insert_buf<K: MapKey, T: fmt::Debug>(
-    after: V,
+    at: V,
     map: &mut Map<K, T>,
-    added: Vec<T>,
+    added: &mut Vec<T>,
     replace: bool,
 ) {
     let buf = map.as_mut_vec();
-    let rhs = buf.split_off(after.0 as usize);
-    buf.extend(added);
+    let rhs = buf.split_off(at.0 as usize);
+    buf.extend(added.drain(..));
     if replace {
         buf.extend(rhs.into_iter().skip(1));
     } else {
@@ -24,57 +20,77 @@ fn insert_buf<K: MapKey, T: fmt::Debug>(
 }
 
 impl SSA {
-    pub fn copy_for_inline(
-        &self,
-        from: V,
-        into: V,
-        params: &[Value],
-        buf: &mut Vec<Entry>,
-        tbuf: &mut Vec<MonoType>,
-    ) {
-        let offset = into.0 as i32 - from.0 as i32;
+    pub fn delete_range(&mut self, start: V, count: usize) {
+        let removed = self
+            .ventries
+            .as_mut_vec()
+            .drain(start.0 as usize..start.0 as usize + count)
+            .inspect(|entry| trace!("removing {entry}"))
+            .count();
+        self.vtypes
+            .as_mut_vec()
+            .drain(start.0 as usize..start.0 as usize + count)
+            .count();
 
-        for v in KeysIter::range(from, usize::MAX) {
-            match self.entry_of(v).clone() {
-                Entry::BlockParam(_, _) => {}
-                mut e => {
-                    for_entry_mut(&mut e, |v| {
-                        if v.0 < from.0 {
-                            dbg!(v, from);
-                            return v.value();
-                        }
+        for bb in self.blocks.values_mut() {
+            dbg!(&bb, &removed, &start);
+            if bb.start.0 > start.0 {
+                bb.start.0 -= removed as u32;
+            }
+        }
 
-                        match params.get((v.0 - from.0) as usize) {
-                            Some(v) => *v,
-                            None => V(v.0.wrapping_add_signed(offset)).value(),
-                        }
-                    });
-                    let is_term = e.is_terminator();
-                    buf.push(e);
-                    tbuf.push(self.vtypes[v].clone());
+        assert_eq!(count, removed);
 
-                    if is_term {
-                        break;
-                    }
+        // TODO: possible of-by-one error?
+        self.offset_values(start, V(start.0 + removed as u32), -(removed as i32));
+    }
+
+    pub fn purge_block(&mut self, block: Block) {
+        let BlockInfo { start, end, .. } = self.block_info(block);
+
+        let bblock = self.blocks.as_mut_vec().remove(block.0 as usize);
+
+        if bblock.predecessors != 0 {
+            error!("purging block with active predecessors");
+        }
+
+        self.delete_range(start, end.0 as usize - start.0 as usize + 1);
+
+        self.for_each_block(V(0), |b| {
+            if b.0 >= block.0 {
+                b.0 -= 1;
+            }
+        });
+    }
+
+    pub fn for_each_block(&mut self, at: V, mut f: impl FnMut(&mut Block)) {
+        for v in KeysIter::range(at, usize::MAX) {
+            if !self.ventries.has(v) {
+                return;
+            }
+
+            match &mut self.ventries[v] {
+                Entry::JmpBlock(block) => f(&mut block.id),
+                Entry::Select { on_true, on_false, .. } => {
+                    f(&mut on_true.id);
+                    f(&mut on_false.id);
                 }
+                Entry::JmpTable(_, blocks) => blocks.iter_mut().for_each(|block| f(block)),
+                Entry::BlockParam(block, _) => f(block),
+                _ => {}
             }
         }
     }
 
-    pub fn insert(&mut self, at: V, entries: Vec<Entry>, types: Vec<MonoType>, replace: bool) {
-        assert_eq!(entries.len(), types.len());
-
-        let mut offset = entries.len() as u32;
-        if replace {
-            offset -= 1;
-        }
-
-        for v in KeysIter::range(V(at.0 + 1), usize::MAX) {
+    pub fn offset_values(&mut self, start: V, when: V, offset: i32) {
+        for v in KeysIter::range(start, usize::MAX) {
             if self.ventries.has(v) {
                 for_entry_mut(&mut self.ventries[v], |v| {
-                    if v.0 > at.0 {
-                        V(v.0 + offset).value()
+                    if v.0 >= when.0 {
+                        info!("{v} -> {}", V(v.0.checked_add_signed(offset).unwrap()));
+                        V(v.0.checked_add_signed(offset).unwrap()).value()
                     } else {
+                        info!("keeping {v}");
                         v.value()
                     }
                 });
@@ -82,19 +98,29 @@ impl SSA {
                 break;
             }
         }
+    }
 
+    pub fn insert(
+        &mut self,
+        at: V,
+        entries: &mut Vec<Entry>,
+        types: &mut Vec<MonoType>,
+        replace: bool,
+    ) {
+        assert_eq!(entries.len(), types.len());
+
+        let mut offset = entries.len() as u32;
         if replace {
-            // TODO: not sure about these comparisons
-            for bblock in self.blocks.values_mut() {
-                if bblock.start.0 >= at.0 && bblock.start != V(u32::MAX) {
-                    bblock.start.0 += offset;
-                }
-            }
-        } else {
-            for bblock in self.blocks.values_mut() {
-                if bblock.start.0 > at.0 && bblock.start != V(u32::MAX) {
-                    bblock.start.0 += offset;
-                }
+            offset -= 1;
+        }
+
+        self.offset_values(V(at.0 + 1), V(at.0 + 1), offset as i32);
+
+        // Do we need to use `replace` in the edge-case?
+        for bblock in self.blocks.values_mut() {
+            if bblock.start.0 > at.0 && bblock.start != V(u32::MAX) {
+                info!("r block start {} += {offset}", bblock.start);
+                bblock.start.0 += offset;
             }
         }
 
@@ -122,7 +148,6 @@ pub(super) fn for_entry_mut(entry: &mut Entry, f: impl Fn(V) -> Value + Clone) {
         | Entry::Variant(_, params)
         | Entry::Construct(params)
         | Entry::CallExtern(_, params)
-        | Entry::CallValue(_, params)
         | Entry::JmpFunc(_, params)
         | Entry::JmpBlock(BlockJump { params, .. }) => for_values_mut(params, f),
         Entry::Select { value, on_true, on_false } => {
@@ -130,14 +155,18 @@ pub(super) fn for_entry_mut(entry: &mut Entry, f: impl Fn(V) -> Value + Clone) {
             for_values_mut(&mut on_true.params, f.clone());
             for_values_mut(&mut on_false.params, f);
         }
+        Entry::CallValue(v, params) => {
+            for_value_mut(v, f.clone());
+            for_values_mut(params, f);
+        }
         Entry::BinOp(_, [lhs, rhs])
         | Entry::WritePtr { ptr: lhs, value: rhs }
         | Entry::IntCmpInclusive([lhs, rhs], _, _) => {
             for_value_mut(lhs, f.clone());
             for_value_mut(rhs, f);
         }
-        Entry::SizeOf(_) => todo!(),
-        Entry::AlignOf(_) => todo!(),
+        Entry::SizeOf(_) => {}
+        Entry::AlignOf(_) => {}
         Entry::Transmute(v)
         | Entry::IntAbs(v)
         | Entry::Field { of: v, .. }
@@ -180,9 +209,12 @@ pub(super) fn for_entry(entry: &Entry, f: &mut dyn FnMut(V)) {
         | Entry::Variant(_, params)
         | Entry::Construct(params)
         | Entry::CallExtern(_, params)
-        | Entry::CallValue(_, params)
         | Entry::JmpFunc(_, params)
         | Entry::JmpBlock(BlockJump { params, .. }) => for_values(params, f),
+        Entry::CallValue(value, params) => {
+            for_value(value, f);
+            for_values(&params, f);
+        }
         Entry::Select { value, on_true, on_false } => {
             for_value(value, f);
             for_values(&on_true.params, f);
@@ -218,50 +250,5 @@ pub(super) fn for_entry(entry: &Entry, f: &mut dyn FnMut(V)) {
         | Entry::Trap(_)
         | Entry::RefStaticVal(_)
         | Entry::BlockParam(_, _) => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lir::ty_fmt;
-
-    #[test]
-    fn inline_block() {
-        lumina_util::enable_highlighting(false);
-
-        let mut ssa = SSA::new();
-        let types = Map::new();
-
-        let block = [Block::entry(), ssa.new_block()];
-
-        let v0 = ssa.add_block_param(block[0], MonoType::u(0));
-        let v1 = ssa.add(v0.value(), Value::u(1, 1), MonoType::u(1));
-        let v2 = ssa.jump(block[1], vec![v1]);
-
-        ssa.switch_to_block(block[1]);
-        let v3 = ssa.add_block_param(block[1], MonoType::u(3));
-        let v4 = ssa.construct(vec![v0.value(), v1, v2, v3.value()], MonoType::u(4));
-        let _v5 = ssa.return_(v4);
-
-        let before = format!("BEFORE:\n{}", ty_fmt(&types, &ssa));
-
-        let at = V(2);
-        let istart = V(3);
-        assert_eq!(istart, ssa.blocks[block[1]].start);
-
-        let mut entrybuf = Vec::new();
-        let mut typebuf = Vec::new();
-        ssa.copy_for_inline(istart, at, &[v1], &mut entrybuf, &mut typebuf);
-        ssa.insert(
-            at,
-            std::mem::take(&mut entrybuf),
-            std::mem::take(&mut typebuf),
-            true,
-        );
-
-        let after = format!("AFTER:\n{}", ty_fmt(&types, &ssa));
-
-        insta::assert_snapshot!(format!("{before}\n{after}"));
     }
 }

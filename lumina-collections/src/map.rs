@@ -1,7 +1,6 @@
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::Range;
 use std::ops::{Index, IndexMut};
 
 pub trait MapKey:

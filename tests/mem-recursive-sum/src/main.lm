@@ -1,0 +1,14 @@
+type Option a = Some a | None
+
+fn passes v as Option (Option (Option i32)) -> Option (Option (Option i32)) = v
+
+fn returns a as i32 -> Option (Option (Option i32)) =
+  Some a . Some . Some
+
+fn exits a as Option (Option (Option i32)) -> () =
+  match a
+  | Some (Some (Some n)) -> libc_exit n
+  | _   -> libc_exit 100
+
+fn main =
+  exits (passes (returns 40))

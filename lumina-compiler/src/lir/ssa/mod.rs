@@ -1,4 +1,6 @@
-use super::{mono::MonoFormatter, Function, MonoFunc, MonoType, MonoTypeKey, UNIT};
+use super::{
+    mono::MonoFormatter, Function, MonoFunc, MonoType, MonoTypeKey, TRAP_UNREACHABLE, UNIT,
+};
 use crate::{MAYBE_JUST, MAYBE_NONE};
 use derive_more::{Add, AddAssign, From};
 use derive_new::new;
@@ -26,14 +28,14 @@ map_key_impl!(V(u32), "v");
 #[derive(Clone, Debug)]
 pub struct BasicBlock {
     start: V,
-    // predecessors: u16,
+    predecessors: u16,
     // parameters: u32,
     // flow: ControlFlow,
 }
 
 impl BasicBlock {
     pub fn new() -> BasicBlock {
-        Self { start: V(u32::MAX) }
+        Self { start: V(u32::MAX), predecessors: 0 }
     }
 }
 
@@ -45,8 +47,10 @@ pub struct SSA {
 }
 
 /// Information retrieved with the `SSA::block_info` method.
+#[derive(Debug)]
 pub struct BlockInfo<'a> {
     pub start: V,
+    pub end: V,
     pub binds: u32,
     pub params: u32,
     pub tail: &'a Entry,
@@ -61,9 +65,12 @@ impl<'a> BlockInfo<'a> {
 
 impl SSA {
     pub fn new() -> Self {
+        let mut entry = BasicBlock::new();
+        entry.predecessors += 1;
+
         SSA {
             current: Block::entry(),
-            blocks: [BasicBlock::new()].into(),
+            blocks: [entry].into(),
             ventries: Map::new(),
             vtypes: Map::new(),
         }
@@ -84,6 +91,16 @@ impl SSA {
         })
     }
 
+    pub fn as_block_start(&self, v: V) -> Option<(Block, BlockInfo)> {
+        self.blocks
+            .find(|bdata| bdata.start == v)
+            .map(|block| (block, self.block_info(block)))
+    }
+
+    pub fn blocks(&self) -> KeysIter<Block> {
+        self.blocks.keys()
+    }
+
     pub fn block_info(&self, block: Block) -> BlockInfo<'_> {
         let start = self.blocks[block].start;
 
@@ -99,7 +116,7 @@ impl SSA {
                     params += 1;
                 }
                 entry if entry.is_terminator() => {
-                    break BlockInfo { binds, params, tail: entry, start }
+                    break BlockInfo { binds, params, tail: entry, start, end: v }
                 }
                 _ => binds += 1,
             }
@@ -159,13 +176,6 @@ impl SSA {
             }
         }
 
-        // block(x, y):
-        //  bparam x
-        //  bparam y
-        //  jump other()
-
-        dbg!(block, &start, &params);
-
         KeysIter::range(start, params)
     }
 
@@ -174,17 +184,17 @@ impl SSA {
         vs.map(|v| &self.vtypes[v])
     }
 
-    pub fn func_param_types(&self) -> Vec<MonoType> {
-        self.param_types(Block::entry()).cloned().collect()
+    pub fn func_param_types(&self) -> impl Iterator<Item = &MonoType> {
+        self.param_types(Block::entry())
     }
 
     pub fn iterv(&self) -> impl Iterator<Item = V> + 'static {
         self.ventries.keys()
     }
 
-    // pub fn predecessors(&self, block: Block) -> u16 {
-    //     self.blocks[block].predecessors
-    // }
+    pub fn predecessors(&self, block: Block) -> u16 {
+        self.blocks[block].predecessors
+    }
 
     pub fn new_block(&mut self) -> Block {
         debug_assert_ne!(self.blocks.len(), 0);
@@ -194,6 +204,22 @@ impl SSA {
     /// Switch block for added instructions
     pub fn switch_to_block(&mut self, block: Block) {
         self.current = block;
+    }
+
+    fn assert_not_double_tail(&self) {
+        let block = self.current;
+        let start = self.blocks[block].start;
+
+        for v in KeysIter::range(start, usize::MAX) {
+            if !self.ventries.has(v) {
+                break;
+            }
+
+            let entry = &self.ventries[v];
+            if entry.is_terminator() {
+                panic!("double tail: {v} = {entry}");
+            }
+        }
     }
 
     fn assign(&mut self, entry: Entry, ty: MonoType) -> Value {
@@ -210,6 +236,26 @@ impl SSA {
             ':'.symbol(),
             format!("// {block}").dimmed()
         );
+
+        match &entry {
+            Entry::Select { on_true, on_false, .. } => {
+                self.blocks[on_true.id].predecessors += 1;
+                self.blocks[on_false.id].predecessors += 1;
+            }
+            Entry::JmpTable(_, blocks) => {
+                for block in blocks {
+                    self.blocks[*block].predecessors += 1;
+                }
+            }
+            Entry::JmpBlock(block) => self.blocks[block.id].predecessors += 1,
+            _ => {}
+        }
+
+        #[cfg(debug_assertions)]
+        if entry.is_terminator() {
+            self.assert_not_double_tail();
+        }
+
         let v = self.ventries.push(entry);
         assert_eq!(self.vtypes.push(ty), v);
 
@@ -424,8 +470,12 @@ impl SSA {
     }
 
     pub fn unreachable(&mut self, ty: MonoType) -> Value {
-        let entry = Entry::Trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
-        self.assign(entry, ty)
+        let and_then = self.new_block();
+        let entry = Entry::Trap(cranelift_codegen::ir::TrapCode::user(TRAP_UNREACHABLE).unwrap());
+        self.assign(entry, MonoType::unit());
+        let v = self.add_block_param(and_then, ty.clone());
+        self.switch_to_block(and_then);
+        v.value()
     }
 
     pub fn return_(&mut self, value: Value) -> Value {
@@ -521,13 +571,13 @@ impl Block {
     }
 }
 
-#[derive(Clone, Debug, new)]
+#[derive(Clone, Debug, PartialEq, new)]
 pub struct BlockJump {
     pub id: Block,
     pub params: Vec<Value>,
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq)]
 pub enum BinOp {
     Add,
     Sub,
@@ -536,7 +586,7 @@ pub enum BinOp {
     And,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Entry {
     // Function Calls
     CallStatic(MonoFunc, Vec<Value>),
@@ -628,22 +678,41 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t SSA> {
 
         while let Some((v, entry)) = values.next() {
             if let Some(block) = self.v.blocks.find(|bdata| bdata.start == v) {
-                write!(f, "{block}(")?;
+                write!(f, "\n{block}(")?;
 
+                let mut has_bparam = false;
                 for paramv in self.v.block_params(block) {
+                    has_bparam = true;
+
                     if paramv == v {
-                        self.param(f, block, v, entry)
+                        self.param(f, block, paramv, entry)
                     } else {
                         let entry = values.next().unwrap().1;
-                        self.param(f, block, v, entry)
+                        self.param(f, block, paramv, entry)
                     }?
                 }
-                writeln!(f, "):")?;
+                writeln!(f, "): predecessors={}", self.v.blocks[block].predecessors)?;
 
-                continue;
+                if has_bparam {
+                    continue;
+                }
             }
 
-            writeln!(f, "  {v} {} {}", '='.symbol(), self.fork(entry))?;
+            if entry.is_terminator() {
+                writeln!(
+                    f,
+                    "  {} // {v}",
+                    self.fork(entry).to_string().lines().format("\n  ")
+                )?;
+            } else {
+                writeln!(
+                    f,
+                    "  {v} {} {} : {}",
+                    '='.symbol(),
+                    self.fork(entry),
+                    self.fork(&self.v.vtypes[v])
+                )?;
+            }
         }
 
         Ok(())

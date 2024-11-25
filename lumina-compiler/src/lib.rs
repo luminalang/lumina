@@ -1,6 +1,3 @@
-#![feature(type_changing_struct_update)]
-#![feature(get_many_mut)]
-
 pub mod ast;
 pub mod backend;
 mod debuginfo;

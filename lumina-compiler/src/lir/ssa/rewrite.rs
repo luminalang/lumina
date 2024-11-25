@@ -33,7 +33,6 @@ impl SSA {
             .count();
 
         for bb in self.blocks.values_mut() {
-            dbg!(&bb, &removed, &start);
             if bb.start.0 > start.0 {
                 bb.start.0 -= removed as u32;
             }

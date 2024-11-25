@@ -3,8 +3,7 @@ use ast::Entity;
 use lumina_parser as parser;
 use lumina_parser::func::{Header as FuncHeader, Typing as ParserTyping};
 use lumina_typesystem::{
-    ConstGeneric, Constraint, Forall, Generic, GenericKind, IType, Inference, IntSize, Static,
-    TEnv, Ty, Var,
+    ConstGeneric, Forall, Generic, GenericKind, IType, Inference, IntSize, Static, TEnv, Ty, Var,
 };
 use lumina_util::{Spanned, Tr};
 use smallvec::SmallVec;
@@ -497,44 +496,7 @@ impl<'t, 'a, 's> TypeLower<'t, 'a, 's> {
 
         Err(GenericError::NotFound)
     }
-
-    pub fn add_constraint<T: FromVar>(
-        &mut self,
-        generic: Generic,
-        ty: Tr<&lumina_parser::Type<'s>>,
-    ) -> Result<(), NotATrait> {
-        match self.type_info.iforalls.last_mut() {
-            Some((..)) => {
-                let (trait_, params) =
-                    self.ty::<Inference>(ty).as_trait().map_err(|_| NotATrait)?;
-
-                let (forall, kind) = self.type_info.iforalls.last_mut().unwrap();
-                assert_eq!(generic.kind, *kind);
-
-                forall[generic.key].trait_constraints.push(Constraint {
-                    span: ty.span,
-                    trait_,
-                    params,
-                });
-            }
-            None => {
-                let (trait_, params) = self.ty::<Static>(ty).as_trait().map_err(|_| NotATrait)?;
-                let (forall, kind) = self.type_info.cforalls.last_mut().unwrap();
-                assert_eq!(generic.kind, *kind);
-
-                forall[generic.key].trait_constraints.push(Constraint {
-                    span: ty.span,
-                    trait_,
-                    params,
-                });
-            }
-        }
-
-        Ok(())
-    }
 }
-
-pub struct NotATrait;
 
 pub enum GenericError {
     NotFound,

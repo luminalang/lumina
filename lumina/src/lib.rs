@@ -1,5 +1,3 @@
-#![feature(array_try_map)]
-
 // Exports for integration tests
 
 mod build;

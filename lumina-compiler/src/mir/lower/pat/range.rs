@@ -100,7 +100,8 @@ impl<'a, 's, Tail: std::fmt::Display + Clone + PartialEq, M: Merge<'s, Tail>>
     fn cleanup_edges_if_at_end(ints: &mut Branching<Range, Tail>) {
         let mut i = 1;
         loop {
-            let Ok([(range, left), (rrange, right)]) = ints.branches.get_many_mut([i - 1, i])
+            let Some([(range, left), (rrange, right)]) =
+                get_many_mut(&mut ints.branches, [i - 1, i])
             else {
                 break;
             };
@@ -187,6 +188,34 @@ impl<'a, 's, Tail: std::fmt::Display + Clone + PartialEq, M: Merge<'s, Tail>>
 
         let (_, tree) = &mut ints.branches[i];
         reachable | self.next(tree)
+    }
+}
+
+// TODO: Remove once get_many_mut is stable
+fn get_many_mut<const N: usize, V>(slice: &mut [V], indices: [usize; N]) -> Option<[&mut V; N]> {
+    use std::mem;
+
+    for (i, &idx) in indices.iter().enumerate() {
+        if idx >= slice.len() {
+            return None;
+        }
+        for &idx2 in &indices[..i] {
+            if idx == idx2 {
+                panic!("key references twice in get_many_mut");
+            }
+        }
+    }
+
+    let slice: *mut V = slice.as_mut_ptr();
+    let mut arr: mem::MaybeUninit<[&mut V; N]> = mem::MaybeUninit::uninit();
+    let arr_ptr = arr.as_mut_ptr();
+
+    unsafe {
+        for i in 0..N {
+            let idx = *indices.get_unchecked(i);
+            *(*arr_ptr).get_unchecked_mut(i) = &mut *slice.add(idx);
+        }
+        Some(arr.assume_init())
     }
 }
 

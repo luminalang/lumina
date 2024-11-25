@@ -157,35 +157,29 @@ pub fn project_info<'s>(
             })
     }
 
-    let [main, sys_init, alloc, dealloc] = [
-        ["main"].as_slice(),
-        &["std", "prelude", "_lumina_sys_init"],
-        &["std", "prelude", "alloc"],
-        &["std", "prelude", "dealloc"],
-    ]
-    .try_map(|path| {
+    let function = |path| {
         resolve_or_error(from, lookups, path, |k| match k {
             ast::Entity::Func(ast::NFunc::Key(func)) => Some(func),
             _ => None,
         })
-    })?;
+    };
 
-    let [closure, listable, stringable] = [
-        ["std", "prelude", "Closure"].as_slice(),
-        &["std", "prelude", "Listable"],
-        &["std", "prelude", "Stringable"],
-    ]
-    .try_map(|path| {
+    let trait_ = |path| {
         resolve_or_error(from, lookups, path, |k| match k {
             ast::Entity::Type(key::TypeKind::Trait(trait_)) => Some(trait_),
             _ => None,
         })
-    })?;
+    };
 
-    let reflect_type = resolve_or_error(from, lookups, &["std", "prelude", "Type"], |k| match k {
-        ast::Entity::Type(key::TypeKind::Trait(key)) => Some(key),
-        _ => None,
-    })?;
+    let main = function(["main"].as_slice())?;
+    let sys_init = function(&["std", "prelude", "_lumina_sys_init"])?;
+    let alloc = function(&["std", "prelude", "alloc"])?;
+    let dealloc = function(&["std", "prelude", "dealloc"])?;
+
+    let closure = trait_(["std", "prelude", "Closure"].as_slice())?;
+    let listable = trait_(&["std", "prelude", "Listable"])?;
+    let stringable = trait_(&["std", "prelude", "Stringable"])?;
+    let reflect_type = trait_(&["std", "prelude", "Type"])?;
 
     let maybe = resolve_or_error(from, lookups, &["std", "prelude", "Maybe"], |k| match k {
         ast::Entity::Type(key::TypeKind::Sum(key)) => Some(key),

@@ -2,7 +2,7 @@
 
 ## Compiling from scratch
 
-You need the nightly version of the Rust compiler. 
+You need to have the Rust compiler installed. 
 
 Clone the repository
 

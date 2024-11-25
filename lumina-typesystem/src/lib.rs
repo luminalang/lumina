@@ -1,5 +1,3 @@
-#![feature(get_many_mut)]
-
 use derive_new::new;
 use itertools::Itertools;
 use key::{MMap, Map, M};

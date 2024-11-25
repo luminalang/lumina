@@ -1,5 +1,3 @@
-#![feature(array_try_map)]
-
 use clap::Parser;
 use std::process::ExitCode;
 use tracing::info;

@@ -138,18 +138,62 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
                 None => panic!("attempted to pass an out pointer as value"),
                 Some(dst) => {
                     match have {
-                        Layout::SpecialPointer(hkind, src) => {
-                            assert_eq!(&hkind, kind);
+                        // TODO: This needs to be this way for things to work.
+                        // But; `get_field_from_structptr` actually does things differently.
+                        // And upon porting that code to here, everything segfaults.
+                        // I'm not sure why. Because; it doesn't make sense to treat both payload
+                        // pointers and implicit struct pointers the exact same way no?
+                        //
+                        // Perhaps there's an inconsistency but it happens to work because the
+                        // first implementation only works for structs while the second
+                        // implementation only works for sums.
+                        Layout::SpecialPointer(_, src) => {
                             let (size, align) = self.structs.size_and_align_of_ptr_dst(kind);
                             self.memcpy_struct(dst, src, size as u64, align as u8);
+                            Layout::OutPointer(kind.clone(), dst)
+                            // self.write_special_pointer_to_out_pointer(outptr, src, ByteOffset(0), kind)
                         }
                         Layout::StructFlat(_, _) => todo!("TODO: write fields to outptr"),
                         Layout::ArrayFlat(_, _) => todo!(),
                         _ => unreachable!(),
                     }
-                    Layout::OutPointer(kind.clone(), dst)
                 }
             },
+        }
+    }
+
+    fn write_special_pointer_to_out_pointer(
+        &mut self,
+        outptr: Option<Value>,
+        src: Value,
+        offset: ByteOffset,
+        kind: &SpecialPointer,
+    ) -> VLayout {
+        match outptr {
+            None => panic!("attempted to pass an out pointer as value"),
+            Some(dst) => {
+                let (size, align) = self.structs.size_and_align_of_ptr_dst(kind);
+                match kind {
+                    // we have a sum payload represented as a pointer.
+                    // memcpy the data stored behind that payload pointer into dst.
+                    SpecialPointer::StackSumPayload { .. }
+                    | SpecialPointer::HeapSumPayload { .. } => {
+                        // copy the sum payload pointer
+                        let flags = MemFlags::trusted();
+                        let size_t = self.size_t;
+                        let innerp = self.ins().load(size_t, flags, src, offset.0 as i32);
+                        self.memcpy_struct(dst, innerp, size as u64, align as u8);
+                        Layout::OutPointer(kind.clone(), dst)
+                    }
+                    _ => {
+                        // We have a by-value struct represented as a pointer.
+                        // Memcpy it.
+                        let innerp = self.ptr_offset(src, offset);
+                        self.memcpy_struct(dst, innerp, size as u64, align as u8);
+                        Layout::OutPointer(kind.clone(), dst)
+                    }
+                }
+            }
         }
     }
 
@@ -206,17 +250,7 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
                 VLayout::SpecialPointer(kind.clone(), v)
             }
             Layout::OutPointer(kind, _) => {
-                match outptr {
-                    None => panic!("attempted to pass an out pointer as value"),
-                    Some(dst) => {
-                        // TODO: this is a loose copy from the branch in `experimentr`.
-                        // It could be very unsound.
-                        let (size, align) = self.structs.size_and_align_of_ptr_dst(kind);
-                        let innerp = self.ptr_offset(ptr, offset);
-                        self.memcpy_struct(dst, innerp, size as u64, align as u8);
-                        Layout::OutPointer(kind.clone(), dst)
-                    }
-                }
+                self.write_special_pointer_to_out_pointer(outptr, ptr, offset, kind)
             }
         }
     }

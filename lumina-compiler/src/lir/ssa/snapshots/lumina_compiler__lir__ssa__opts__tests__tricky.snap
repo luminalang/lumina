@@ -1,6 +1,7 @@
 ---
 source: lumina-compiler/src/lir/ssa/opts.rs
 expression: "format!(\"{before}\\n{after}\")"
+snapshot_kind: text
 ---
 BEFORE:
 

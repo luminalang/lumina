@@ -39,6 +39,21 @@ impl<K: MapKey, V> Map<K, V> {
         self.inner.as_mut_slice()
     }
 
+    pub fn range(&self, start: K, end: K) -> KeysIter<K> {
+        if end.into() >= self.len() {
+            panic!("end out of range");
+        }
+        KeysIter { range: start.into()..end.into() + 1, _key: PhantomData }
+    }
+
+    pub fn range_to(&self, start: K, count: usize) -> KeysIter<K> {
+        self.range(start, K::from(start.into() + count))
+    }
+
+    pub fn range_to_end(&self, start: K) -> KeysIter<K> {
+        KeysIter { range: start.into()..self.len(), _key: PhantomData }
+    }
+
     /// Truncate by key, invalidating any keys greater than `at`
     pub fn truncate(&mut self, at: K) {
         self.inner.truncate(at.into())

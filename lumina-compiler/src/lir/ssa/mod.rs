@@ -104,7 +104,7 @@ impl SSA {
     pub fn block_info(&self, block: Block) -> BlockInfo<'_> {
         let start = self.blocks[block].start;
 
-        let mut iter = KeysIter::range(start, usize::MAX);
+        let mut iter = self.ventries.range_to_end(start);
         let mut params = 0;
         let mut binds = 0;
 
@@ -124,15 +124,19 @@ impl SSA {
     }
 
     /// Checks whether this blocks parmaeters are only used within the block
-    pub fn parameters_are_local(&self, block: Block) -> bool {
-        let start = self.blocks[block].start;
-        self.block_params(block)
-            .all(|p| self.usage_count(start, p) == 0)
+    pub fn usages_outside_this_block(&self, block: Block) -> usize {
+        let binfo = self.block_info(block);
+
+        self.ventries
+            .range(binfo.start, V(binfo.end.0 - 1))
+            .map(|v| self.usage_count(V(binfo.end.0 + 1), v))
+            .sum()
+        // TODO: this added end might panic if this is the last block?
     }
 
     pub fn usage_count(&self, from: V, target: V) -> usize {
-        KeysIter::range(from, usize::MAX)
-            .take_while(|&v| self.ventries.has(v))
+        self.ventries
+            .range_to_end(from)
             .map(|v| {
                 let mut count = 0;
                 rewrite::for_entry(&self.ventries[v], &mut |v| {
@@ -165,11 +169,7 @@ impl SSA {
             "attempted to iterate block params of non-setup block"
         );
 
-        for v in KeysIter::range(start, usize::MAX) {
-            if !self.ventries.has(v) {
-                break;
-            }
-
+        for v in self.ventries.range_to_end(start) {
             match &self.ventries[v] {
                 Entry::BlockParam(b, _) if *b == block => params += 1,
                 _ => break,
@@ -210,11 +210,7 @@ impl SSA {
         let block = self.current;
         let start = self.blocks[block].start;
 
-        for v in KeysIter::range(start, usize::MAX) {
-            if !self.ventries.has(v) {
-                break;
-            }
-
+        for v in self.ventries.range_to_end(start) {
             let entry = &self.ventries[v];
             if entry.is_terminator() {
                 panic!("double tail: {v} = {entry}");

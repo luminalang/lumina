@@ -296,7 +296,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
             }
             &lir::Entry::Return(v) => {
                 let entry = self.value_to_vlayout(v);
-                self.return_(entry);
+                self.return_(false, entry);
                 Layout::ZST
             }
             lir::Entry::Select { value, on_true, on_false } => {
@@ -388,13 +388,17 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         Layout::Scalar(Scalar::FuncPointer(Box::new(layout)), fptr)
     }
 
-    fn return_(&mut self, vlayout: VLayout) {
+    fn return_(&mut self, ignore_outptr: bool, vlayout: VLayout) {
         let rlayout = self.ctx.flayouts[self.f.id].ret.clone();
         let mut buf = Vec::new();
-        let out_pointer = self.f.ret_pointer;
+        let out_pointer = match self.f.ret_pointer {
+            Some(ptr) if ignore_outptr => OutReturn::Ignored(ptr),
+            Some(ptr) => OutReturn::Pointer(ptr),
+            None => OutReturn::None,
+        };
         let returnable = self
             .ins()
-            .make_compatible_allow_outptr(out_pointer, &rlayout, vlayout);
+            .make_compatible_plus(out_pointer, &rlayout, vlayout);
         self.return_compatible(returnable, &mut buf);
         self.cins().return_(&buf);
     }
@@ -436,6 +440,13 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
 
         Layout::pointer((**ty).clone(), ptr)
     }
+}
+
+#[derive(Clone, Copy)]
+pub enum OutReturn {
+    Pointer(Value),
+    Ignored(Value),
+    None,
 }
 
 #[derive(new)]

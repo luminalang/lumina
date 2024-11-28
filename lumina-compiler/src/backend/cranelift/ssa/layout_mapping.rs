@@ -40,12 +40,12 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
     }
 
     pub fn make_compatible(&mut self, want: &Layout<Type>, have: Layout<Value>) -> Layout<Value> {
-        self.make_compatible_allow_outptr(None, want, have)
+        self.make_compatible_plus(OutReturn::None, want, have)
     }
 
-    pub fn make_compatible_allow_outptr(
+    pub fn make_compatible_plus(
         &mut self,
-        outptr: Option<Value>,
+        out: OutReturn,
         want: &Layout<Type>,
         have: Layout<Value>,
     ) -> Layout<Value> {
@@ -109,7 +109,7 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
             Layout::ArrayFlat(inner, fields) => {
                 expect!(Layout::ArrayFlat(ginner, gfields), "ArrayFlat" => {
                     assert_eq!((inner, fields.len()), (&ginner, gfields.len()));
-                    let fields = fields.iter().zip(gfields).map(|(e, g)| self.make_compatible_allow_outptr(outptr, e, g)).collect();
+                    let fields = fields.iter().zip(gfields).map(|(e, g)| self.make_compatible_plus(out, e, g)).collect();
                     Layout::ArrayFlat(ginner, fields)
                 })
             }
@@ -119,7 +119,7 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
                     let fields = fields
                         .values()
                         .zip(gfields)
-                        .map(|(e, (_, g))| self.make_compatible_allow_outptr(outptr, e, g))
+                        .map(|(e, (_, g))| self.make_compatible_plus(out, e, g))
                         .collect();
                     Layout::StructFlat(gmk, fields)
                 }
@@ -129,14 +129,15 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
                 ) => {
                     assert_eq!(gmk, *mk);
                     let fields =
-                        self.get_fields_from_structptr(outptr, ptr, ByteOffset(0), *mk, fields);
+                        self.get_fields_from_structptr(out, ptr, ByteOffset(0), *mk, fields);
                     VLayout::StructFlat(*mk, fields)
                 }
                 _ => panic!("want `Struct`, have `{have:?}`"),
             },
-            Layout::OutPointer(kind, _) => match outptr {
-                None => panic!("attempted to pass an out pointer as value"),
-                Some(dst) => {
+            Layout::OutPointer(kind, _) => match out {
+                OutReturn::None => panic!("attempted to pass an out pointer as value"),
+                OutReturn::Ignored(ptr) => Layout::OutPointer(kind.clone(), ptr),
+                OutReturn::Pointer(dst) => {
                     match have {
                         // TODO: This needs to be this way for things to work.
                         // But; `get_field_from_structptr` actually does things differently.
@@ -164,14 +165,15 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
 
     fn write_special_pointer_to_out_pointer(
         &mut self,
-        outptr: Option<Value>,
+        out: OutReturn,
         src: Value,
         offset: ByteOffset,
         kind: &SpecialPointer,
     ) -> VLayout {
-        match outptr {
-            None => panic!("attempted to pass an out pointer as value"),
-            Some(dst) => {
+        match out {
+            OutReturn::None => panic!("attempted to pass an out pointer as value"),
+            OutReturn::Ignored(ptr) => Layout::OutPointer(kind.clone(), ptr),
+            OutReturn::Pointer(dst) => {
                 let (size, align) = self.structs.size_and_align_of_ptr_dst(kind);
                 match kind {
                     // we have a sum payload represented as a pointer.
@@ -199,7 +201,7 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
 
     fn get_fields_from_structptr(
         &mut self,
-        outptr: Option<Value>,
+        out: OutReturn,
         ptr: Value,
         offset: ByteOffset,
         mk: MonoTypeKey,
@@ -210,7 +212,7 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
             .map(|(field, flayout)| {
                 let mut foffset = self.structs.offset_of(mk, field);
                 foffset.0 += offset.0;
-                self.get_field_from_structptr(outptr, flayout, ptr, foffset)
+                self.get_field_from_structptr(out, flayout, ptr, foffset)
             })
             .collect()
     }
@@ -219,7 +221,7 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
     // flatstructs.
     pub(super) fn get_field_from_structptr(
         &mut self,
-        outptr: Option<Value>,
+        out: OutReturn,
         flayout: &Layout<Type>,
         ptr: Value,
         offset: ByteOffset,
@@ -240,7 +242,7 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
             Layout::ZST => VLayout::ZST,
             Layout::ArrayFlat(_, _) => todo!(),
             Layout::StructFlat(mk, fields) => {
-                let fields = self.get_fields_from_structptr(outptr, ptr, offset, *mk, fields);
+                let fields = self.get_fields_from_structptr(out, ptr, offset, *mk, fields);
                 Layout::StructFlat(*mk, fields)
             }
             Layout::SpecialPointer(kind, clty) => {
@@ -250,7 +252,7 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
                 VLayout::SpecialPointer(kind.clone(), v)
             }
             Layout::OutPointer(kind, _) => {
-                self.write_special_pointer_to_out_pointer(outptr, ptr, offset, kind)
+                self.write_special_pointer_to_out_pointer(out, ptr, offset, kind)
             }
         }
     }

@@ -63,7 +63,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let rlayout = layout.ret.clone();
         let plen = layout.params.len();
         let mut call = self.ins().new_call(plen, &rlayout);
-        self.fparams_from_funcid(id, lparams, &mut call.params);
+        self.fparams_from_funcid(false, id, lparams, &mut call.params);
         self.ins().call_direct(id, call)
     }
 
@@ -110,10 +110,21 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         });
     }
 
-    pub fn fparams_from_funcid(&mut self, id: FuncId, src: &[lir::Value], buf: &mut Vec<Value>) {
+    fn fparams_from_funcid(
+        &mut self,
+        promote_stack: bool,
+        id: FuncId,
+        src: &[lir::Value],
+        buf: &mut Vec<Value>,
+    ) {
         src.iter().enumerate().for_each(|(i, p)| {
             let vlayout = self.value_to_vlayout(*p);
-            let exp = self.ctx.flayouts[id].params[key::Param(i as u32)].clone();
+            let exp = &self.ctx.flayouts[id].params[key::Param(i as u32)];
+            let exp = if promote_stack {
+                exp.promote_all_stack_to_heap()
+            } else {
+                exp.clone()
+            };
             trace!("param{i} as {vlayout:?} for {exp:?}");
             let unified = self.ins().make_compatible(&exp, vlayout);
             self.ins().layout_into_raw_values(&unified, buf);
@@ -145,36 +156,25 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         let rlayout = &self.ctx.flayouts[id].ret;
         let current_rlayout = &self.ctx.flayouts[self.f.id].ret;
 
-        if mfunc == self.f.fkey {
-            info!("performing a self-tail call to {mfunc} in {fname}");
-
-            self.copy_tail_rptr(&mut params);
-            self.fparams_from_funcid(id, cparams, &mut params);
-
-            let entry = self.f.blockmap[lir::Block::entry()].0;
-            self.cins().jump(entry, &params);
-        } else if rlayout == current_rlayout {
+        if rlayout == current_rlayout {
             info!("performing a ret-tail call to {fname} in {cname}");
 
-            let out_pointer = self.copy_tail_rptr(&mut params);
-            self.fparams_from_funcid(id, cparams, &mut params);
+            // TODO: long-term, it'd be *much* better to know whether this will happen or not when
+            // *creating* the initial values. Because right now we very often stack allocate
+            // something elsewhere in the function, do stuff with it, then come to here where we
+            // will have to memcpy it onto the heap.
+            //
+            // I'm not sure what the best way to accomplish that would be though. `LIR` not having
+            // to care about layout does have a lot of benefits, and I don't want to add a pass
+            // in-between.
+
+            let _out_pointer = self.copy_tail_rptr(&mut params);
+            let promote =
+                self.has_references_to_current_stack(&self.ctx.flayouts[id].params.as_slice());
+            self.fparams_from_funcid(promote, id, cparams, &mut params);
 
             let fref = self.ins().declare_func_in_func(id);
-
-            if self.has_references_to_current_stack(self.ctx.flayouts[id].params.as_slice()) {
-                // We can still re-use the same out pointer but we can't invalidate the current stack
-                let c = self.cins().call(fref, &params);
-                let inst_values = self.f.builder.inst_results(c).to_vec();
-                let rlayout = self.ctx.flayouts[id].ret.clone();
-                let layout = self.ins().layout_from_raw_values(
-                    out_pointer,
-                    &rlayout,
-                    &mut inst_values.as_slice(),
-                );
-                self.return_(layout);
-            } else {
-                self.cins().return_call(fref, &params);
-            }
+            self.cins().return_call(fref, &params);
         } else {
             let mut has_rptr = false;
             rlayout.out_pointers(&mut |_, _| has_rptr = true);
@@ -185,11 +185,11 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 info!("refusing tail call due to ret mismatch");
 
                 let layout = self.call_func_id(id, cparams);
-                self.return_(layout);
+                self.return_(false, layout);
             } else {
                 info!("performing a ret-tail call to {mfunc} in {fname} without rptr");
 
-                self.fparams_from_funcid(id, cparams, &mut params);
+                self.fparams_from_funcid(false, id, cparams, &mut params);
                 let fref = self.ins().declare_func_in_func(id);
                 self.cins().return_call(fref, &params);
             }

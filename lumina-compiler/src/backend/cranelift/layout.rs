@@ -115,6 +115,46 @@ pub struct FuncLayout {
     pub ret: Layout<Type>,
 }
 
+impl Layout<Type> {
+    // NOTE: ignores out pointers
+    pub fn promote_all_stack_to_heap(&self) -> Self {
+        match self {
+            Layout::OutPointer(..)
+            | Layout::Scalar(_, _)
+            | Layout::AutoBoxed(_, _)
+            | Layout::ZST => self.clone(),
+            Layout::ArrayFlat(inner, elems) => Layout::ArrayFlat(
+                inner.clone(),
+                elems
+                    .iter()
+                    .map(Layout::promote_all_stack_to_heap)
+                    .collect(),
+            ),
+            Layout::StructFlat(key, fields) => Layout::StructFlat(
+                *key,
+                fields
+                    .values()
+                    .map(Layout::promote_all_stack_to_heap)
+                    .collect(),
+            ),
+            Layout::SpecialPointer(kind, ptr) => {
+                let kind = match kind {
+                    SpecialPointer::HeapSumPayload { .. } | SpecialPointer::HeapStruct(_) => {
+                        kind.clone()
+                    }
+
+                    &SpecialPointer::StackSumPayload { sum } => {
+                        SpecialPointer::HeapSumPayload { sum }
+                    }
+                    SpecialPointer::StackStruct(key) => SpecialPointer::HeapStruct(*key),
+                    SpecialPointer::StackArray(..) => unimplemented!("auto-boxed arrays"),
+                };
+                Layout::SpecialPointer(kind, *ptr)
+            }
+        }
+    }
+}
+
 impl<T: Copy> Layout<T> {
     pub fn direct(v: T) -> Self {
         Layout::Scalar(Scalar::Direct, v)
@@ -150,15 +190,17 @@ impl<T: Copy> Layout<T> {
         }
     }
 
+    // NOTE: ignores out pointers
     pub fn has_stack_pointers(&self) -> bool {
         match self {
             Layout::Scalar(_, _) | Layout::AutoBoxed(_, _) | Layout::ZST => false,
             Layout::ArrayFlat(_, elems) => elems.iter().any(Layout::has_stack_pointers),
             Layout::StructFlat(_, fields) => fields.values().any(Layout::has_stack_pointers),
-            Layout::SpecialPointer(kind, _) | Layout::OutPointer(kind, _) => match kind {
+            Layout::SpecialPointer(kind, _) => match kind {
                 SpecialPointer::HeapSumPayload { .. } | SpecialPointer::HeapStruct(_) => false,
                 _ => true,
             },
+            Layout::OutPointer(_, _) => false,
         }
     }
 

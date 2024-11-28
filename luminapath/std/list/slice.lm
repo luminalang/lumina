@@ -75,12 +75,12 @@ pub fn to_list slice as Slice a -> List a =
 when a can ToString
 impl ToString for Slice a
   fn show slice as self -> string =
-    "[" <++> show_ slice
+    "[" <> show_ slice
     where
       fn show_ slice as Slice a -> string = 
         match split slice
         | Nothing -> "]"
         | Just (x, xs) ->
           if xs.len == 0
-            then show x <++> "]"
-            else show x <++> ", " <++> show_ xs
+            then show x <> "]"
+            else show x <> ", " <> show_ xs

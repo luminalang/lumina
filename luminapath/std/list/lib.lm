@@ -162,13 +162,13 @@ pub fn split_at at list as uint, List a -> (List a, List a) =
 when a can ToString
 impl ToString for [a]
   fn show list as [a] -> string =
-    "[" <++> show_ list
+    "[" <> show_ list
   where
     fn show_ list as [a] -> string = 
       match list
       | [] -> "]"
-      | [last] -> show last <++> "]"
-      | [x : xs] -> show x <++> ", " <++> show_ xs
+      | [last] -> show last <> "]"
+      | [x : xs] -> show x <> ", " <> show_ xs
 
 
 // TODO: Considder splitting equality out from Compare

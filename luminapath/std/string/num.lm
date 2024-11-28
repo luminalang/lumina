@@ -1,3 +1,5 @@
+use std:string [<:>, <+>]
+
 impl ToString for i64
   fn show n = 
     let str = show ((std:math:i64:abs n) as u64) in

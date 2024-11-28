@@ -18,7 +18,7 @@ pub fn print str as s -> () =
 @[platform "linux"]
 when s can ToString
 pub fn println str as s -> () =
-  let {ptr, len} = (show str <++> "\n") . toByteVec in
+  let {ptr, len} = (str <> "\n") . toByteVec in
     do libc:write stdout ptr (len as int)
     then ()
 

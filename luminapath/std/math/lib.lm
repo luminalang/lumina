@@ -1,4 +1,5 @@
 pub use non_zero [NonZero]
+use std:string [<+>]
 use std:io [crash]
 
 when n can Num + Negate + Compare
@@ -59,13 +60,13 @@ pub trait Compare
 when a can ToString
 fn or_overflow_error char lhs rhs (n, overflown) as u8, a, a, (a, bool) -> a =
   if overflown
-    then crash ("integer overflow " <++> show lhs <++> " " <+> char <++> " " <++> show rhs)
+    then crash ("integer overflow " <> lhs <> " " <+> char <> " " <> show rhs)
     else n
 
 when a can ToString
 fn or_underflow_error char lhs rhs (n, underflown) as u8, a, a, (a, bool) -> a =
   if underflown
-    then crash ("integer underflow " <++> show lhs <++> " " <+> char <++> " " <++> show rhs)
+    then crash ("integer underflow " <> lhs <> " " <+> char <> " " <> rhs)
     else n
 
 impl Num for u8

@@ -26,7 +26,7 @@ impl ToString for Maybe a
   fn show m as self -> string =
     match m
     | Nothing -> "Nothing"
-    | Just a  -> "Just " <++> show a
+    | Just a  -> "Just " <> show a
 
 fn main =
   Just 5

@@ -83,6 +83,12 @@ pub fn to_c_str str as string -> *u8 =
 pub trait ToString
   fn show as self -> string
 
+when
+  a can ToString
+  b can ToString
+pub fn <> left right as a, b -> string =
+  show left <++> show right
+
 pub fn <:> left right as u8, string -> string =
   { string | inner = left : right.inner }
 

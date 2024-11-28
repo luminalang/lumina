@@ -240,7 +240,7 @@ impl<'a, 's> Lower<'a, 's> {
 
                 Expr::Record(key, params, unordered_fields)
             }
-            hir::Expr::Lit(lit) => self.lower_literal(lit),
+            hir::Expr::Lit(lit) => self.lower_literal(expr.span, lit),
             hir::Expr::Tuple(elems) => Expr::Tuple(self.lower_exprs(elems)),
             hir::Expr::List(elems, var) => self.lower_list(elems, *var),
             hir::Expr::Array(elems, arr) => self.lower_array(expr.span, elems, *arr),
@@ -280,7 +280,7 @@ impl<'a, 's> Lower<'a, 's> {
             .collect()
     }
 
-    fn lower_literal(&mut self, lit: &hir::Literal<'s>) -> Expr {
+    fn lower_literal(&mut self, span: Span, lit: &hir::Literal<'s>) -> Expr {
         match lit {
             hir::Literal::Bool(b) => Expr::Bool(*b),
             hir::Literal::Int(neg, n, nvar) => {
@@ -292,6 +292,16 @@ impl<'a, 's> Lower<'a, 's> {
                 Expr::Int(intsize, neg.then(|| -n).unwrap_or(n))
             }
             hir::Literal::Float(f) => Expr::Float(*f),
+            hir::Literal::Char(str) => {
+                let str = self.escape(str);
+                if str.len() != 1 {
+                    self.errors.push(FinError::LargeCharLiteral(span));
+                    Expr::Poison
+                } else {
+                    let byte = str[0];
+                    Expr::Int(IntSize::new(false, 8), byte as i128)
+                }
+            }
             hir::Literal::String(str) => {
                 let ro_key = self.str_to_ro(*str);
 

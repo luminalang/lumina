@@ -73,6 +73,7 @@ pub enum Literal<'s> {
     Int(bool, u128, Var),
     Float(f64),
     String(&'s str),
+    Char(&'s str),
 }
 
 impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
@@ -96,6 +97,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             }
             parser::Expr::Lit(parser::Literal::Float(n)) => Expr::Lit(Literal::Float(*n)),
             parser::Expr::Lit(parser::Literal::String(str)) => Expr::Lit(Literal::String(*str)),
+            parser::Expr::Lit(parser::Literal::Char(c)) => Expr::Lit(Literal::Char(*c)),
             parser::Expr::Call(apath, params) => self.callable(apath.as_ref(), params, Expr::Call),
             parser::Expr::Lambda(patterns, params, body) => {
                 let lambda = self.lambda(patterns, None, (**body).as_ref());

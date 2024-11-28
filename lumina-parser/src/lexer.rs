@@ -1,15 +1,15 @@
 use logos::{Lexer as LogosLexer, Logos, SpannedIter};
 use lumina_util::Span;
 
-fn find_str_end<'src>(lex: &mut LogosLexer<'src, Token>) {
+fn find_str_end<'src>(end: u8, lex: &mut LogosLexer<'src, Token>) {
     let mut i = 0;
     let bytes = lex.remainder().as_bytes();
 
     while let Some(&c) = bytes.get(i) {
         match c {
-            b'\\' if bytes.get(i + 1) == Some(&b'"') => i += 2,
+            b'\\' if bytes.get(i + 1) == Some(&end) => i += 2,
             b'\\' if bytes.get(i + 1) == Some(&b'\\') => i += 2,
-            b'"' => break,
+            c if c == end => break,
             _ => i += 1,
         }
     }
@@ -24,8 +24,10 @@ pub enum Token {
     #[regex("\\n+")]
     NewLines,
 
-    #[token("\"", find_str_end)]
+    #[token("\"", |lex| find_str_end(b'"', lex))]
     StringLiteral,
+    #[token("'", |lex| find_str_end(b'\'', lex))]
+    CharLiteral,
 
     #[regex("\\-?\\d+")]
     Int,
@@ -177,6 +179,7 @@ impl Token {
             T::Val => "static",
             T::LineDocComment | T::LineComment => "documentation comment",
             T::StringLiteral => "string literal",
+            T::CharLiteral => "char literal",
             T::If => "start of if expression",
             T::Bar => "vertical bar",
             T::Can => "`can` keyword",

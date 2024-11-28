@@ -96,6 +96,7 @@ pub enum FinError {
     UnreachablePattern(Span),
     MissingPatterns(Span, Vec<pat::MissingPattern>),
     InvalidCast(Tr<Type>, Type),
+    LargeCharLiteral(Span),
     BadArrayCount { got: Tr<usize>, exp: Tr<u64> },
     BadGenericArrayCount { got: Tr<usize> },
     DuplicateField(Tr<String>, Span),
@@ -137,13 +138,13 @@ impl<'a, 's> Lower<'a, 's> {
         }
     }
 
-    fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
+    fn escape(&self, str: &'s str) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(str.len());
         let mut bytes = str.bytes();
 
         loop {
             let Some(mut b) = bytes.next() else {
-                break;
+                break buffer;
             };
 
             match b {
@@ -163,6 +164,10 @@ impl<'a, 's> Lower<'a, 's> {
 
             buffer.push(b);
         }
+    }
+
+    fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
+        let str = self.escape(str);
 
         // We set the type to `u8` because when this data is accessed
         // with ReadOnly, it's treated by-reference so it'll become `*u8`
@@ -170,7 +175,7 @@ impl<'a, 's> Lower<'a, 's> {
 
         self.read_only_table.push(
             self.current.fkey.0,
-            (mir::ReadOnlyBytes(buffer.into_boxed_slice()), ty),
+            (mir::ReadOnlyBytes(str.into_boxed_slice()), ty),
         )
     }
 
@@ -369,6 +374,14 @@ pub fn emit_fin_error<'s>(
     error: FinError,
 ) {
     match error {
+        FinError::LargeCharLiteral(span) => sources
+            .error("invalid char literal")
+            .m(module)
+            .eline(
+                span.move_indice(1),
+                "char literals may only be used to represent a single character",
+            )
+            .emit(),
         FinError::DuplicateField(field, previous) => sources
             .error("field assigned twice")
             .m(module)

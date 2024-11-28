@@ -165,6 +165,7 @@ impl<'a, 's> Verify<'a, 's> {
                     let record = self.items.pinfo.string;
                     IType::string(record, vec![])
                 }
+                hir::Literal::Char(_) => IType::int(false, 8),
             },
             hir::Expr::Poison => IType::poison(),
         }

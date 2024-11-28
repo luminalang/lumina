@@ -61,6 +61,7 @@ pub enum Literal<'a> {
     Int(bool, u128),
     Float(f64),
     String(&'a str),
+    Char(&'a str),
 }
 
 pub(super) struct ExprParser<'p, 'a> {
@@ -235,6 +236,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             T::Path => self.expr_path(span, true),
             T::Default => self.expr_path(span, true),
             T::StringLiteral => self.expr_string(span),
+            T::CharLiteral => self.expr_char(span),
             T::OpenParen => self.expr_parenthesis(span),
             T::OpenCurly => self.expr_record(span),
             T::OpenList => self.expr_list(span),
@@ -261,6 +263,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             T::Path => self.expr_path(span, false),
             T::Default => self.expr_path(span, false),
             T::StringLiteral => self.expr_string(span),
+            T::CharLiteral => self.expr_char(span),
             T::OpenParen => self.expr_parenthesis(span),
             T::OpenCurly => self.expr_record(span),
             T::OpenList => self.expr_list(span),
@@ -468,6 +471,11 @@ impl<'p, 'a> ExprParser<'p, 'a> {
     fn expr_string(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
         let inner_span = span.move_indice(1).extend_length(-1);
         Some(Expr::Lit(Literal::String(self.parser.take(inner_span))).tr(span))
+    }
+
+    fn expr_char(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
+        let inner_span = span.move_indice(1).extend_length(-1);
+        Some(Expr::Lit(Literal::Char(self.parser.take(inner_span))).tr(span))
     }
 
     fn expr_parenthesis(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
@@ -837,6 +845,7 @@ impl<'a> fmt::Display for Literal<'a> {
             Literal::Int(false, n) => n.fmt(f),
             Literal::Float(n) => n.fmt(f),
             Literal::String(str) => write!(f, "\"{str}\""),
+            Literal::Char(c) => write!(f, "\'{c}\'"),
         }
     }
 }

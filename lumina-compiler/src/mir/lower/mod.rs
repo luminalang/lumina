@@ -154,6 +154,7 @@ impl<'a, 's> Lower<'a, 's> {
                     Some(b't') => b = b'\t',
                     Some(b'\\') => b = b'\\',
                     Some(b'"') => b = b'"',
+                    Some(b'\'') => b = b'\'',
                     Some(b'0') => b = b'\0',
                     b => {
                         panic!("ET: invalid escape sequence: {b:?}");

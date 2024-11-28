@@ -55,4 +55,4 @@ impl ToString for IoError
     match err
     | PermissionDenied -> "permission denied"
     | NoSuchFileOrDirectory -> "no such file or directory"
-    | Unknown code -> "failure with code " <++> show code
+    | Unknown code -> "failure with code " <> code

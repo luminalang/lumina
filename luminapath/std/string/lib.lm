@@ -62,6 +62,11 @@ pub fn len {inner} as string -> uint = inner . len
 pub fn take n str as uint, string -> string =
   { string | inner = std:list:take n str.inner }
 
+pub fn joinWith sep strings as string, [string] -> string =
+  match strings . map #show
+  | [] -> ""
+  | [x : xs] -> xs . fold #(\s elem -> s <> sep <> elem) x
+
 // NOTE: returned pointer is weak
 fn toByteVec str as string -> Vec u8 =
   match str.inner

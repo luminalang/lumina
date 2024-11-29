@@ -589,12 +589,14 @@ impl<'a> Structs<'a> {
         let mut offset = 0;
         for i in KeysIter::up_to(field) {
             let field = &struct_.fields[i];
-            self.apply_field_padding(&mut offset, field);
+            let (fsize, pad) = self.field_size_and_pad(offset, field);
+            offset += fsize + pad;
         }
 
-        self.apply_field_padding(&mut offset, &struct_.fields[field]);
+        let (_, align) = self.size_and_align_of_field(&struct_.fields[field]);
+        let end_padding = (align - offset % align) % align;
 
-        ByteOffset(offset)
+        ByteOffset(end_padding + offset)
     }
 
     fn calculate_align_of(&mut self, ty: &MonoType) -> u32 {
@@ -637,13 +639,14 @@ impl<'a> Structs<'a> {
         align
     }
 
-    pub fn apply_field_padding(&self, offset: &mut u32, field: &StructField) {
+    pub fn field_size_and_pad(&self, offset: u32, field: &StructField) -> (u32, u32) {
         let (size, align) = self.size_and_align_of_field(field);
         if align == 0 {
             assert_eq!(size, 0);
+            (0, 0)
         } else {
-            let padding = (align - *offset % align) % align;
-            *offset += padding + size;
+            let padding = (align - offset % align) % align;
+            (padding, size)
         }
     }
 
@@ -656,7 +659,8 @@ impl<'a> Structs<'a> {
         let mut offset = 0;
 
         for field in self.structs[mk].fields.values() {
-            self.apply_field_padding(&mut offset, field);
+            let (fsize, pad) = self.field_size_and_pad(offset, field);
+            offset += fsize + pad;
         }
 
         let end_padding = (align - offset % align) % align;

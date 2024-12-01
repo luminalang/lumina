@@ -129,6 +129,12 @@ impl Compare for string
   fn > lhs rhs as self, self -> bool =
     lhs.inner > rhs.inner
 
+
+// TODO: figure out where we want this. Perhaps we want `std:u8:fromString?` or perhaps a Parse trait like Rust?
+// TODO: if we add a `fromInt` to either `Num` or as a seperate trait; we can generalise this. 
+pub fn parse_int str as string -> int =
+  str.inner . fold #(\acc n -> acc * 10 + ((n - '0') as int)) 0
+
 // pub fn lines str as string -> [string] =
 //   split_on "\n" str
 // 

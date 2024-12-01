@@ -170,6 +170,30 @@ impl ToString for [a]
       | [last] -> show last <> "]"
       | [x : xs] -> show x <> ", " <> show_ xs
 
+pub fn zip lhs rhs as [a], [b] -> [(a, b)] =
+  match (lhs, rhs)
+  | ([l : lxs], [r : rxs]) -> (l, r) : zip lxs rxs
+  | _ -> []
+
+when a can ToString
+pub fn bubble f list as fn(a, a -> bool), [a] -> ([a], bool) =
+  match list
+  | [x, y : ys] ->
+    if f x y then 
+      let (rest, _) = bubble #f (x : ys)
+       in (y : rest, true)
+    else
+      let (rest, swapped) = bubble #f (y : ys)
+       in (x : rest, swapped)
+
+  | xs -> (xs, false)
+
+when a can ToString
+pub fn sortBy f list as fn(a, a -> bool), [a] -> [a] =
+  let (new, swapped) = bubble #f list in
+    if swapped
+      then sortBy #f (new)
+      else new
 
 // TODO: Considder splitting equality out from Compare
 // (Eq + Ordering)

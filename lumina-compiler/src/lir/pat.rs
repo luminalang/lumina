@@ -409,6 +409,8 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             self.reset(falsely, reset.clone());
         }
 
+        // Undo the edge-case of removing an extra bind for this case
+        self.map.push(on);
         self.next(wc_next);
     }
 
@@ -420,6 +422,8 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
         // TODO: we should perform a single `len` check and then re-use it
         //
         // let len = Option<Value>;
+
+        assert_ne!(checks.len(), 0);
 
         checks.iter().enumerate().fold(on, |mut on, (i, check)| {
             let is_last = i == checks.len() - 1;

@@ -37,8 +37,8 @@ pub fn run(target: Target, dwarf: BinDebugInfo, lir: lir::Output) -> Vec<u8> {
     shared_builder.set("opt_level", "speed").unwrap();
     shared_builder.enable("preserve_frame_pointers").unwrap();
     shared_builder.enable("unwind_info").unwrap();
-    shared_builder.enable("alias_analysis").unwrap();
     let shared_flags = settings::Flags::new(shared_builder);
+    shared_flags.enable_alias_analysis();
     assert!(shared_flags.unwind_info());
 
     let isa = target.isa().finish(shared_flags).unwrap();

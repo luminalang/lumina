@@ -594,9 +594,12 @@ impl<'a> Structs<'a> {
         }
 
         let (_, align) = self.size_and_align_of_field(&struct_.fields[field]);
-        let end_padding = (align - offset % align) % align;
+        if align != 0 {
+            let end_padding = (align - offset % align) % align;
+            offset += end_padding;
+        }
 
-        ByteOffset(end_padding + offset)
+        ByteOffset(offset)
     }
 
     fn calculate_align_of(&mut self, ty: &MonoType) -> u32 {

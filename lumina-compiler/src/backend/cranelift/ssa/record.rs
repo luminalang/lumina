@@ -92,6 +92,8 @@ impl<'f, 's, 'a> InstHelper<'f, 's, 'a> {
             }
 
             Layout::AutoBoxed(ty, ptr) => self.field_of_structptr(ty.as_key(), ptr, field),
+            // We can't assert here so I really hope we're never accidentally constructing ZST incorrectly
+            Layout::ZST => VLayout::ZST,
             other => panic!("field of non-struct: {other:?}"),
         }
     }

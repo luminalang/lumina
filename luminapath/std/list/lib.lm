@@ -100,6 +100,10 @@ pub fn any f list as fn(a -> bool), List a -> bool =
       else any #f right
   | Nil -> false
 
+// Counts the elements which yield true from `f elem`
+pub fn count f list as fn(a -> bool), List a -> uint = 
+  fold #(\acc elem -> if f elem then acc + 1 else acc) 0 list
+
 pub fn from_range range f as (uint, uint), fn(uint -> a) -> List a =
   Slice (vec:to_slice (vec:from_range range #f))
 

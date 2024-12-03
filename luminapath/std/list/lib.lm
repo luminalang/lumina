@@ -60,6 +60,22 @@ pub fn map f list as fn(a -> b), [a] -> [b] =
   | [x : xs] -> f x : map #f xs
   | []       -> []
 
+pub fn keep_map f list as fn(a -> Maybe b), [a] -> [b] =
+  match list
+  | [x : xs] -> 
+    match f x
+    | Just v  -> v : keep_map #f xs
+    | Nothing -> keep_map #f xs
+  | [] -> []
+
+pub fn keep f list as fn(a -> bool), [a] -> [a] =
+  match list
+  | [x : xs] ->
+    if f x
+      then x : keep #f xs
+      else keep #f xs
+  | [] -> []
+
 when n can Num
 pub fn sum list as [n] -> n =
   fold #+ Num(self as n):zero list

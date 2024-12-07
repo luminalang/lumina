@@ -11,7 +11,7 @@ lumina-compiler = { path = "../lumina-compiler" }
 itertools = "*"
 clap = { version = "4.5.*", features = ["derive"] }
 directories = "4.0.*"
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-tracing-tree = "0.3.0"
-target-lexicon = "0.12.14"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-tree = "0.4.0"
+target-lexicon = "0.13.0"

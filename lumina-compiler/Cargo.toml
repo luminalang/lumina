@@ -11,10 +11,10 @@ lumina-util = { path = "../lumina-util" }
 lumina-parser = { path = "../lumina-parser" }
 lumina-typesystem = { path = "../lumina-typesystem" }
 lumina-collections = { path = "../lumina-collections" }
-target-lexicon = "*"
+target-lexicon = "0.12.*"
 lumina-key = { path = "../lumina-key" }
-derive-new = "0.6"
-either = "1.9.0"
+derive-new = "0.7"
+either = "1.13.0"
 ibig = { version = "0.3.6", features = [], default-features = false }
 owo-colors = { version = "4.0.*", features = ["supports-colors"] }
 itertools = "0.10.*"
@@ -22,14 +22,14 @@ smallvec = "1.10.*"
 take_mut = "*"
 derive_more = { version = "1.0.*", features = ["from", "display", "index", "index_mut", "deref", "deref_mut", "add", "add_assign"] }
 insta = "*"
-tracing = "0.1.40"
-cranelift = "0.113.*"
-cranelift-entity = "0.113.*"
-cranelift-codegen = "0.113.*"
-cranelift-module = "0.113.*"
-cranelift-object = "0.113.*"
-cranelift-native = "0.113.*"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-tracing-tree = "0.3.0"
+tracing = "0.1.41"
+cranelift = "0.114.*"
+cranelift-entity = "0.114.*"
+cranelift-codegen = "0.114.*"
+cranelift-module = "0.114.*"
+cranelift-object = "0.114.*"
+cranelift-native = "0.114.*"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-tree = "0.4.0"
 gimli = "*"
 object = "*"

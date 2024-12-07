@@ -13,4 +13,4 @@ itertools = "0.10.*"
 logos = { git = "https://github.com/simvux/logos" }
 insta = "1.39.*"
 smallvec = "*"
-tracing = "0.1.40"
+tracing = "0.1.41"

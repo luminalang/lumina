@@ -7,7 +7,6 @@ use crate::lir::{
     },
     Block, BlockJump, Entry, Function, MonoFunc, MonoType, Value, LIR, SSA, V,
 };
-use lumina_collections::Map;
 use smallvec::SmallVec;
 use std::mem::take;
 use tracing::{info, info_span, trace};

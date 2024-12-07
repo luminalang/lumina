@@ -92,6 +92,14 @@ pub fn min list as [n] -> Maybe n =
   | [] -> Nothing
   | [x : xs] -> Just (fold #Compare:min x xs)
 
+pub fn get i list as uint, [a] -> Maybe a = 
+  match list
+  | [x : xs] -> 
+    if i == 0
+      then Just x
+      else get (i - 1) xs
+  | [] -> Nothing
+
 pub fn len list as List a -> uint =
   match list
   | Slice slice -> slice . len
@@ -115,6 +123,9 @@ pub fn any f list as fn(a -> bool), List a -> bool =
       then true
       else any #f right
   | Nil -> false
+
+pub fn all f list as fn(a -> bool), List a -> bool =
+  not (any #(\v -> not (f v)) list)
 
 // Counts the elements which yield true from `f elem`
 pub fn count f list as fn(a -> bool), List a -> uint = 
@@ -148,6 +159,15 @@ pub fn take at list as uint, List a -> List a =
 pub fn skip at list as uint, List a -> List a = 
   let (lhs, rhs) = split_at at list
    in rhs
+
+pub fn toVec list as List a -> Vec a =
+  match list
+  | List:Slice { Slice a | source, ptr, len } -> { Vec a | ptr, len }
+  | _ -> 
+    let vec = vec:capacity (len list) in
+      do list
+         . fold #(\i v -> do vec:unsafe_set i v vec then i + 1) 0
+      then vec
 
 pub fn split_at at list as uint, List a -> (List a, List a) =
   if at == 0 then
@@ -195,24 +215,23 @@ pub fn zip lhs rhs as [a], [b] -> [(a, b)] =
   | ([l : lxs], [r : rxs]) -> (l, r) : zip lxs rxs
   | _ -> []
 
-when a can ToString
-pub fn bubble f list as fn(a, a -> bool), [a] -> ([a], bool) =
+pub fn something f list as fn(a, a -> Ordering), [a] -> ([a], bool) =
   match list
-  | [x, y : ys] ->
-    if f x y then 
-      let (rest, _) = bubble #f (x : ys)
-       in (y : rest, true)
-    else
-      let (rest, swapped) = bubble #f (y : ys)
-       in (x : rest, swapped)
+  | [] -> ([], false)
+  | [x] -> ([x], false)
+  | [x, y : xs] -> 
+    match f x y
+    | Ordering:Greater -> 
+      let (after, _) = something #f (x : xs)
+       in (y : after, true)
+    | _ -> 
+      let (after, changed) =  something #f (y : xs)
+       in (x : after, changed)
 
-  | xs -> (xs, false)
-
-when a can ToString
-pub fn sortBy f list as fn(a, a -> bool), [a] -> [a] =
-  let (new, swapped) = bubble #f list in
-    if swapped
-      then sortBy #f (new)
+pub fn sortBy f list as fn(a, a -> Ordering), [a] -> [a] =
+  let (new, changed) = something #f list in
+    if changed
+      then sortBy #f new
       else new
 
 // TODO: Considder splitting equality out from Compare
@@ -221,24 +240,20 @@ pub fn sortBy f list as fn(a, a -> bool), [a] -> [a] =
 // Since adding it for string is kinda stupid
 //
 // Trait aliases could be nice here
-//
-// TODO: We need a lazy `&&` operator
 when a can Compare
 impl Compare for [a]
-  fn == lhs rhs as self, self -> bool =
-    if len lhs /= len rhs then
-      false
-    else
+  fn compare lhs rhs as [a], [a] -> Ordering =
+    match compare (len lhs) (len rhs)
+    | Ordering:Less    -> Ordering:Less
+    | Ordering:Greater -> Ordering:Greater
+    | Ordering:Equal   ->
+    // TODO: this repeats the length check for each element which is of course wrong
       match (lhs, rhs)
       | ([lx : lxs], [rx : rxs]) -> 
-        if lx /= rx
-          then false
-          else lxs == rxs
-      | ([], []) -> true
-      | _ -> crash "linear scan for lists of non-equal length"
-      
-  fn < lhs rhs as self, self -> bool = 
-    len lhs < len rhs
-
-  fn > lhs rhs as self, self -> bool =
-    len lhs < len rhs
+        match compare lx rx
+        | Ordering:Less -> Ordering:Less
+        | Ordering:Greater -> Ordering:Greater
+        | Ordering:Equal -> 
+          compare lxs rxs
+      | ([], []) -> Ordering:Equal
+      | _        -> crash "linear scan for lists of non-equal length shouldn't happen"

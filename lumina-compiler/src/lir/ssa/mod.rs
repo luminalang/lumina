@@ -39,6 +39,7 @@ impl BasicBlock {
     }
 }
 
+#[derive(Clone)]
 pub struct SSA {
     current: Block,
     blocks: Map<Block, BasicBlock>,
@@ -123,7 +124,7 @@ impl SSA {
         }
     }
 
-    /// Checks whether this blocks parmaeters are only used within the block
+    /// Checks whether this blocks values are only used within the block
     pub fn usages_outside_this_block(&self, block: Block) -> usize {
         let binfo = self.block_info(block);
 

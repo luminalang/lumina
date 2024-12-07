@@ -1,0 +1,34 @@
+---
+source: lumina-compiler/src/lir/ssa/opts.rs
+expression: "format!(\"{before}\\n{after}\")"
+snapshot_kind: text
+---
+BEFORE:
+
+block0(): predecessors=1
+  v0 = abs 0 : u0
+  v1 = call mfunc1(v0) : u1
+  return v1 // v2
+
+
+block0(v0: u2): predecessors=1
+  jump block1(v0) // v1
+
+block1(v2: u2): predecessors=1
+  jump mfunc2(v2) // v3
+
+AFTER:
+
+block0(): predecessors=1
+  v0 = abs 0 : u0
+  jump block2(v0) // v1
+
+block2(v2: u2): predecessors=1
+  jump block3(v2) // v3
+
+block3(v4: u2): predecessors=1
+  v5 = call mfunc2(v4) : mr0:???
+  jump block1(v5) // v6
+
+block1(v7: u1): predecessors=1
+  return v7 // v8

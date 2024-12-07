@@ -2,9 +2,12 @@
 //! our backends.
 
 use crate::lir::{
-    ssa::rewrite::{insert_buf, offset_predecessors, Rewrite},
-    Block, BlockJump, Entry, Function, MonoFunc, Value, LIR, SSA, V,
+    ssa::rewrite::{
+        for_entry_mut, for_value_mut, for_values_mut, insert_buf, offset_predecessors, Rewrite,
+    },
+    Block, BlockJump, Entry, Function, MonoFunc, MonoType, Value, LIR, SSA, V,
 };
+use lumina_collections::Map;
 use smallvec::SmallVec;
 use std::mem::take;
 use tracing::{info, info_span, trace};
@@ -30,13 +33,12 @@ impl<'a> Optimizer<'a> {
             return;
         }
 
-        self.block_opts();
-        self.func_opts();
+        self.block_opts(1000);
+        self.func_opts(1000);
+        self.block_opts(5);
     }
 
-    fn block_opts(&mut self) {
-        const FUEL: usize = 1000;
-
+    fn block_opts(&mut self, fuel: usize) {
         for fkey in self.lir.functions.keys() {
             let _span = info_span!(
                 "running block optimizations",
@@ -44,7 +46,7 @@ impl<'a> Optimizer<'a> {
             );
             let _handle = _span.enter();
 
-            let any_change = self.with_fuel(FUEL, |lir| {
+            let any_change = self.with_fuel(fuel, |lir| {
                 let func = &mut lir.functions[fkey];
                 let changed = func
                     .ssa
@@ -73,16 +75,39 @@ impl<'a> Optimizer<'a> {
         }
     }
 
-    fn func_opts(&mut self) {
-        const FUEL: usize = 1000;
-
+    fn func_opts(&mut self, fuel: usize) {
         for fkey in self.lir.functions.keys() {
-            self.with_fuel(FUEL, |lir| {
+            let _span = info_span!(
+                "running func optimizations",
+                entity = self.lir.functions[fkey].symbol.clone(),
+            );
+            let _handle = _span.enter();
+
+            let any_change = self.with_fuel(fuel, |lir| {
                 let ssa = &lir.functions[fkey].ssa;
-                ssa.blocks
+                let changed = ssa
+                    .blocks
                     .keys()
-                    .any(|block| func_opt_iter(lir, fkey, block))
+                    .any(|block| func_opt_iter(lir, fkey, block));
+
+                if changed {
+                    trace!(
+                        "mid-optimization func {fkey} ({})\n{}",
+                        &lir.functions[fkey].symbol,
+                        lir.mono.fmt(&lir.functions[fkey])
+                    );
+                }
+
+                changed
             });
+
+            if any_change {
+                info!(
+                    "post-optimizations func {fkey} ({}):\n{}",
+                    &self.lir.functions[fkey].symbol,
+                    self.lir.mono.fmt(&self.lir.functions[fkey])
+                );
+            }
         }
     }
 
@@ -112,8 +137,6 @@ fn block_opt_iter(func: &mut Function, _: MonoFunc, block: Block) -> Changed {
 
     for v in func.ssa.ventries.range_to_end(start) {
         match &func.ssa.ventries[v] {
-            // TODO: TODO: This check kinda sucks because things like jumptables which are really
-            // large and heavy will still be inlined in a lot of situations, bloating the size.
             Entry::JmpBlock(jump) if fully_inlinable(&func.ssa, jump.id) && jump.id != block => {
                 info!("inlining {} in {} regardless of size", jump.id, block);
                 let jump = jump.clone(); // TODO: we don't have to clone
@@ -219,9 +242,11 @@ fn block_opt_iter(func: &mut Function, _: MonoFunc, block: Block) -> Changed {
 }
 
 // When blocks contain binds, only single-use or scope-pure blocks are inlineable.
+//
+// TODO: avoid inlining things like jump tables, instead of just going by bind count
 fn fully_inlinable(ssa: &SSA, block: Block) -> bool {
-    ssa.blocks[block].predecessors == 1
-        || (ssa.usages_outside_this_block(block) == 0 && ssa.block_info(block).binds < 3)
+    ssa.usages_outside_this_block(block) == 0
+        && (ssa.blocks[block].predecessors == 1 || ssa.block_info(block).binds < 3)
 }
 
 // Fully inline a block, assume its valid to inline.
@@ -236,22 +261,8 @@ fn full_block_inline(ssa: &mut SSA, atv: V, jump: &BlockJump) {
     let mut r = Rewrite::new(V(atv.0 + 1), Block(0));
     r.new_block_params = Some((binfo.start, binfo.end, &jump.params));
 
-    let (mut inlinedv, mut inlinedt) = {
-        let range = (binfo.start.0 + binfo.params) as usize..=binfo.end.0 as usize;
-
-        let mut entries = ssa.ventries.as_slice()[range.clone()].to_vec();
-        let types = ssa.vtypes.as_slice()[range].to_vec();
-
-        // Offset the new inlined to start at the current V.
-        //
-        // since voff is signed, this should work regardless of whether `atv` is before or after
-        // `jump.id` is defined.
-        r.voff = (atv.0 as i32) - (binfo.start.0 as i32 + binfo.params as i32);
-
-        entries.iter_mut().for_each(|entry| r.entry(false, entry));
-
-        (entries, types)
-    };
+    let (mut inlinedv, mut inlinedt) =
+        get_inlined_entries(ssa, r.clone(), V(binfo.start.0 + binfo.params), binfo.end);
 
     offset_predecessors(ssa, binfo.end, 1);
 
@@ -263,8 +274,152 @@ fn full_block_inline(ssa: &mut SSA, atv: V, jump: &BlockJump) {
     ssa.apply(V(atv.0 + 1), &r);
 
     // Actually perform the inline
-    insert_buf(atv, &mut ssa.ventries, &mut inlinedv, true);
-    insert_buf(atv, &mut ssa.vtypes, &mut inlinedt, true);
+    insert_buf(atv, &mut ssa.ventries, inlinedv.drain(..), true);
+    insert_buf(atv, &mut ssa.vtypes, inlinedt.drain(..), true);
+}
+
+fn full_func_inline(func: &mut SSA, ofunc: &SSA, atv: V, params: Vec<Value>) -> Vec<MonoFunc> {
+    let conblock = func.new_block();
+    let iblock = func.blocks.next_key();
+
+    // Offset for `V`s in `ofunc` that we inline
+    fn ioffset(injected: &[V], atv: V, v: V) -> V {
+        let mut offset = atv.0 + 1;
+        for inj in injected {
+            // If this value occurs after this injected value
+            if v.0 > inj.0 {
+                offset += 1;
+            }
+        }
+        V(v.0 + offset)
+    }
+
+    let mut to_bump = vec![];
+
+    // Copy and compatible-ize the entries from the function we're inlining.
+    let mut injected: Vec<V> = vec![];
+    let (entries, types): (Vec<_>, Vec<_>) = ofunc
+        .ventries
+        .iter()
+        .zip(ofunc.vtypes.values().cloned())
+        .flat_map(|((v, entry), ty)| match entry.clone() {
+            // Substitute return by jump to post-inline continuation
+            Entry::Return(mut v) => {
+                for_value_mut(&mut v, &mut |v| ioffset(&injected, atv, v).value());
+                func.blocks[conblock].predecessors += 1;
+                vec![(Entry::JmpBlock(BlockJump::new(conblock, vec![v])), ty)]
+            }
+            // Substitute JmpFunc by call+jump
+            Entry::JmpFunc(mfunc, mut params) => {
+                info!("injecting additional call instruction");
+                to_bump.push(mfunc);
+
+                for_values_mut(&mut params, &mut |v| ioffset(&injected, atv, v).value());
+                func.blocks[conblock].predecessors += 1;
+
+                let call = Entry::CallStatic(mfunc, params);
+                let con_params = vec![ioffset(&injected, atv, v).value()];
+                let con_jump = Entry::JmpBlock(BlockJump::new(conblock, con_params));
+
+                injected.push(v);
+
+                vec![(call, ty.clone()), (con_jump, ty)]
+            }
+            mut entry => {
+                match entry {
+                    Entry::CallStatic(mfunc, _) => to_bump.push(mfunc),
+                    _ => {}
+                }
+                for_entry_mut(
+                    &mut entry,
+                    &mut |v| ioffset(&injected, atv, v).value(),
+                    &mut |b| Block(b.0 + iblock.0),
+                );
+                vec![(entry, ty)]
+            }
+        })
+        .unzip();
+
+    let ty = func.vtypes[atv].clone();
+
+    fn offset_by_inlined(v: V, atv: V, len: usize) -> V {
+        if v.0 >= atv.0 {
+            V(v.0 + 1 + len as u32)
+        } else {
+            v
+        }
+    }
+
+    // Offset all values occuring after the inline
+    for entry in func.ventries.values_mut() {
+        for_entry_mut(
+            entry,
+            &mut |v| offset_by_inlined(v, atv, entries.len()).value(),
+            &mut |b| b,
+        );
+    }
+
+    for (block, bb) in func.blocks.iter_mut() {
+        if block != conblock && bb.start != atv {
+            bb.start = offset_by_inlined(bb.start, atv, entries.len());
+        }
+    }
+
+    let constart = atv.0 + 1 + entries.len() as u32;
+
+    fn insertion<Value>(buf: &mut Vec<Value>, extra: Vec<Value>, atv: V, [a, b]: [Value; 2]) {
+        let rhs = buf.split_off(atv.0 as usize);
+        buf.push(a);
+        buf.extend(extra);
+        buf.push(b);
+        buf.extend(rhs.into_iter().skip(1));
+    }
+
+    // Split the entries at the call we inline
+    // Inbetween:
+    //   add the jump to the inlined entry block for the func we inlined
+    //   insert all the inlined data (entries, types)
+    //     before appending the right-hand side of the split;
+    //     put the continuation parameter declaration which now acts as the replacement for `atv = call F`
+    let injection = [
+        Entry::JmpBlock(BlockJump::new(iblock, params)),
+        Entry::BlockParam(conblock, 0),
+    ];
+    insertion(func.ventries.as_mut_vec(), entries, atv, injection);
+    insertion(func.vtypes.as_mut_vec(), types, atv, [ty.clone(), ty]);
+
+    func.blocks[conblock].start = V(constart);
+
+    // Copy over the block information from the function we inline, offsetting the start of the
+    // blocks by `atv`
+    for mut bb in ofunc.blocks.values().cloned() {
+        bb.start = ioffset(&injected, atv, bb.start);
+        func.blocks.push(bb);
+    }
+
+    to_bump
+}
+
+fn get_inlined_entries<'p>(
+    ssa: &SSA,
+    mut r: Rewrite<'p>,
+    start: V,
+    end: V,
+) -> (Vec<Entry>, Vec<MonoType>) {
+    let range = start.0 as usize..=end.0 as usize;
+
+    let mut entries = ssa.ventries.as_slice()[range.clone()].to_vec();
+    let types = ssa.vtypes.as_slice()[range].to_vec();
+
+    // Offset the new inlined to start at the current V.
+    //
+    // since voff is signed, this should work regardless of whether `atv` is before or after
+    // `jump.id` is defined.
+    r.voff = (r.atv.0 as i32 - 1) - start.0 as i32;
+
+    entries.iter_mut().for_each(|entry| r.entry(false, entry));
+
+    (entries, types)
 }
 
 fn try_inline_blockjump(ssa: &SSA, ijump: &BlockJump) -> Option<BlockJump> {
@@ -297,8 +452,36 @@ fn try_inline_blockjump(ssa: &SSA, ijump: &BlockJump) -> Option<BlockJump> {
     None
 }
 
-fn func_opt_iter(_: &mut LIR, _: MonoFunc, _: Block) -> Changed {
+fn func_opt_iter(lir: &mut LIR, func: MonoFunc, _: Block) -> Changed {
+    for v in lir.functions[func].ssa.ventries.keys() {
+        match &lir.functions[func].ssa.ventries[v] {
+            Entry::CallStatic(mfunc, params) if should_inline(lir, *mfunc) => {
+                info!(
+                    "inlining the call to {} inside of {}",
+                    &lir.functions[*mfunc].symbol, &lir.functions[func].symbol
+                );
+                let params = params.clone();
+                let [func, cfunc] = lir.functions.get_many_mut([func, *mfunc]);
+                let to_bump = full_func_inline(&mut func.ssa, &cfunc.ssa, v, params);
+                for func in to_bump {
+                    lir.functions[func].invocations += 1;
+                }
+                return true;
+            }
+            _ => {}
+        }
+    }
     false
+}
+
+// inline small functions or those who are only invoked once
+//
+// TODO: make sure directly recursive functions still work to inline
+// (I think they can since it can re-jump to entry)
+fn should_inline(lir: &LIR, func: MonoFunc) -> bool {
+    let func = &lir.functions[func];
+    func.invocations == 1
+        || (func.ssa.ventries.len() - func.ssa.block_params(Block::entry()).count()) < 3
 }
 
 impl Entry {
@@ -422,6 +605,50 @@ mod tests {
         // ssa.select(v3, [(block[2], vec![]), (block[3], vec![])]);
 
         let (before, after) = test_block_opts(false, "inline_block", ssa);
+        insta::assert_snapshot!(format!("{before}\n{after}"));
+    }
+
+    #[test]
+    fn functions() {
+        lumina_util::test_logger();
+
+        let ofunc = MonoFunc(1);
+
+        let (mut fssa, v0, v1) = {
+            let mut ssa = SSA::new();
+            let v0 = ssa.abs(Value::u(0, 0), MonoType::u(0));
+            let v1 = ssa.call(ofunc, vec![v0], MonoType::u(1));
+            ssa.return_(v1);
+            (ssa, v0, v1)
+        };
+
+        let ossa = {
+            let mut ssa = SSA::new();
+            ssa.new_block();
+
+            let v0 = ssa.add_block_param(Block(0), MonoType::u(2));
+            ssa.jump(Block(1), vec![v0.value()]);
+
+            ssa.switch_to_block(Block(1));
+            let p = ssa.add_block_param(Block(1), MonoType::u(2));
+            ssa.jump(MonoFunc(2), vec![p.value()]);
+
+            ssa
+        };
+
+        let types = Map::new();
+        lumina_util::enable_highlighting(false);
+        let before = format!(
+            "BEFORE:\n{}\n{}",
+            ty_fmt(&types, &fssa),
+            ty_fmt(&types, &ossa)
+        );
+
+        let Value::V(v1) = v1 else { unreachable!() };
+        full_func_inline(&mut fssa, &ossa, v1, vec![v0]);
+
+        let after = format!("AFTER:\n{}", ty_fmt(&types, &fssa));
+
         insta::assert_snapshot!(format!("{before}\n{after}"));
     }
 }

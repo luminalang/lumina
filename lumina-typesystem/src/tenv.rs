@@ -175,18 +175,19 @@ impl<'s> TEnv<'s> {
             fields.extend(std::mem::take(&mut vinfo.fields));
         }
 
-        self.vars.push(VarInfo {
-            span,
-            assignment: None,
-            int_constraint,
-            const_constraint,
-            trait_constraints,
-            lift_to_generic,
-            fields,
-            field_of: None,
-        });
-
-        assert_eq!(nvar, Var(self.vars.len() as u32 - 1));
+        self.vars.push_as(
+            nvar,
+            VarInfo {
+                span,
+                assignment: None,
+                int_constraint,
+                const_constraint,
+                trait_constraints,
+                lift_to_generic,
+                fields,
+                field_of: None,
+            },
+        );
 
         nvar
     }

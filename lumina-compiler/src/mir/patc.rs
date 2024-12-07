@@ -10,6 +10,7 @@ impl<'a, 's> Verify<'a, 's> {
 
         match pat.value {
             hir::Pattern::Int(_, nvar) => IType::infer(*nvar),
+            hir::Pattern::Char(_) => IType::u8(),
             hir::Pattern::Any => IType::infer(self.vars().var(pat.span)),
             hir::Pattern::Bind(bind, inner) => {
                 let ty = self.type_check_pat((&**inner).tr(pat.span));

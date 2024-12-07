@@ -8,6 +8,7 @@ pub enum Pattern<'a> {
     Name(Identifier<'a>, Vec<Tr<Self>>),
     // parameters since string patterns have multiple parts (and extractors)
     String(&'a str, Vec<Tr<Self>>),
+    Char(&'a str, Vec<Tr<Self>>),
     Extractor(Box<Tr<Expr<'a>>>, Option<Tr<&'a str>>, Vec<Tr<Self>>),
     Fields(Box<CurlyInit<'a>>, Fields<'a, Self>),
     List(Vec<Tr<Self>>, ListLength<'a>),
@@ -58,6 +59,7 @@ impl<'a> Parser<'a> {
             T::Path => self.pat_path(span, params),
             T::Square => self.pat_extractor(span, params),
             T::StringLiteral => self.pat_string(span, params),
+            T::CharLiteral => self.pat_char(span, params),
             T::OpenParen => self.pat_paren(span),
             T::OpenCurly => self.pat_record(span),
             T::OpenList => self.pat_list(span)
@@ -175,6 +177,19 @@ impl<'a> Parser<'a> {
         Some(Pattern::String(str, params).tr(span))
     }
 
+    fn pat_char(&mut self, span: Span, params: bool) -> Option<Tr<Pattern<'a>>> {
+        let str = self.take(span.move_indice(1).extend_length(-1));
+
+        let params = if params {
+            self.pat_params(true)?
+        } else {
+            vec![]
+        };
+
+        let span = span.extend_by_params(&params);
+        Some(Pattern::Char(str, params).tr(span))
+    }
+
     fn pat_paren(&mut self, span: Span) -> Option<Tr<Pattern<'a>>> {
         let (mut elems, end) =
             self.shared_paren(|parser| parser.pattern(true), Tr::null(Pattern::Poison))?;
@@ -253,6 +268,7 @@ impl T {
             | T::FnOpenParen
             | T::Square
             | T::StringLiteral
+            | T::CharLiteral
             | T::FnPtrOpenParen => true,
             _ => false,
         }
@@ -285,6 +301,8 @@ impl<'a> fmt::Display for Pattern<'a> {
             }
             Pattern::String(str, params) if params.is_empty() => write!(f, "\"{str}\""),
             Pattern::String(str, params) => write!(f, "\"{str}\" {}", params.iter().format(" ")),
+            Pattern::Char(str, params) if params.is_empty() => write!(f, "'{str}'"),
+            Pattern::Char(str, params) => write!(f, "'{str}' {}", params.iter().format(" ")),
             Pattern::List(elems, length) => {
                 write!(f, "{ol}{}{length}{cl}", elems.iter().format(", "))
             }

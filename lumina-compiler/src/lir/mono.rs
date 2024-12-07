@@ -166,6 +166,9 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t MonoType> {
 
 impl<'a, 't> fmt::Display for MonoFormatter<'a, MonoTypeKey> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.types.has(self.v) {
+            return write!(f, "{}:???", self.v);
+        }
         let data = &self.types[self.v];
         match data {
             MonoTypeData::Record { fields, .. } => write!(

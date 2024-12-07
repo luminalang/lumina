@@ -1,11 +1,12 @@
 use super::{
-    super::{CallTypes, Callable},
+    super::{escape, CallTypes, Callable},
     range, BranchKey, Branching, DecTree, Init, PointTable, StrCheck, StrChecks, TreeTail,
     LIST_CONS, LIST_NIL,
 };
 use crate::prelude::*;
 use hir::Pattern;
 use lumina_key::M as Mod;
+use lumina_parser::pat::Bound;
 use lumina_typesystem::{Container, GenericMapper, Static, Type, Var};
 use std::collections::VecDeque;
 use std::fmt::Display;
@@ -113,12 +114,21 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                 }
                 _ => reachable_as_poison!(pat),
             },
-            DecTree::Ints { intsize, next } => {
-                expected!(
-                    Pattern::Int(bounds, _) =>
-                    self.merge_int_bounds(*intsize, next, bounds)
-                )
-            }
+            DecTree::Ints { intsize, next } => match pat.value {
+                Pattern::Int(bounds, _) => self.merge_int_bounds(*intsize, next, bounds),
+                Pattern::Char(name) => {
+                    let bytes = escape(name);
+                    match bytes.as_slice() {
+                        &[c] => self.merge_int_bounds(
+                            *intsize,
+                            next,
+                            &[Bound::Pos(c as u128), Bound::Pos(c as u128)],
+                        ),
+                        _ => reachable_as_poison!(pat),
+                    }
+                }
+                _ => reachable_as_poison!(pat),
+            },
             DecTree::Opaque { .. } => reachable_as_poison!(pat),
             DecTree::String { next, wildcard_next } => {
                 match pat.value {

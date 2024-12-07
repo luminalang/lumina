@@ -13,6 +13,11 @@ pub fn or f opt as fn(a), Maybe a -> a =
   | Just a  -> a
   | Nothing -> f
 
+pub fn and f opt as fn(a -> Maybe b), Maybe a -> Maybe b =
+  match opt
+  | Just a  -> f a
+  | Nothing -> Nothing
+
 pub fn map f m as fn(a -> b), Maybe a -> Maybe b = 
   match m
   | Just a  -> Just (f a)
@@ -25,23 +30,9 @@ pub fn or_crash msg m as string, Maybe a -> a =
 
 when a can Compare
 impl Compare for Maybe a
-  fn == a b as self, self -> bool = 
+  fn compare a b as self, self -> Ordering =
     match (a, b)
-    | (Nothing, Nothing) -> true
-    | (Just x, Just y)   -> x == y
-    | _ -> false
-
-  fn < a b  as self, self -> bool = 
-    match (a, b)
-    | (Nothing, Nothing) -> false
-    | (Just x, Just y)   -> x < y
-    | (Nothing, Just a)  -> true
-    | (Just a, Nothing)  -> false
-    
-  fn > a b  as self, self -> bool =
-    match (a, b)
-    | (Nothing, Nothing) -> false
-    | (Just x, Just y)   -> x > y
-    | (Nothing, Just a)  -> false
-    | (Just a, Nothing)  -> true
-
+    | (Nothing, Nothing) -> Ordering:Equal
+    | (Just x, Just y)   -> compare x y
+    | (Nothing, Just _)  -> Ordering:Less
+    | (Just _, Nothing)  -> Ordering:Greater

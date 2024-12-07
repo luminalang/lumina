@@ -5,12 +5,12 @@ use tracing::error;
 pub fn insert_buf<K: MapKey, T: fmt::Debug>(
     at: V,
     map: &mut Map<K, T>,
-    added: &mut Vec<T>,
+    added: impl IntoIterator<Item = T>,
     replace: bool,
 ) {
     let buf = map.as_mut_vec();
     let rhs = buf.split_off(at.0 as usize);
-    buf.extend(added.drain(..));
+    buf.extend(added);
     if replace {
         buf.extend(rhs.into_iter().skip(1));
     } else {
@@ -18,6 +18,7 @@ pub fn insert_buf<K: MapKey, T: fmt::Debug>(
     }
 }
 
+#[derive(Clone)]
 pub struct Rewrite<'p> {
     // Only apply to anything above this point
     pub atv: V,
@@ -28,15 +29,13 @@ pub struct Rewrite<'p> {
     // Start of the block and parameters to substitute bparams
     pub new_block_params: Option<(V, V, &'p [Value])>,
 }
+
 impl<'p> Rewrite<'p> {
     pub fn new(atv: V, atb: Block) -> Self {
         Self { atv, atb, voff: 0, boff: 0, new_block_params: None }
     }
 
-    fn v(&self, in_rblock: bool, v: V) -> Value {
-        if v == V(u32::MAX) {
-            panic!("underflow caused by optimization");
-        }
+    pub fn v(&self, in_rblock: bool, v: V) -> Value {
         if let Some((start, _, bparams)) = self.new_block_params {
             let pend = start.0 + bparams.len() as u32;
             if v.0 >= start.0 && v.0 < pend && !in_rblock {
@@ -47,7 +46,7 @@ impl<'p> Rewrite<'p> {
         }
         Value::V(offset_if_after(self.atv, self.voff, v))
     }
-    fn b(&self, block: Block) -> Block {
+    pub fn b(&self, block: Block) -> Block {
         offset_if_after(self.atb, self.boff, block)
     }
 
@@ -58,9 +57,12 @@ impl<'p> Rewrite<'p> {
 
 fn offset_if_after<K: MapKey>(at: K, off: i32, k: K) -> K {
     if k.into() >= at.into() {
-        let new = ((k.into() as u32).wrapping_add_signed(off) as usize).into();
-        trace!("offsetting {k} by {off} into {new}");
-        new
+        let new = (k.into() as u32).wrapping_add_signed(off) as usize;
+        if new > usize::MAX - 500 {
+            panic!("optimization caused underflow");
+        }
+        trace!("offsetting {k} by {off} into {}", K::from(new));
+        new.into()
     } else {
         trace!("leaving {k}");
         k
@@ -145,20 +147,14 @@ pub(super) fn offset_predecessors(ssa: &mut SSA, end: V, by: i16) {
     });
 }
 
-pub(super) fn for_value_mut<F>(v: &mut Value, f: &mut F)
-where
-    F: Fn(V) -> Value,
-{
+pub(super) fn for_value_mut<F: Fn(V) -> Value>(v: &mut Value, f: &mut F) {
     match v {
         Value::V(i) => *v = f(*i),
         _ => {}
     }
 }
 
-pub(super) fn for_values_mut<F>(values: &mut Vec<Value>, f: &mut F)
-where
-    F: Fn(V) -> Value,
-{
+pub(super) fn for_values_mut<F: Fn(V) -> Value>(values: &mut Vec<Value>, f: &mut F) {
     values.iter_mut().for_each(|v| for_value_mut(v, f))
 }
 
@@ -255,8 +251,8 @@ pub(super) fn for_entry(entry: &Entry, f: &mut dyn FnMut(V)) {
             for_value(lhs, f);
             for_value(rhs, f);
         }
-        Entry::SizeOf(_) => todo!(),
-        Entry::AlignOf(_) => todo!(),
+        Entry::SizeOf(_) => {}
+        Entry::AlignOf(_) => {}
         Entry::Transmute(v)
         | Entry::IntAbs(v)
         | Entry::Field { of: v, .. }

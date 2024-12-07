@@ -31,21 +31,49 @@ pub trait Num
 pub trait Negate
   fn neg as self -> self
 
+type Ordering = Less | Equal | Greater
+
+impl ToString for Ordering
+  fn show ord as self -> string =
+    match ord
+    | Less -> "Less"
+    | Greater -> "Greater"
+    | Equal -> "Equal"
+
 pub trait Compare
-  @[precedence 4000]
-  fn == as self, self -> bool
-  @[precedence 4000]
-  fn <  as self, self -> bool
-  @[precedence 4000]
-  fn >  as self, self -> bool
+  fn compare as self, self -> Ordering
 
   @[precedence 4000]
-  fn >= x y as self, self -> bool =
-    if x == y then true else x > y
+  fn == lhs rhs as self, self -> bool = 
+    match compare lhs rhs
+    | Equal -> true
+    | _     -> false
 
   @[precedence 4000]
-  fn <= x y as self, self -> bool =
-    if x == y then true else x < y
+  fn < lhs rhs as self, self -> bool =
+    match compare lhs rhs
+    | Less -> true
+    | _    -> false
+
+  @[precedence 4000]
+  fn > lhs rhs as self, self -> bool =
+    match compare lhs rhs
+    | Greater -> true
+    | _    -> false
+
+  @[precedence 4000]
+  fn >= lhs rhs as self, self -> bool =
+    match compare lhs rhs
+    | Equal -> true
+    | Greater -> true
+    | Less -> false
+
+  @[precedence 4000]
+  fn <= lhs rhs as self, self -> bool =
+    match compare lhs rhs
+    | Equal -> true
+    | Less -> true
+    | Greater -> false
 
   @[precedence 4000]
   fn /= x y as self, self -> bool =
@@ -80,9 +108,13 @@ impl Num for u8
   fn one  = 1
 
 impl Compare for u8
-  fn == a b as self, self -> bool = builtin:eq a b
-  fn < a b  as self, self -> bool = builtin:lt a b
-  fn > a b  as self, self -> bool = builtin:gt a b
+  fn compare a b as self, self -> Ordering = 
+    if builtin:eq a b then
+      Equal
+    else if builtin:lt a b then
+      Less
+    else
+      Greater
 
 impl Num for u16
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
@@ -95,9 +127,13 @@ impl Num for u16
   fn one  = 1
 
 impl Compare for u16
-  fn == a b as self, self -> bool = builtin:eq a b
-  fn < a b  as self, self -> bool = builtin:lt a b
-  fn > a b  as self, self -> bool = builtin:gt a b
+  fn compare a b as self, self -> Ordering = 
+    if builtin:eq a b then
+      Equal
+    else if builtin:lt a b then
+      Less
+    else
+      Greater
 
 impl Num for u32
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
@@ -110,9 +146,13 @@ impl Num for u32
   fn one  = 1
 
 impl Compare for u32
-  fn == a b as self, self -> bool = builtin:eq a b
-  fn < a b  as self, self -> bool = builtin:lt a b
-  fn > a b  as self, self -> bool = builtin:gt a b
+  fn compare a b as self, self -> Ordering = 
+    if builtin:eq a b then
+      Equal
+    else if builtin:lt a b then
+      Less
+    else
+      Greater
 
 impl Num for u64
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
@@ -125,9 +165,13 @@ impl Num for u64
   fn one  = 1
 
 impl Compare for u64
-  fn == a b as self, self -> bool = builtin:eq a b
-  fn < a b  as self, self -> bool = builtin:lt a b
-  fn > a b  as self, self -> bool = builtin:gt a b
+  fn compare a b as self, self -> Ordering = 
+    if builtin:eq a b then
+      Equal
+    else if builtin:lt a b then
+      Less
+    else
+      Greater
 
 impl Num for i8
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
@@ -140,9 +184,13 @@ impl Num for i8
   fn one  = 1
 
 impl Compare for i8
-  fn == a b as self, self -> bool = builtin:eq a b
-  fn < a b  as self, self -> bool = builtin:lt a b
-  fn > a b  as self, self -> bool = builtin:gt a b
+  fn compare a b as self, self -> Ordering = 
+    if builtin:eq a b then
+      Equal
+    else if builtin:lt a b then
+      Less
+    else
+      Greater
 
 impl Num for i16
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
@@ -155,9 +203,13 @@ impl Num for i16
   fn one  = 1
 
 impl Compare for i16
-  fn == a b as self, self -> bool = builtin:eq a b
-  fn < a b  as self, self -> bool = builtin:lt a b
-  fn > a b  as self, self -> bool = builtin:gt a b
+  fn compare a b as self, self -> Ordering = 
+    if builtin:eq a b then
+      Equal
+    else if builtin:lt a b then
+      Less
+    else
+      Greater
 
 impl Num for i32
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
@@ -170,9 +222,13 @@ impl Num for i32
   fn one  = 1
 
 impl Compare for i32
-  fn == a b as self, self -> bool = builtin:eq a b
-  fn < a b  as self, self -> bool = builtin:lt a b
-  fn > a b  as self, self -> bool = builtin:gt a b
+  fn compare a b as self, self -> Ordering = 
+    if builtin:eq a b then
+      Equal
+    else if builtin:lt a b then
+      Less
+    else
+      Greater
 
 impl Num for i64
   fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
@@ -185,6 +241,10 @@ impl Num for i64
   fn one  = 1
 
 impl Compare for i64
-  fn == a b as self, self -> bool = builtin:eq a b
-  fn < a b  as self, self -> bool = builtin:lt a b
-  fn > a b  as self, self -> bool = builtin:gt a b
+  fn compare a b as self, self -> Ordering = 
+    if builtin:eq a b then
+      Equal
+    else if builtin:lt a b then
+      Less
+    else
+      Greater

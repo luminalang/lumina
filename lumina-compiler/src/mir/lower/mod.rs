@@ -138,37 +138,8 @@ impl<'a, 's> Lower<'a, 's> {
         }
     }
 
-    fn escape(&self, str: &'s str) -> Vec<u8> {
-        let mut buffer = Vec::with_capacity(str.len());
-        let mut bytes = str.bytes();
-
-        loop {
-            let Some(mut b) = bytes.next() else {
-                break buffer;
-            };
-
-            match b {
-                b'\\' => match bytes.next() {
-                    Some(b'n') => b = b'\n',
-                    Some(b'r') => b = b'\r',
-                    Some(b't') => b = b'\t',
-                    Some(b'\\') => b = b'\\',
-                    Some(b'"') => b = b'"',
-                    Some(b'\'') => b = b'\'',
-                    Some(b'0') => b = b'\0',
-                    b => {
-                        panic!("ET: invalid escape sequence: {b:?}");
-                    }
-                },
-                _ => {}
-            }
-
-            buffer.push(b);
-        }
-    }
-
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
-        let str = self.escape(str);
+        let str = escape(str);
 
         // We set the type to `u8` because when this data is accessed
         // with ReadOnly, it's treated by-reference so it'll become `*u8`
@@ -199,6 +170,35 @@ impl<'a, 's> Lower<'a, 's> {
         let _ = pat::Merge::generate_tail(&mut plower);
 
         plower.lowered_tail.unwrap()
+    }
+}
+
+fn escape(str: &str) -> Vec<u8> {
+    let mut buffer = Vec::with_capacity(str.len());
+    let mut bytes = str.bytes();
+
+    loop {
+        let Some(mut b) = bytes.next() else {
+            break buffer;
+        };
+
+        match b {
+            b'\\' => match bytes.next() {
+                Some(b'n') => b = b'\n',
+                Some(b'r') => b = b'\r',
+                Some(b't') => b = b'\t',
+                Some(b'\\') => b = b'\\',
+                Some(b'"') => b = b'"',
+                Some(b'\'') => b = b'\'',
+                Some(b'0') => b = b'\0',
+                b => {
+                    panic!("ET: invalid escape sequence: {b:?}");
+                }
+            },
+            _ => {}
+        }
+
+        buffer.push(b);
     }
 }
 

@@ -12,6 +12,7 @@ use tracing::trace;
 pub enum Pattern<'s> {
     Any,
     Int([parser::pat::Bound; 2], Var),
+    Char(&'s str),
     Bind(key::Bind, Box<Self>),
     Constructor(M<key::Sum>, key::Variant, Vec<Tr<Self>>),
     Record(
@@ -56,7 +57,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                     && (params.iter().any(|pat| {
                         matches!(
                             &pat.value,
-                            parser::Pattern::String(..) | parser::Pattern::Extractor(..)
+                            parser::Pattern::String(..) | parser::Pattern::Extractor(..) | parser::Pattern::Char(..)
                         )
                     }) || params.len() > 0 && params.iter().all(|pat|
                             matches!(&pat.value, parser::Pattern::Name(n, p) if could_be_str_bind(n) && p.is_empty() )
@@ -73,6 +74,10 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             }
             parser::Pattern::String(str, params) => {
                 self.pat_strings(StringPattern::Literal(*str), params)
+            }
+            parser::Pattern::Char(str, params) => {
+                assert!(params.is_empty(), "TODO: char literal in string patterns");
+                Pattern::Char(*str)
             }
             parser::Pattern::Extractor(expr, bind, params) => {
                 match self.extractor((**expr).as_ref(), *bind) {
@@ -453,6 +458,7 @@ impl<'s> fmt::Display for Pattern<'s> {
         match self {
             Pattern::Any => write!(f, "_"),
             Pattern::Int([start, end], _) => write!(f, "{start}..{end}"),
+            Pattern::Char(name) => write!(f, "'{name}'"),
             Pattern::Bind(bind, pat) => match &**pat {
                 Pattern::Any => write!(f, "{bind}"),
                 _ => write!(f, "{pat}@{bind}"),

@@ -1,4 +1,4 @@
-use super::{pat, pat::Merge, Callable, FinError, Lower, MatchBranchLower};
+use super::{escape, pat, pat::Merge, Callable, FinError, Lower, MatchBranchLower};
 use crate::mir::builtins;
 use crate::prelude::*;
 use crate::{LISTABLE_CONS, LISTABLE_NEW, LISTABLE_WITH_CAPACITY, STRINGABLE_FROM_RAW_PARTS};
@@ -293,7 +293,7 @@ impl<'a, 's> Lower<'a, 's> {
             }
             hir::Literal::Float(f) => Expr::Float(*f),
             hir::Literal::Char(str) => {
-                let str = self.escape(str);
+                let str = escape(str);
                 if str.len() != 1 {
                     self.errors.push(FinError::LargeCharLiteral(span));
                     Expr::Poison

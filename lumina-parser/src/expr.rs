@@ -697,6 +697,7 @@ impl T {
             T::Int,
             T::Float,
             T::Path,
+            T::CharLiteral,
             T::StringLiteral,
             T::OpenParen,
             T::OpenCurly,

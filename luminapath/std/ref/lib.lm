@@ -1,0 +1,12 @@
+pub type Ref a {
+  raw *a
+}
+
+pub fn new a as a -> Ref a =
+  { raw = std:ptr:box a }
+
+pub fn set v {raw} as a, Ref a -> () = 
+  std:ptr:write raw v
+
+pub fn get {raw} as Ref a -> a = 
+  std:ptr:deref raw

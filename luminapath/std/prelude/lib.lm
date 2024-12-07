@@ -1,4 +1,4 @@
-pub use std:math [Num [..], Compare [..]]
+pub use std:math [Num [..], Compare [..], Ordering]
 pub use std:math:u8
 pub use std:math:u16
 pub use std:math:u32

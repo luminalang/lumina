@@ -66,6 +66,9 @@ pub fn any f slice as fn(a -> bool), Slice a -> bool =
         then true
         else next (i+1)
 
+pub fn all f slice as fn(a -> bool), Slice a -> bool =
+  not (any #(\v -> not (f v)) slice)
+
 pub fn to_list slice as Slice a -> List a = 
   if len slice == 0
     then List:Nil

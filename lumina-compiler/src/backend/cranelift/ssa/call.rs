@@ -159,22 +159,21 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
         if rlayout == current_rlayout {
             info!("performing a ret-tail call to {fname} in {cname}");
 
-            // TODO: long-term, it'd be *much* better to know whether this will happen or not when
-            // *creating* the initial values. Because right now we very often stack allocate
-            // something elsewhere in the function, do stuff with it, then come to here where we
-            // will have to memcpy it onto the heap.
-            //
-            // I'm not sure what the best way to accomplish that would be though. `LIR` not having
-            // to care about layout does have a lot of benefits, and I don't want to add a pass
-            // in-between.
-
             let _out_pointer = self.copy_tail_rptr(&mut params);
-            let promote =
+            let uses_current_stack =
                 self.has_references_to_current_stack(&self.ctx.flayouts[id].params.as_slice());
-            self.fparams_from_funcid(promote, id, cparams, &mut params);
 
-            let fref = self.ins().declare_func_in_func(id);
-            self.cins().return_call(fref, &params);
+            if uses_current_stack {
+                self.fparams_from_funcid(false, id, cparams, &mut params);
+                let fref = self.ins().declare_func_in_func(id);
+                let c = self.cins().call(fref, &params);
+                let inst_values = self.f.builder.inst_results(c).to_vec();
+                self.cins().return_(&inst_values);
+            } else {
+                self.fparams_from_funcid(false, id, cparams, &mut params);
+                let fref = self.ins().declare_func_in_func(id);
+                self.cins().return_call(fref, &params);
+            }
         } else {
             let mut has_rptr = false;
             rlayout.out_pointers(&mut |_, _| has_rptr = true);

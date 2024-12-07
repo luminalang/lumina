@@ -68,14 +68,8 @@ pub fn joinWith sep strings as string, [string] -> string =
   | [x : xs] -> xs . fold #(\s elem -> s <> sep <> elem) x
 
 // NOTE: returned pointer is weak
-fn toByteVec str as string -> Vec u8 =
-  match str.inner
-  | List:Slice { Slice u8 | source, ptr, len } -> { Vec u8 | ptr, len }
-  | _ -> 
-    let vec = vec:capacity (len str) in
-      do str.inner
-         . fold #(\i v -> do vec:unsafe_set i v vec then i + 1) 0
-      then vec
+pub fn toByteVec str as string -> Vec u8 =
+  str.inner . toVec
 
 pub fn to_c_str str as string -> *u8 =
   let vec = vec:capacity (1 + len str) in
@@ -120,6 +114,7 @@ pub fn split_first str as string -> Maybe (u8, string) =
 //
 // Trait aliases could be nice here
 impl Compare for string
+  fn compare lhs rhs as string, string -> Ordering = compare lhs.inner rhs.inner
   fn == lhs rhs as self, self -> bool =
     lhs.inner == rhs.inner
 

@@ -563,6 +563,11 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                 let path = Identifier::parse(self.parser.take(span)).unwrap();
                 Some(Expr::PassFptr(AnnotatedPath::without(path)).tr(fnptr_span))
             },
+            T::Operator => {
+                let fnptr_span = square_span.extend(span);
+                let path = Identifier::parse(self.parser.take(span)).unwrap();
+                Some(Expr::PassFptr(AnnotatedPath::without(path)).tr(fnptr_span))
+            },
             T::AnnotatedPath => {
                 let fnptr_span = square_span.extend(span);
                 let path = Identifier::parse(self.parser.take(span)).unwrap();

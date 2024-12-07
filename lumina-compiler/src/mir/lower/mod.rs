@@ -55,7 +55,7 @@ pub struct CallTypes {
     pub ret: Type,
 }
 
-#[derive(new)]
+#[derive(new, Debug)]
 pub struct Lambda {
     pub typing: ConcreteTyping,
     pub expr: Expr,

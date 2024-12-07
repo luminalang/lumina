@@ -655,7 +655,7 @@ impl fmt::Display for NFunc {
 
 impl<K: fmt::Display> fmt::Display for Mod<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}({}) {}", "pub".keyword(), self.visibility, self.key)
+        write!(f, "{}:{}", self.module, self.key)
     }
 }
 

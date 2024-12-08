@@ -606,7 +606,13 @@ impl<'a, 's> Verify<'a, 's> {
                 (IType::Container(cont, remaining), returns)
             }
             InstCall::Local(_) if !params.is_empty() => todo!("ET: can not take parameters"),
-            InstCall::Local(_) => todo!("turn it into a function"),
+            // Turns into a closure yielding the inner value
+            //
+            // I'm unsure whether I want to allow this in the first place, since it could harm errors
+            InstCall::Local(ty) => (
+                IType::Container(Container::Closure, vec![ty.value.clone()]),
+                ty.value.clone(),
+            ),
             InstCall::Instantiated(instinfo) => {
                 self.partially_applicate_inst(span, instinfo, params)
             }

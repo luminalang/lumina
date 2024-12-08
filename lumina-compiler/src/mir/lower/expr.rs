@@ -152,7 +152,17 @@ impl<'a, 's> Lower<'a, 's> {
                     })
                 }
                 hir::Callable::Binding(bind) if params.is_empty() => {
-                    Expr::Yield(Callable::Binding(*bind))
+                    let ty = self.current.binds[bind].clone();
+                    let ty = self.finalizer().transform(&ty);
+                    match ty {
+                        // Just yield the value as it's already a function
+                        Ty::Container(Container::Closure | Container::FnPointer, _) => {
+                            Expr::Yield(Callable::Binding(*bind))
+                        }
+                        _ => {
+                            todo!("wrap it in a lambda to turn it *into* a function");
+                        }
+                    }
                 }
                 hir::Callable::Binding(bind) => {
                     let params = self.lower_exprs(params);

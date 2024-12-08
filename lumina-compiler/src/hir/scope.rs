@@ -10,6 +10,7 @@ pub struct Bindings<'s> {
 struct Scope<'s> {
     binds: Vec<(key::Bind, &'s str)>,
     captures: Vec<key::Bind>,
+    where_binding_refs: Vec<key::Lambda>,
 }
 
 impl<'s> Default for Bindings<'s> {
@@ -28,9 +29,17 @@ impl<'s> Bindings<'s> {
     pub fn enter(&mut self) {
         self.scopes.push(Scope::default());
     }
-    pub fn leave(&mut self) -> Captures {
+    pub fn leave(&mut self) -> (Captures, Vec<key::Lambda>) {
         let scope = self.scopes.pop().unwrap();
-        scope.captures
+        (scope.captures, scope.where_binding_refs)
+    }
+
+    // Since tracking captures is usually done on the callstack of resolve, it'll be missed if a
+    // lambda uses a where-binding. As it then needs to capture all the captures needed by the where-binding.
+    pub fn reference_where_bind(&mut self, key: key::Lambda) {
+        for scope in self.scopes.iter_mut().rev() {
+            scope.where_binding_refs.push(key);
+        }
     }
 
     pub fn declare_nameless(&mut self) -> key::Bind {

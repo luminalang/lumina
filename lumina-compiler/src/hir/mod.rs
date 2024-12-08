@@ -549,6 +549,7 @@ pub struct Lambdas<'s> {
     pub params: Map<key::Lambda, Vec<Tr<Pattern<'s>>>>,
     pub bodies: Map<key::Lambda, Tr<Expr<'s>>>,
     pub captures: Map<key::Lambda, Vec<key::Bind>>,
+    pub used_where_bindings: Map<key::Lambda, Vec<key::Lambda>>,
 }
 
 impl<'s> Lambdas<'s> {
@@ -566,6 +567,7 @@ impl<'s> Lambdas<'s> {
         self.params.push_as(lkey, vec![]);
         self.bodies.push_as(lkey, Expr::Poison.tr(span));
         self.captures.push_as(lkey, vec![]);
+        self.used_where_bindings.push_as(lkey, vec![]);
         lkey
     }
 
@@ -576,11 +578,13 @@ impl<'s> Lambdas<'s> {
         expr: Tr<Expr<'s>>,
         patterns: Vec<Tr<Pattern<'s>>>,
         captures: Vec<key::Bind>,
+        used_where_bindings: Vec<key::Lambda>,
     ) {
         self.names[key] = name;
         self.bodies[key] = expr;
         self.params[key] = patterns;
         self.captures[key] = captures;
+        self.used_where_bindings[key] = used_where_bindings;
     }
 
     pub fn is_empty(&self) -> bool {
@@ -693,6 +697,22 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         let mut func = FuncDef::new(RefCell::new(forall), typing, list, params, expr, no_mangle);
         func.lambdas = self.lambdas;
 
+        // Copy the captures of where-bindings to lambdas which use them
+        for lambda in func.lambdas.keys() {
+            for where_bind in std::mem::take(&mut func.lambdas.used_where_bindings[lambda]) {
+                // TODO: we probably no longer need to automatically capture all parameters of the
+                // parent function in where-bindings anymore when we're checking circular calls this way.
+                if lambda != where_bind {
+                    let [lcap, wcap] = func.lambdas.captures.get_many_mut([lambda, where_bind]);
+                    for bind in wcap {
+                        if !lcap.contains(bind) {
+                            lcap.push(*bind);
+                        }
+                    }
+                }
+            }
+        }
+
         info!(
             "func lowered to:\n {} {} {} {func}",
             "fn".keyword(),
@@ -762,10 +782,10 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             );
 
             let expr = self.expr(lbody.expr.as_ref());
-            let captures = self.bindings.leave();
+            let (captures, lcaptures) = self.bindings.leave();
             let name = *fdecl.header.name;
             self.lambdas
-                .complete_lambda(name, lkey, expr, patterns, captures);
+                .complete_lambda(name, lkey, expr, patterns, captures, lcaptures);
         }
 
         (params, expr)
@@ -788,6 +808,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 .position(|decl| *decl.header.name == name)
             {
                 let lkey = key::Lambda::from(i);
+                self.bindings.reference_where_bind(lkey);
                 return Some((Callable::Lambda(lkey), ToAnnotate::Some(None)));
             }
 

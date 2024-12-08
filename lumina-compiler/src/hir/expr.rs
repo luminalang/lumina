@@ -423,12 +423,12 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         let patterns = self.patterns(apatterns);
         let expr = self.expr(body);
 
-        let captures = self.bindings.leave();
+        let (captures, lcaptures) = self.bindings.leave();
         let forall = self.type_info.leave_function();
         assert!(forall.generics.is_empty());
 
         self.lambdas
-            .complete_lambda("lambda", lkey, expr, patterns, captures);
+            .complete_lambda("lambda", lkey, expr, patterns, captures, lcaptures);
 
         lkey
     }

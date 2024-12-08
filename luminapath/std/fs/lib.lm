@@ -42,7 +42,7 @@ pub fn readFileAt path as string -> Result string IoError =
 pub fn readFile {fd} as File -> Result string IoError =
   let rptr = ptr:alloc(t as libc:stat) in
   libc:fstat fd rptr
-  . handle_io_errno #(\_ -> read rptr)
+  . handle_io_errno #(\_ -> read rptr) 
  where
   fn read rptr = 
     let size = ptr:deref ((ptr:offset rptr 48) as *i64) in

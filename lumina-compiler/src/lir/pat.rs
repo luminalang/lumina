@@ -204,8 +204,7 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
                     let high_enough = self
                         .ssa()
                         .gti([on, Value::Int(range.start, intsize)], intsize);
-                    let ty = self.f.type_of_value(on);
-                    check = self.ssa().bit_and([check, high_enough], ty);
+                    check = self.ssa().bit_and([check, high_enough], MonoType::bool());
                 }
                 check
             };

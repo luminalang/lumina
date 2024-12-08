@@ -549,9 +549,6 @@ pub struct Lambdas<'s> {
     pub params: Map<key::Lambda, Vec<Tr<Pattern<'s>>>>,
     pub bodies: Map<key::Lambda, Tr<Expr<'s>>>,
     pub captures: Map<key::Lambda, Vec<key::Bind>>,
-    // If this lambda references other lambdas, it'll need to inherit it's captures even though
-    // they aren't directly references. (Since they will be references in the next lower)
-    pub capture_lambdas: Map<key::Lambda, Vec<key::Lambda>>,
 }
 
 impl<'s> Lambdas<'s> {
@@ -569,7 +566,6 @@ impl<'s> Lambdas<'s> {
         self.params.push_as(lkey, vec![]);
         self.bodies.push_as(lkey, Expr::Poison.tr(span));
         self.captures.push_as(lkey, vec![]);
-        self.capture_lambdas.push_as(lkey, vec![]);
         lkey
     }
 
@@ -580,13 +576,11 @@ impl<'s> Lambdas<'s> {
         expr: Tr<Expr<'s>>,
         patterns: Vec<Tr<Pattern<'s>>>,
         captures: Vec<key::Bind>,
-        capture_lambdas: Vec<key::Lambda>,
     ) {
         self.names[key] = name;
         self.bodies[key] = expr;
         self.params[key] = patterns;
         self.captures[key] = captures;
-        self.capture_lambdas[key] = capture_lambdas;
     }
 
     pub fn is_empty(&self) -> bool {
@@ -699,22 +693,6 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         let mut func = FuncDef::new(RefCell::new(forall), typing, list, params, expr, no_mangle);
         func.lambdas = self.lambdas;
 
-        // Copy all captures used by child lambda into the captures of the parent lambda for nesting
-        for lambda in func.lambdas.keys() {
-            for child in std::mem::take(&mut func.lambdas.capture_lambdas[lambda]) {
-                if lambda == child {
-                    continue;
-                }
-
-                let [lcap, ccap] = func.lambdas.captures.get_many_mut([lambda, child]);
-                for bind in ccap {
-                    if !lcap.contains(bind) {
-                        lcap.push(*bind);
-                    }
-                }
-            }
-        }
-
         info!(
             "func lowered to:\n {} {} {} {func}",
             "fn".keyword(),
@@ -784,10 +762,10 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
             );
 
             let expr = self.expr(lbody.expr.as_ref());
-            let (captures, lcaptures) = self.bindings.leave();
+            let captures = self.bindings.leave();
             let name = *fdecl.header.name;
             self.lambdas
-                .complete_lambda(name, lkey, expr, patterns, captures, lcaptures);
+                .complete_lambda(name, lkey, expr, patterns, captures);
         }
 
         (params, expr)
@@ -810,7 +788,6 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
                 .position(|decl| *decl.header.name == name)
             {
                 let lkey = key::Lambda::from(i);
-                self.bindings.reference_lambda(lkey);
                 return Some((Callable::Lambda(lkey), ToAnnotate::Some(None)));
             }
 

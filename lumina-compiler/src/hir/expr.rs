@@ -416,7 +416,6 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         let lkey = self
             .lambdas
             .create_placeholder(body.span, Forall::new(0), typing);
-        self.bindings.reference_lambda(lkey);
 
         self.bindings.enter();
         self.type_info.enter_lambda(lkey, Forall::new(0));
@@ -424,12 +423,12 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         let patterns = self.patterns(apatterns);
         let expr = self.expr(body);
 
-        let (captures, lcaptures) = self.bindings.leave();
+        let captures = self.bindings.leave();
         let forall = self.type_info.leave_function();
         assert!(forall.generics.is_empty());
 
         self.lambdas
-            .complete_lambda("lambda", lkey, expr, patterns, captures, lcaptures);
+            .complete_lambda("lambda", lkey, expr, patterns, captures);
 
         lkey
     }

@@ -10,7 +10,6 @@ pub struct Bindings<'s> {
 struct Scope<'s> {
     binds: Vec<(key::Bind, &'s str)>,
     captures: Vec<key::Bind>,
-    references_lambdas: Vec<key::Lambda>,
 }
 
 impl<'s> Default for Bindings<'s> {
@@ -29,17 +28,9 @@ impl<'s> Bindings<'s> {
     pub fn enter(&mut self) {
         self.scopes.push(Scope::default());
     }
-    pub fn leave(&mut self) -> (Captures, Vec<key::Lambda>) {
+    pub fn leave(&mut self) -> Captures {
         let scope = self.scopes.pop().unwrap();
-        (scope.captures, scope.references_lambdas)
-    }
-
-    pub fn reference_lambda(&mut self, lambda: key::Lambda) {
-        self.scopes
-            .last_mut()
-            .unwrap()
-            .references_lambdas
-            .push(lambda);
+        scope.captures
     }
 
     pub fn declare_nameless(&mut self) -> key::Bind {
@@ -73,6 +64,7 @@ impl<'s> Bindings<'s> {
             .or_else(|| {
                 Self::resolve_in(xs, name).map(|bind| {
                     if !scope.captures.contains(&bind) {
+                        trace!("capturing {bind}");
                         scope.captures.push(bind);
                     }
                     bind

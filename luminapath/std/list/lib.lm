@@ -11,7 +11,7 @@ use std:io [crash]
 // THEIR INDICES ARE CONSTANTS IN COMPILER. 
 pub trait Listable a
   @[precedence 1000]
-  fn : as a, self -> self
+  fn : as a self -> self
   fn new as self = Listable(self as self, a as a):with_capacity 0
   fn with_capacity as int -> self
   fn split as self -> Maybe (a, self)
@@ -19,7 +19,7 @@ pub trait Listable a
 pub type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
 
 impl Listable a for List a
-  fn : x xs as a, List a -> List a =
+  fn : x xs as a (List a) -> List a =
     match xs
     | Nil -> Singleton x
     | _   -> Concat (Singleton x) xs
@@ -49,7 +49,7 @@ pub fn ++ left right as List a, List a -> [a] =
     | _ -> Concat left right
 
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
-pub fn fold f acc list as fn(b, a -> b), b, [a] -> b =
+pub fn fold f acc list as (fn b a -> b) b [a] -> b =
   match list
   | [x : xs] -> fold #f (f acc x) xs
   | []       -> acc

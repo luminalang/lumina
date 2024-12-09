@@ -111,8 +111,6 @@ impl<'a> Parser<'a> {
     fn func_typing(&mut self, start: Span) -> Option<(Typing<'a>, bool)> {
         let mut ptypes = vec![];
 
-        atodo!();
-
         loop {
             match self.type_with_params() {
                 Some(t) => ptypes.push(t),
@@ -136,8 +134,7 @@ impl<'a> Parser<'a> {
                     self.progress();
                     break;
                 },
-                T::Comma => {
-                    self.progress();
+                t if t.is_valid_start_of_type() => {
                     continue;
                 },
                 _ if ptypes.len() == 1 => {

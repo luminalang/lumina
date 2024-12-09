@@ -308,6 +308,7 @@ impl<'a> Parser<'a> {
         loop {
             select! { self, "`->`, `)` or `,` for this function type", span peeked: true;
                 T::Arrow => {
+                  self.progress();
                   break self.r#type(true, false)
                       .and_then(|ret| {
                           let span = span.extend(ret.span);

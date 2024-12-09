@@ -164,11 +164,12 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 self.has_references_to_current_stack(&self.ctx.flayouts[id].params.as_slice());
 
             if uses_current_stack {
-                self.fparams_from_funcid(false, id, cparams, &mut params);
+                self.fparams_from_funcid(true, id, cparams, &mut params);
                 let fref = self.ins().declare_func_in_func(id);
-                let c = self.cins().call(fref, &params);
-                let inst_values = self.f.builder.inst_results(c).to_vec();
-                self.cins().return_(&inst_values);
+                self.cins().return_call(fref, &params);
+                // let c = self.cins().call(fref, &params);
+                // let inst_values = self.f.builder.inst_results(c).to_vec();
+                // // self.cins().return_(&inst_values);
             } else {
                 self.fparams_from_funcid(false, id, cparams, &mut params);
                 let fref = self.ins().declare_func_in_func(id);

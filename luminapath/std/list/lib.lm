@@ -37,8 +37,8 @@ impl Listable a for List a
     | Nil         -> Nothing
 
     | Concat left right -> 
-      split left 
-      . map #(\(v, leftright) -> (v, leftright ++ right))
+        split left 
+        . map #(\(v, leftright) -> (v, leftright ++ right))
 
 pub fn ++ left right as List a, List a -> [a] =
   match left
@@ -59,6 +59,21 @@ pub fn map f list as fn(a -> b), [a] -> [b] =
   match list
   | [x : xs] -> f x : map #f xs
   | []       -> []
+
+pub fn flat_map f list as fn(a -> [b]), [a] -> [b] = 
+  match list
+  | [x : xs] -> f x ++ flat_map #f xs
+  | []       -> []
+
+// TODO: we should split out equality operator from Compare, then we can use a constraint here instead
+pub fn deduplicate f list as fn(a, a -> bool), [a] -> [a] = 
+  match list
+  | [x : xs] -> 
+    let next = deduplicate #f xs in
+      if any #(\a -> f x a) next
+        then next
+        else x : next
+  | [] -> []
 
 pub fn keep_map f list as fn(a -> Maybe b), [a] -> [b] =
   match list
@@ -133,6 +148,11 @@ pub fn count f list as fn(a -> bool), List a -> uint =
 
 pub fn from_range range f as (uint, uint), fn(uint -> a) -> List a =
   Slice (vec:to_slice (vec:from_range range #f))
+
+pub fn reverse list as [a] -> [a] = 
+  match list
+  | [x : xs] -> reverse xs ++ [x]
+  | [] -> []
 
 pub fn itimes f n as fn(uint -> ()), uint -> () = 
   next 0

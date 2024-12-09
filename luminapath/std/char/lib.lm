@@ -8,3 +8,9 @@ pub fn is_upper_letter c as u8 -> bool =
 
 pub fn is_number c as u8 -> bool =
   c >= '0' && c <= '9'
+
+pub fn to_digit c as u8 -> uint = 
+  (c as uint) - ('0' as uint)
+
+pub fn from_digit c as uint -> u8 = 
+  ((c as u8) + '0')

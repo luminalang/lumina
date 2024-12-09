@@ -558,6 +558,10 @@ impl<'s> Collector<'s> {
         let error = self.sources.error("syntax error").m(module);
 
         match err {
+            ParseError::FnNeedsParenthesis(span) => error.eline(
+                span,
+                "this closure type needs to be surounded by parenthesis",
+            ),
             ParseError::InvalidAttributes(_, aspan) => {
                 error.eline(aspan, "this declaration can not take attributes")
             }

@@ -24,7 +24,7 @@ pub enum Token {
     #[regex("\\n+")]
     NewLines,
 
-    #[token("\"", |lex| find_str_end(b'"', lex))]
+    #[token("\"", |lex| find_str_end(34, lex))]
     StringLiteral,
     #[token("'", |lex| find_str_end(b'\'', lex))]
     CharLiteral,
@@ -103,10 +103,8 @@ pub enum Token {
     SquareExt,
     #[token("fn")]
     Fn,
-    #[token("fn(")]
-    FnOpenParen,
-    #[token("fnptr(")]
-    FnPtrOpenParen,
+    #[token("fnptr")]
+    FnPtr,
     #[token("alias")]
     Alias,
     #[token("type")]
@@ -209,9 +207,8 @@ impl Token {
             T::Backslash => "`\\`",
             T::Square => "`#`",
             T::SquareExt => "`#!`",
-            T::Fn => "start of function declaration",
-            T::FnOpenParen => "start of closure type",
-            T::FnPtrOpenParen => "start of function pointer type",
+            T::Fn => "`fn`",
+            T::FnPtr => "`fnptr`",
             T::Alias => "start of alias declaration",
             T::Type => "start of type declaration",
             T::Trait => "start of trait declaration",
@@ -413,7 +410,7 @@ mod tests {
         cmp! { "// test\n0" => T::LineComment, T::NewLines, T::Int, T::EOF };
         cmp! { "/// test\n0" => T::LineDocComment, T::NewLines, T::Int, T::EOF };
         cmp! { "0.0 12.34 10" => T::Float, T::Float, T::Int, T::EOF };
-        cmp! { "fn( fn" => T::FnOpenParen, T::Fn, T::EOF };
+        cmp! { "(fn fn" => T::OpenParen, T::Fn, T::Fn, T::EOF };
         cmp! { "#0 #(f 1)" => T::Square, T::Int, T::Square, T::OpenParen, T::Path, T::Int, T::CloseParen, T::EOF };
         cmp! { "_" => T::Path };
     }

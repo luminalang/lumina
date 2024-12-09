@@ -111,6 +111,8 @@ impl<'a> Parser<'a> {
     fn func_typing(&mut self, start: Span) -> Option<(Typing<'a>, bool)> {
         let mut ptypes = vec![];
 
+        atodo!();
+
         loop {
             match self.type_with_params() {
                 Some(t) => ptypes.push(t),

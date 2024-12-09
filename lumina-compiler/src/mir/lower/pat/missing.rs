@@ -226,7 +226,7 @@ impl MissingPattern {
         &'a self,
         name_of_var: &'a dyn Fn(M<key::Sum>, key::Variant) -> String,
         name_of_field: &'a dyn Fn(M<key::Record>, key::Field) -> String,
-    ) -> MissingFormatter<'_> {
+    ) -> MissingFormatter<'a> {
         MissingFormatter { pat: self, parenthesis: false, name_of_var, name_of_field }
     }
 }
@@ -253,7 +253,7 @@ impl<'a> MissingFormatter<'a> {
         &'a self,
         pat: &'a MissingPattern,
         parenthesis: bool,
-    ) -> MissingFormatter<'_> {
+    ) -> MissingFormatter<'a> {
         MissingFormatter {
             pat,
             parenthesis,

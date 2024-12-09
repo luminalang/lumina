@@ -221,8 +221,13 @@ impl<'a> Parser<'a> {
             T::Path => self.ty_identifier(with_params, newline_sensitive, false, span),
             T::AnnotatedPath => self.ty_identifier(with_params, newline_sensitive, true, span.extend_length(-1)),
             T::OpenParen => self.ty_parenthesis(span),
-            T::FnOpenParen => self.function(span, Type::Closure),
-            T::FnPtrOpenParen => self.function(span, Type::FnPointer),
+            T::Fn | T::FnPtr if !with_params => {
+                self.err_fn_needs_parenthesis(span);
+                self.recover_next_toplevel();
+                None
+            },
+            T::Fn => self.function(span, Type::Closure),
+            T::FnPtr => self.function(span, Type::FnPointer),
             T::OpenList => self.ty_list(span),
             T::Operator => {
                 if self.take(span).bytes().all(|b| b == b'*') {
@@ -294,53 +299,32 @@ impl<'a> Parser<'a> {
             .map(|t| t.value.tr(span.extend(end)))
     }
 
-    fn function<OUT>(
-        &mut self,
-        start: Span,
-        constr: impl FnOnce(Vec<Tr<Type<'a>>>, Box<Tr<Type<'a>>>) -> OUT,
-    ) -> Option<Tr<OUT>> {
+    fn function<OUT, CON>(&mut self, start: Span, constr: CON) -> Option<Tr<OUT>>
+    where
+        CON: FnOnce(Vec<Tr<Type<'a>>>, Box<Tr<Type<'a>>>) -> OUT,
+    {
         let mut ptypes = vec![];
 
-        let recovery = [T::Arrow, T::Comma, T::CloseParen];
-
         loop {
-            match self.r#type(true, false) {
-                Some(t) => ptypes.push(t),
-                None => {
-                    ptypes.push(Type::Poison.tr(start));
-                    self.recover_for(recovery, false);
-                }
-            }
-
-            select! { self, "`->`, `)` or `,` for this function type", span;
-                T::Comma => continue,
-                T::Arrow => break self.finalize_fn(|ret| {
-                    let span = start.extend(ret.span);
-                    constr(ptypes, Box::new(ret)).tr(span)
-                }),
-                T::CloseParen => {
-                    let span = start.extend(span);
-                    if ptypes.len() == 1 {
-                        let ret = ptypes.remove(0);
-                        break Some(constr(vec![], Box::new(ret)).tr(span));
-                    } else {
-                        self.err_missing_return_type(start.extend(span));
-                        break Some(constr( ptypes, Box::new(Type::Poison.tr(start))).tr(span));
+            select! { self, "`->`, `)` or `,` for this function type", span peeked: true;
+                T::Arrow => {
+                  break self.r#type(true, false)
+                      .and_then(|ret| {
+                          let span = span.extend(ret.span);
+                          Some(constr(ptypes, Box::new(ret)).tr(span))
+                      });
+                },
+                t if t.is_valid_start_of_type() => {
+                    match self.r#type(true, false) {
+                        Some(t) => ptypes.push(t),
+                        None => {
+                            ptypes.push(Type::Poison.tr(start));
+                            self.recover_until(|t| t.is_valid_start_of_type() || t == T::Arrow, false);
+                        }
                     }
-                }
+                },
+                _ => return None,
             }
-        }
-    }
-
-    fn finalize_fn<OUT>(&mut self, constr: impl FnOnce(Tr<Type<'a>>) -> OUT) -> Option<OUT> {
-        if let Some(returns) = self.r#type(true, false) {
-            self.expect(T::CloseParen)?;
-            return Some(constr(returns));
-        }
-
-        match self.recover_for([T::CloseParen], false) {
-            T::CloseParen => self.consume(|end| Some(constr(Type::Poison.tr(end)))),
-            _ => None,
         }
     }
 

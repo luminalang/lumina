@@ -6,6 +6,7 @@ pub enum Error {
     ExpectedButGot(Span, String, String),
     ExpectedTokenButGot(Span, String, Token),
     MissingSquareForExtractor(Span),
+    FnNeedsParenthesis(Span),
     // Unexpected(Span, String),
     InvalidAttributes(Span, Span),
     BadIndentation(Span),
@@ -40,6 +41,10 @@ impl<'a> Parser<'a> {
             .push(Error::ExpectedTokenButGot(span, exp.into(), token));
     }
 
+    pub(crate) fn err_fn_needs_parenthesis(&mut self, span: Span) {
+        self.errors.push(Error::FnNeedsParenthesis(span));
+    }
+
     pub(crate) fn err_bad_header_for_where(&mut self, span: Span, header: Token) {
         self.errors.push(Error::BadHeaderForWhere(span, header));
     }
@@ -71,10 +76,6 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn err_conflicting_bars(&mut self, err: IndentConflict) {
         self.errors.push(Error::ConflictingBars(err));
-    }
-
-    pub(crate) fn err_missing_return_type(&mut self, span: Span) {
-        self.errors.push(Error::MissingReturnType(span));
     }
 
     pub(crate) fn err_nested_where(&mut self, previous: Span, kw: Span) {

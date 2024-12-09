@@ -215,7 +215,7 @@ impl<'a, 't, T: fmt::Display> fmt::Display for MonoFormatter<'a, (T, &'t [MonoTy
     }
 }
 
-pub fn fmt<'a, T>(types: &'a Map<MonoTypeKey, MonoTypeData>, v: T) -> MonoFormatter<'_, T> {
+pub fn fmt<'a, T>(types: &'a Map<MonoTypeKey, MonoTypeData>, v: T) -> MonoFormatter<'a, T> {
     MonoFormatter { v, types, funcs: None }
 }
 

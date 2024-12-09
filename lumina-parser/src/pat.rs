@@ -265,11 +265,9 @@ impl T {
             | T::OpenCurly
             | T::OpenParen
             | T::OpenList
-            | T::FnOpenParen
             | T::Square
             | T::StringLiteral
-            | T::CharLiteral
-            | T::FnPtrOpenParen => true,
+            | T::CharLiteral => true,
             _ => false,
         }
     }

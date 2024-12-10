@@ -60,6 +60,11 @@ pub fn map f vec as fn(a -> b), Vec a -> Vec b =
     (0, vec.len)
     #(\i -> unsafe_get i vec . f)
 
+pub fn clone vec as Vec a -> Vec a =
+  from_range
+    (0, vec.len)
+    #(\i -> unsafe_get i vec)
+
 when a can ToString
 impl ToString for Vec a
   fn show vec as self -> string =

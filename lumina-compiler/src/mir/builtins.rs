@@ -50,6 +50,7 @@ pub fn signature<'t, 's>(lower: &mut mir::Verify<'t, 's>, span: Span, name: &str
         "iabs" => sig! { 'n' => 'n' },
         "eq" | "lt" | "gt" => sig! { 'a', 'a' => bool },
         "deref" => sig! { (pointer 'a') => 'a' },
+        "memcpy" => sig! { (pointer 'a'), (pointer 'a'), uint => () },
 
         "write" => sig! { (pointer 'a'), 'a' => () },
         "offset" => sig! { (pointer 'a'), uint => (pointer 'a') },
@@ -91,6 +92,7 @@ pub fn lower<'t, 's>(
         "lt" => lower.lower_builtin(params, |p| Expr::Cmp("lt", Box::new(p))),
         "gt" => lower.lower_builtin(params, |p| Expr::Cmp("gt", Box::new(p))),
         "deref" => lower.lower_builtin(params, |[inner]| Expr::Deref(Box::new(inner))),
+        "memcpy" => lower.lower_builtin(params, |params| Expr::MemCpy(Box::new(params))),
         "write" => lower.lower_builtin(params, |p| Expr::Write(Box::new(p))),
         "offset" => lower.lower_builtin(params, |p| Expr::Num("plus", Box::new(p))),
         "unreachable" => {

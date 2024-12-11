@@ -285,6 +285,12 @@ impl SSA {
         self.assign(entry, ty)
     }
 
+    pub fn memcpy(&mut self, dst: Value, src: Value, count: Value) -> Value {
+        let entry = Entry::MemCpy { dst, src, count };
+        let ty = MonoType::Monomorphised(UNIT);
+        self.assign(entry, ty)
+    }
+
     pub fn transmute(&mut self, v: Value, to: MonoType) -> Value {
         let entry = Entry::Transmute(v);
         self.assign(entry, to)
@@ -653,6 +659,11 @@ pub enum Entry {
         ptr: Value,
         value: Value,
     },
+    MemCpy {
+        dst: Value,
+        src: Value,
+        count: Value,
+    },
     Deref(Value),
 }
 
@@ -821,6 +832,9 @@ impl<'a, 'e> fmt::Display for EntryFmt<'a, 'e> {
             Entry::ExtendSigned(v) => write!(f, "{} {v}", "sextend".keyword()),
             Entry::WritePtr { ptr, value } => {
                 write!(f, "{} {ptr} {} {value}", "write".keyword(), "<-".symbol())
+            }
+            Entry::MemCpy { dst, src, count } => {
+                write!(f, "{} {dst} {src} {count}", "memcpy".keyword())
             }
             Entry::IntToFloat(v, _) => {
                 write!(f, "{} {v}", "int_to_float".keyword())

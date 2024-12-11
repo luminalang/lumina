@@ -39,6 +39,7 @@ pub enum Expr {
     ArrayLen(Box<Self>),
 
     ObjectCast(Box<Self>, Type, M<key::Trait>, Vec<Type>),
+    MemCpy(Box<[Self; 3]>),
     Deref(Box<Self>),
     Write(Box<[Self; 2]>),
     ReflectTypeOf(Type),
@@ -540,6 +541,7 @@ impl fmt::Display for Expr {
         let as_ = "as".keyword();
         let oc = '{'.symbol();
         let cc = '}'.symbol();
+        let eq = '='.symbol();
         match self {
             Expr::Call(call, params) if params.is_empty() => {
                 write!(f, "{call}")
@@ -662,6 +664,14 @@ impl fmt::Display for Expr {
             Expr::ValToRef(val) => write!(f, "{op}{} {val}{cp}", "ref_val".keyword()),
             Expr::Deref(inner) => write!(f, "{op}{} {inner}{cp}", "deref".keyword()),
             Expr::Write(p) => write!(f, "{op}{} {} {}{cp}", "write".keyword(), &p[0], &p[1]),
+            Expr::MemCpy(p) => write!(
+                f,
+                "{op}{} dst{eq}{} src{eq}{} count{eq}{}",
+                "memcpy".keyword(),
+                p[0],
+                p[1],
+                p[2]
+            ),
             Expr::ReflectTypeOf(ty) => write!(f, "{op}{} {ty}{cp}", "type-of".keyword()),
             Expr::SizeOf(ty) => write!(f, "{op}{} {ty}{cp}", "size-of".keyword()),
             Expr::AlignOf(ty) => write!(f, "{op}{} {ty}{cp}", "align-of".keyword()),

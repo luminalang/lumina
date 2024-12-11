@@ -304,6 +304,16 @@ impl<'a> Debugger<'a> {
                 assert_eq!(ty, *inner);
                 self.as_unit(exp);
             }
+            Entry::MemCpy { dst, src, count } => {
+                self.check_declared(at, *dst);
+                self.check_declared(at, *src);
+                self.check_declared(at, *count);
+                let dstt = self.lir.type_of_value(self.mfunc, *dst);
+                let srct = self.lir.type_of_value(self.mfunc, *src);
+                assert_eq!(dstt, srct);
+                assert!(matches!(dstt, MonoType::Pointer(..)));
+                self.as_unit(exp);
+            }
             Entry::Deref(ptr) => {
                 self.check_declared(at, *ptr);
                 // TODO: I think our casts are currently implicit for pointers. Wwe should probably change that?

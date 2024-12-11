@@ -205,6 +205,10 @@ impl<'a> FuncLower<'a> {
                 let [ptr, value] = self.params_to_values(&**elems).try_into().unwrap();
                 self.ssa().write(ptr, value)
             }
+            mir::Expr::MemCpy(params) => {
+                let [dst, src, count] = self.params_to_values(&**params).try_into().unwrap();
+                self.ssa().memcpy(dst, src, count)
+            }
             mir::Expr::ObjectCast(expr, weak_impltor, trait_, trait_params) => {
                 let trait_ = *trait_;
                 let expr = self.expr_to_value(expr);

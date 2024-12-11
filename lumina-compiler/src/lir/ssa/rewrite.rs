@@ -194,6 +194,11 @@ where
             for_value_mut(lhs, on_v);
             for_value_mut(rhs, on_v);
         }
+        Entry::MemCpy { dst, src, count } => {
+            for_value_mut(dst, on_v);
+            for_value_mut(src, on_v);
+            for_value_mut(count, on_v);
+        }
         Entry::SizeOf(_) => {}
         Entry::AlignOf(_) => {}
         Entry::Transmute(v)
@@ -250,6 +255,11 @@ pub(super) fn for_entry(entry: &Entry, f: &mut dyn FnMut(V)) {
         | Entry::IntCmpInclusive([lhs, rhs], _, _) => {
             for_value(lhs, f);
             for_value(rhs, f);
+        }
+        Entry::MemCpy { dst, src, count } => {
+            for_value(dst, f);
+            for_value(src, f);
+            for_value(count, f);
         }
         Entry::SizeOf(_) => {}
         Entry::AlignOf(_) => {}

@@ -271,6 +271,13 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 self.ins().write_vlayout_to_ptr(ptr, &value);
                 Layout::ZST
             }
+            lir::Entry::MemCpy { dst, src, count } => {
+                let [dst, src] = [*dst, *src].map(|v| self.value_to_vlayout(v).as_pointer().1);
+                let count = self.value_to_vlayout(*count).as_direct();
+                let config = self.ctx.isa.frontend_config();
+                self.ins().builder.call_memcpy(config, dst, src, count);
+                Layout::ZST
+            }
             lir::Entry::Deref(ptr) => {
                 let ptr = self.value_to_vlayout(*ptr);
                 let (ty, ptr) = ptr.as_pointer();

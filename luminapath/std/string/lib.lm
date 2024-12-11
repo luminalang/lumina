@@ -57,6 +57,9 @@ pub type string {
   inner List u8
 }
 
+pub fn trim v list as u8, string -> string = 
+  { string | inner = list.inner . trim v }
+
 pub fn len {inner} as string -> uint = inner . len
 
 pub fn take n str as uint, string -> string =

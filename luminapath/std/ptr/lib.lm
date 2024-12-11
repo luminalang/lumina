@@ -24,3 +24,6 @@ when t can Type
 pub fn box v as t -> *t =
   let ptr = alloc(t as t) in
     do write ptr v then ptr
+
+pub fn memcpy to from count as *a, *a, uint -> () =
+  builtin:memcpy to from (Type(a):size * count)

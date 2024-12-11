@@ -1,4 +1,5 @@
 use std:list:vec [unsafe_take, from_range]
+use std:list [ifold]
 
 pub type Slice a {
   // For pointer marking to work in the GC we need to hold on to the root
@@ -31,6 +32,9 @@ pub fn unsafe_get i slice as uint, Slice a -> a =
 // for the sake of overloading. Local bindings should still be prioritised though?
 
 pub fn len {len} as Slice a -> uint = len
+
+pub fn fold f acc slice as fn(b, a -> b), b, Slice a -> b =
+  ifold #(\acc i -> f acc (unsafe_get i slice)) acc slice.len
 
 pub fn forEach f slice as fn(a -> ()), Slice a -> () =
   list:itimes #visit slice.len

@@ -2,6 +2,7 @@ use std:maybe [Maybe [..]]
 use std:math [Compare, Num [+]]
 use vec [Vec]
 use slice [Slice]
+use ring [Deque]
 use std:io [crash]
 
 @![langItem(list as List)]
@@ -49,10 +50,22 @@ pub fn ++ left right as List a, List a -> [a] =
     | _ -> Concat left right
 
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
-pub fn fold f acc list as fn(b, a -> b), b, [a] -> b =
+pub fn fold f acc list as fn(b, a -> b), b, List a -> b =
   match list
-  | [x : xs] -> fold #f (f acc x) xs
-  | []       -> acc
+  | Slice slice -> slice:fold #f acc slice
+  | Concat left right -> fold #f (fold #f acc left) right
+  | Singleton v -> f acc v
+  | Nil -> acc
+  // match list
+  // | [x : xs] -> fold #f (f acc x) xs
+  // | []       -> acc
+
+// Fold over a counter
+pub fn ifold f acc n as fn(b, uint -> b), b, uint -> b = 
+  next 0 acc
+ where
+  fn next i acc as uint, b -> b = 
+    if n == i then acc else next (i + 1) (f acc i)
 
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
 pub fn map f list as fn(a -> b), [a] -> [b] =
@@ -61,9 +74,26 @@ pub fn map f list as fn(a -> b), [a] -> [b] =
   | []       -> []
 
 pub fn flat_map f list as fn(a -> [b]), [a] -> [b] = 
+  fold #(\acc x -> acc ++ f x) [] list
+
+when a can Compare
+pub fn trim v list as a, [a] -> [a] = 
   match list
-  | [x : xs] -> f x ++ flat_map #f xs
-  | []       -> []
+  | [x : xs] -> 
+    if x == v
+      then trim_right v xs
+      else trim_right v (x : xs)
+  | [] -> []
+
+when a can Compare
+pub fn trim_right v list as a, [a] -> [a] = 
+  match list
+  | [x] -> 
+    if x == v 
+      then []
+      else [x]
+  | [x : xs] -> x : trim_right v xs
+  | [] -> []
 
 // TODO: we should split out equality operator from Compare, then we can use a constraint here instead
 pub fn deduplicate f list as fn(a, a -> bool), [a] -> [a] = 

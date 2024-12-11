@@ -1,0 +1,115 @@
+use std:ptr [null]
+use std:list
+
+// Based on: 
+//
+// https://www.geeksforgeeks.org/implementation-deque-using-circular-array/
+
+// A mutable Deque implementation built on a ring buffer
+pub type Deque a {
+  // this is a slice
+  ptr *a
+  len int
+
+  head int
+  tail int
+
+  size int
+}
+
+pub fn new size as int -> Deque a = 
+  let rem = size % 2 in
+  let size = size + rem in
+    let ptr = (std:prelude:alloc ((Type(a):size as int) * size)) as *a in
+      { ptr, head = -1, tail = 0, size, len = size }
+
+pub fn from_list size list as int, [a] -> Deque a = 
+  let q = new size in
+    list
+    . list:fold #(\q a -> add_front a q) q
+
+// TODO: this size is of course a terrible idea. It only works when the buffer is larger than it needs to be. 
+pub fn flat_map f q as fn(a -> [b]), Deque a -> Deque b = 
+  fold #(\acc x -> f x . fold #(\acc elem -> add_back elem acc) acc) (new (q.size as int)) q
+
+pub fn fold f acc q as fn(b, a -> b), b, Deque a -> b = 
+  let (x, xs) = pop_front q
+   in fold #f (f acc x) xs
+
+pub fn add_back v q  as a, Deque a -> Deque a = 
+  let q = grow_if_full q in
+  let q =
+    { q
+    ~ head = if q.head == -1 then 0 else q.head
+    , tail =
+      if q.head == -1 then 0
+      else if q.tail == (q.size - 1) then 0
+      else q.tail + 1
+    }
+  in 
+    do ptr:write (ptr:offset q.ptr ((Type(a):size as int) * q.tail)) v
+     then q
+
+pub fn add_front v q as a, Deque a -> Deque a = 
+  let q = grow_if_full q in
+  let q =
+    { q
+    ~ tail = if q.head == -1 then 0 else q.tail
+    , head = 
+      if q.head == -1 then 0
+      else if q.head == 0 then q.size - 1
+      else q.head - 1
+    }
+  in
+    do ptr:write (ptr:offset q.ptr ((Type(a):size as int) * q.head)) v
+     then q
+
+fn grow_if_full q as Deque a -> Deque a = 
+  if is_full q
+    then io:crash ("TODO: queue of length " <> q.len <> " needs reallocation")
+    else q
+
+pub fn pop_front q as Deque a -> (a, Deque a) = 
+  let v = front q in
+    (v,
+    if q.head == q.tail then
+      { q ~ head = -1, tail = -1 }
+    else if q.head == q.size - 1 then
+      { q ~ head = 0 }
+    else
+      { q ~ head = q.head + 1 }
+    )
+
+pub fn pop_back q  as Deque a -> (a, Deque a) = 
+  let v = back q in
+    (v,
+    if q.head == q.tail then
+      { q ~ head = -1, tail = -1 }
+    else if q.tail == 0 then
+      { q ~ tail = q.size - 1 }
+    else
+      { q ~ tail = q.tail - 1 }
+    )
+
+pub fn front q as Deque a -> a = 
+  if is_empty q then
+    io:crash "attempted to get front of empty queue"
+  else
+    ptr:deref (ptr:offset q.ptr ((Type(a):size as int) * q.head))
+
+pub fn back q  as Deque a -> a = 
+  if is_empty q || q.tail < 0 then
+    io:crash "attempted to get back of empty queue"
+  else
+    ptr:deref (ptr:offset q.ptr ((Type(a):size as int) * q.tail))
+
+pub fn is_empty q as Deque a -> bool = 
+  q.head == -1
+
+pub fn is_full q as Deque a -> bool =
+  (q.head == 0 && q.tail == (q.size - 1)) || q.head == (q.tail + 1)
+
+pub fn len q as Deque a -> int = 
+  if q.head >= q.tail
+    then q.head - q.tail
+    else q.size + q.head - q.tail

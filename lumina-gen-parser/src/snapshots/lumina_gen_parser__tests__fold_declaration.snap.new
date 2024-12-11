@@ -1,0 +1,20 @@
+---
+source: lumina-gen-parser/src/tests.rs
+assertion_line: 59
+expression: "{ \"fn fold as (fn b a -> b) b [a] -> b = 0\"; format! (\"\\n{}\", formatted) }"
+---
+Keyword(fn)
+  fold
+  'as'
+  (
+    Keyword(fn)
+      b a
+      '->'
+      b
+  ) b [
+    a
+  ]
+  '->'
+  b
+  '='
+  0

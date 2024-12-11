@@ -651,6 +651,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumina-gen-parser"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "itertools 0.10.5",
+ "logos",
+ "lumina-util",
+]
+
+[[package]]
 name = "lumina-key"
 version = "0.1.0"
 dependencies = [

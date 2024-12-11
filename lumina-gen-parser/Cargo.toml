@@ -1,0 +1,10 @@
+[package]
+name = "lumina-gen-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumina-util = { path = "../lumina-util" }
+logos = { git = "https://github.com/simvux/logos" }
+itertools = "*"
+insta = "*"

@@ -58,6 +58,8 @@ macro_rules! test {
 
 test!(
     fold_declaration,
-    "fn fold as (fn b a -> b) b [a] -> b = 0",
+    "fn fold f acc list as (fn b a -> b) b [a] -> b =
+        match list
+        | [x : xs] -> fold #f (f x acc) xs\n| [] -> []",
     Parser::everything
 );

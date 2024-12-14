@@ -284,6 +284,11 @@ pub fn sortBy f list as fn(a, a -> Ordering), [a] -> [a] =
       then sortBy #f new
       else new
 
+pub fn head list as [a] -> a = 
+  match list
+  | [x : _] -> x
+  | [] -> io:crash "attempted to get head of empty list"
+
 // TODO: Considder splitting equality out from Compare
 // (Eq + Ordering)
 //

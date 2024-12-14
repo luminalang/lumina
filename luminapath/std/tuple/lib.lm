@@ -46,3 +46,13 @@ when
 impl ToString for (a, b, c, d, e, f)
   fn show (a, b, c, d, e, f) as (a, b, c, d, e, f) -> string =
     "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ", " <++> show d <++> show ", " <++> show e <++> show ", " <++> show f <++> show ")"
+
+when
+  a can Compare
+  b can Compare
+impl Compare for (a, b)
+  fn compare (x, y) (a, b) =
+    match compare x a
+    | Ordering:Equal -> compare y b
+    | Ordering:Less  -> Ordering:Less
+    | Ordering:Greater  -> Ordering:Greater

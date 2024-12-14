@@ -334,6 +334,12 @@ impl<'a, 's> Lower<'a, 's> {
     fn lower_cast(&mut self, expr: mir::Expr, ty_of_expr: Tr<Type>, to: Type) -> Expr {
         let expr = Box::new(expr);
         match (&ty_of_expr.value, to) {
+            (Ty::Simple("bool"), Ty::Int(tosize)) => {
+                Expr::IntCast(expr, IntSize::new(false, 8), tosize)
+            }
+            (Ty::Int(fromsize), Ty::Simple("bool")) => {
+                Expr::IntCast(expr, *fromsize, IntSize::new(false, 8))
+            }
             (Ty::Int(fromsize), Ty::Int(tosize)) => Expr::IntCast(expr, *fromsize, tosize),
             (Ty::Int(intsize), Ty::Simple("f64")) => Expr::ToFloatCast(expr, *intsize),
             (Type::Simple("f64"), Type::Int(intsize)) => Expr::FromFloatCast(expr, intsize),

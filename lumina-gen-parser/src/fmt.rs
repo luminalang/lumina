@@ -8,14 +8,15 @@ impl<'s> fmt::Display for Entity<'s> {
             Entity::Commented(comment, _, then) => {
                 write!(f, "{comment}\n{then}")
             }
-            Entity::Delim(delim, elems) => write!(f, "{}\n'{delim}'\n{}", elems[0], elems[1]),
+            Entity::Delim(_, delim, elems) => write!(f, "{}\n'{delim}'\n{}", elems[0], elems[1]),
             Entity::Operator(path) => path.fmt(f),
             Entity::Literal(lit) => lit.fmt(f),
             Entity::Sequence(elems) => write!(f, "{}", elems.iter().format(" ")),
-            Entity::Clause(start, end, inner) => {
+            Entity::Clause(start, end, None) => write!(f, "{start}{end}"),
+            Entity::Clause(start, end, Some(inner)) => {
                 write!(f, "{start}\n  {}\n{end}", indent(inner, "\n  "))
             }
-            Entity::Unary(name, then) => write!(f, "{name}{then}"),
+            Entity::Unary(_, name, then) => write!(f, "{name}{then}"),
             Entity::Identifier(apath) => write!(f, "{apath}"),
             Entity::Keyword(kw, then) => write!(f, "Keyword({kw})\n  {}", indent(then, "\n  "),),
             Entity::Where(where_) => write!(f, "where\n  {}", where_.iter().format("\n  ")),

@@ -4,6 +4,7 @@
 mod lexer;
 pub use lexer::{Lexer, Token};
 use lumina_util::{Error, Identifier, Span, Spanned, Tr};
+mod construct;
 mod fmt;
 
 #[cfg(test)]
@@ -16,15 +17,15 @@ pub enum Entity<'s> {
     Commented(&'s str, bool, Box<Tr<Self>>),
     // a b -> c
     //     ^^
-    Delim(Tr<&'s str>, Box<[Tr<Self>; 2]>),
+    Delim(Span, &'s str, Box<[Tr<Self>; 2]>),
     Literal(Literal<'s>),
-    Clause(&'s str, &'s str, Box<Tr<Self>>),
+    Clause(&'s str, &'s str, Option<Box<Tr<Self>>>),
     Identifier(Identifier<'s>),
     Operator(Identifier<'s>),
     Keyword(&'s str, Box<Tr<Self>>),
     // `a b c`. Handles things like function application
     Sequence(Entities<'s>),
-    Unary(Tr<&'s str>, Box<Tr<Self>>),
+    Unary(Span, &'s str, Box<Tr<Self>>),
 
     /// Entities which are indented under this where-block
     Where(Entities<'s>),
@@ -53,7 +54,8 @@ pub struct Parser<'a> {
 enum Constr<'s> {
     Entity(Tr<Entity<'s>>),
     Delim {
-        middle: Tr<&'s str>,
+        span: Span,
+        middle: &'s str,
         rhs: Tr<Entity<'s>>,
     },
     Unhandled(Token),
@@ -77,7 +79,7 @@ impl<'s> Parser<'s> {
         match con {
             Constr::Entity(v) => and_then(self, v),
             Constr::Failure(span) => and_then(self, Entity::Poison.tr(span)),
-            Constr::Delim { middle, rhs } => {
+            Constr::Delim { span, middle, rhs } => {
                 panic!("ET: incomplete, missing lhs for `{middle}`? (or just unexpected {middle}?)")
             }
             Constr::Unhandled(t) => panic!("??: {t:?}"),
@@ -107,21 +109,26 @@ impl<'s> Parser<'s> {
         let rhs = self.entity();
         self.with_entity(rhs, |this, rhs| {
             let rhs = this.then_try_sequence(rhs);
-            Constr::Delim { middle: name.tr(span), rhs }
+            Constr::Delim { span, middle: name, rhs }
         })
     }
 
     fn next_then_clause(&mut self, span: Span, open: &'s str, close: &'s str) -> Constr<'s> {
         self.lexer.next();
-        self.map_next_entity(span, |this, v| {
-            let closet = match close {
-                ")" => Token::CloseParen,
-                "]" => Token::CloseList,
-                "}" => Token::CloseCurly,
-                _ => unreachable!(),
-            };
-            this.expect(closet, |_| Entity::Clause(open, close, Box::new(v)))
-        })
+        let closet = match close {
+            ")" => Token::CloseParen,
+            "]" => Token::CloseList,
+            "}" => Token::CloseCurly,
+            _ => unreachable!(),
+        };
+        if let Some(end) = self.next_is(closet) {
+            let span = span.extend(end);
+            Constr::Entity(Entity::Clause(open, close, None).tr(span))
+        } else {
+            self.map_next_entity(span, |this, v| {
+                this.expect(closet, |_| Entity::Clause(open, close, Some(Box::new(v))))
+            })
+        }
     }
 
     fn next_then_unary(&mut self, span: Span, name: &'s str) -> Constr<'s> {
@@ -135,7 +142,16 @@ impl<'s> Parser<'s> {
         } else {
             dbg!(got, &t);
             todo!("recovery");
+            // actually; do we even want to `next` or just `peek`?
         }
+    }
+
+    fn next_is(&mut self, t: Token) -> Option<Span> {
+        let (got, span) = self.lexer.peek();
+        (got == t).then(|| {
+            self.lexer.next();
+            span
+        })
     }
 
     fn everything(&mut self) -> Vec<Tr<Entity<'s>>> {
@@ -144,7 +160,7 @@ impl<'s> Parser<'s> {
         loop {
             match self.entity() {
                 Constr::Entity(entity) => toplevel.push(entity),
-                Constr::Delim { middle, rhs } => {
+                Constr::Delim { span, middle, rhs } => {
                     panic!("error: unexpected {middle} {rhs:?}");
                 }
                 Constr::Failure(_) => {
@@ -233,7 +249,7 @@ impl<'s> Parser<'s> {
                     let then = self.entity();
                     self.with_entity(then, |_, v| {
                         let uspan = span.extend(v.span);
-                        let unary = Entity::Unary(str.tr(span), Box::new(v));
+                        let unary = Entity::Unary(span, str, Box::new(v));
                         singleton(uspan, unary)
                     })
                 } else {
@@ -265,10 +281,10 @@ impl<'s> Parser<'s> {
         loop {
             match self.entity() {
                 Constr::Entity(param) => seq.push(param),
-                Constr::Delim { middle, rhs } => {
+                Constr::Delim { span, middle, rhs } => {
                     let lhs = seq_or_singleton(espan.extend_by_params(&seq), seq);
-                    let span = espan.extend(rhs.span);
-                    break Entity::Delim(middle, Box::new([lhs, rhs])).tr(span);
+                    let fspan = espan.extend(rhs.span);
+                    break Entity::Delim(span, middle, Box::new([lhs, rhs])).tr(fspan);
                 }
                 Constr::Failure(_) | Constr::Unhandled(_) => {
                     let span = espan.extend_by_params(&seq);

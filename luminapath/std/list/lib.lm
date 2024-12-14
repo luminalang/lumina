@@ -73,6 +73,27 @@ pub fn map f list as fn(a -> b), [a] -> [b] =
   | [x : xs] -> f x : map #f xs
   | []       -> []
 
+pub fn imap f list as fn(uint, a -> b), [a] -> [b] = 
+  next 0 list
+ where
+  fn next i list = 
+    match list 
+    | [x : xs] -> f i x : next (i + 1) xs
+    | []       -> []
+
+// TODO: use arrays when the syntax is more friendly
+// pub fn windows of list as uint, [a] -> [[a]] = 
+//   let (x, xs) = split_at of list in
+//     if is_empty x
+//       then []
+//       else x : windows of (skip 1 x ++ xs)
+    
+fn is_empty list as List a -> bool = 
+  match list
+  | Nil -> true
+  | _ -> false
+  
+
 pub fn flat_map f list as fn(a -> [b]), [a] -> [b] = 
   fold #(\acc x -> acc ++ f x) [] list
 
@@ -219,7 +240,7 @@ pub fn toVec list as List a -> Vec a =
          . fold #(\i v -> do vec:unsafe_set i v vec then i + 1) 0
       then vec
 
-pub fn split_at at list as uint, List a -> (List a, List a) =
+pub fn split_at at list as uint, List a -> ([a], [a]) =
   if at == 0 then
     (Nil, list)
   else 
@@ -248,6 +269,16 @@ pub fn split_at at list as uint, List a -> (List a, List a) =
           io:crash "split yielded more elemements than requested" // we can remove this check in the future
 
     | Nil -> ([], [])
+
+when a can Compare
+pub fn contains sub list as [a], [a] -> bool = 
+  let (corresponding, after) = split_at (len sub) list in
+    match corresponding
+    | [] -> (len sub) == 0
+    | [x : xs] -> 
+      corresponding == sub
+      || contains sub (xs ++ after)
+    
 
 when a can ToString
 impl ToString for [a]

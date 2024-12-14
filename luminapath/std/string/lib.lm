@@ -103,6 +103,14 @@ pub fn <+> left right as string, u8 -> string =
 pub fn contains_char c str as u8, string -> bool =
   str.inner . any #(\b -> b == c)
 
+pub fn contains sub str as string, string -> bool = 
+  str.inner . list:contains sub.inner
+  // fn split_at_or_empty as self, uint -> (self, self)
+  // let (lhs, rhs) = split_at_or_empty str (sub . len) in
+  //   (lhs . len == sub . len)
+  //   && (lhs == sub || contains sub ((split_first_or_null str).1))
+      
+
 impl ToString for string
   fn show str = str
 
@@ -131,7 +139,11 @@ impl Compare for string
 // TODO: figure out where we want this. Perhaps we want `std:u8:fromString?` or perhaps a Parse trait like Rust?
 // TODO: if we add a `fromInt` to either `Num` or as a seperate trait; we can generalise this. 
 pub fn parse_int str as string -> int =
-  str.inner . fold #(\acc n -> acc * 10 + ((n - '0') as int)) 0
+  match str
+  | "-" xs -> let n = parse xs in 0 - n
+  | _ -> parse str
+ where
+  fn parse str = str.inner . fold #(\acc n -> acc * 10 + ((n - '0') as int)) 0
 
 // pub fn lines str as string -> [string] =
 //   split_on "\n" str

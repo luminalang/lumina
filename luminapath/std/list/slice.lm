@@ -47,6 +47,11 @@ pub fn map f slice as fn(a -> b), Slice a -> Slice b =
     #(\i -> unsafe_get i slice . f)
   . to_slice
 
+pub fn imap f slice as fn(uint, a -> b), Slice a -> Vec b =
+  from_range
+    (0, slice.len)
+    #(\i -> unsafe_get i slice . f i)
+
 // Splits the slice at the given index.
 pub fn split_at at slice as uint, Slice a -> (Slice a, Slice a) =
   (take at slice, skip (at) slice)

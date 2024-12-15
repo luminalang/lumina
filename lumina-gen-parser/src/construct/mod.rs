@@ -54,20 +54,19 @@ impl<'s> Builder<'s> {
     fn func(&mut self, tree: &Entity<'s>) -> Declaration<'s> {
         match tree {
             Entity::Delim(_, "as", elems) => {
-                todo!("the first one in elems[0] is actually the name...");
-                let (name, params) = match &elems[0].value {
-                    Entity::Sequence(elems) => match &elems[0] {
+                let (name, params): (Identifier<'s>, _) = match &elems[0].value {
+                    Entity::Sequence(elems) => match &elems[0].value {
                         Entity::Identifier(ident) => {
                             todo!("actual numerous");
                         }
                         _ => panic!("no name"),
                     },
-                    Entity::Identifier(ident) => (ident, vec![]),
+                    Entity::Identifier(ident) => (ident.clone(), vec![]),
                     _ => panic!("unexpected"),
                 };
                 // elems[0].numerous(&mut buf, Self::pattern);
                 let (sig, body) = self.signature(&elems[1]);
-                self.body(body);
+                let body = self.body(body);
                 Declaration::Function(name, sig, params, body)
             }
             Entity::Delim(_, "=", elems) => {
@@ -100,7 +99,7 @@ impl<'s> Builder<'s> {
         }
     }
 
-    fn body(&mut self, tree: &Entity<'s>) -> Expr {
+    fn body(&mut self, tree: &Entity<'s>) -> Expr<'s> {
         todo!();
     }
 

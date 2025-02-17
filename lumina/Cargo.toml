@@ -8,7 +8,7 @@ edition = "2021"
 lumina-util = { path = "../lumina-util" }
 lumina-key = { path = "../lumina-key" }
 lumina-compiler = { path = "../lumina-compiler" }
-lumina-gen-parser = { path = "../lumina-gen-parser" }
+lumina-tokentree = { path = "../lumina-tokentree" }
 itertools = "*"
 clap = { version = "4.5.*", features = ["derive"] }
 directories = "4.0.*"

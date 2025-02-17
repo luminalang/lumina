@@ -607,8 +607,8 @@ dependencies = [
  "insta",
  "itertools 0.13.0",
  "lumina-compiler",
- "lumina-gen-parser",
  "lumina-key",
+ "lumina-tokentree",
  "lumina-util",
  "target-lexicon 0.13.0",
  "tracing",
@@ -653,18 +653,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lumina-gen-parser"
-version = "0.1.0"
-dependencies = [
- "bitflags",
- "insta",
- "itertools 0.10.5",
- "logos",
- "lumina-util",
- "tracing",
-]
-
-[[package]]
 name = "lumina-key"
 version = "0.1.0"
 dependencies = [
@@ -691,6 +679,18 @@ version = "0.1.0"
 dependencies = [
  "lumina-collections",
  "lumina-key",
+]
+
+[[package]]
+name = "lumina-tokentree"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "insta",
+ "itertools 0.10.5",
+ "logos",
+ "lumina-util",
+ "tracing",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 use super::cli;
-use lumina_gen_parser;
+use lumina_tokentree;
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -24,9 +24,9 @@ pub fn run_file(path: &Path) -> String {
 }
 
 pub fn run_src(src: &str) -> String {
-    let mut parser = lumina_gen_parser::Parser::new(&src);
+    let mut parser = lumina_tokentree::Parser::new(&src);
 
-    let mut formatter = lumina_gen_parser::Formatter::new(&src);
+    let mut formatter = lumina_tokentree::Formatter::new(&src);
 
     let mut buf = String::with_capacity(src.len());
 

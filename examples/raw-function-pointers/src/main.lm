@@ -1,6 +1,6 @@
 type Handlers {
-  this fnptr(i32 -> u32)
-  that fnptr(u32 -> i32)
+  this (fnptr i32 -> u32)
+  that (fnptr u32 -> i32)
 }
 
 fn main =
@@ -8,6 +8,8 @@ fn main =
     handlers.this 5
     . handlers.that
     . std:io:println
+  
 
 fn this_handler n as i32 -> u32 = n as u32
+
 fn that_handler n as u32 -> i32 = n as i32

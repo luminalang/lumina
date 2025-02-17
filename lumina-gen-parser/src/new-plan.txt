@@ -1,0 +1,26 @@
+I think operators in general increase risk way to much. 
+
+Instead; we should work with known constructs with valid followups. And; those followups can actually just be a checks for specific tokens/symbols on the callback. 
+us generalising followup does more harm then good. If we're explicit, then that can be solved (theoretically). 
+
+AND: that'll likely on errors create a big 'unused' construct or something inbetween which will act as poisoning. We can then continue until we find a followup that's valid. 
+
+PROBLEM: if we skip until something that's valid. Then; we might've skipped stuff that's expected 
+further up in the callstack. 
+Hm. Perhaps it's fine if we use this very lightly. Things like `->` can be allowed everywhere. 
+
+I think it'll be fine as long as we have a concept of breakers as well. `)` will always postpone up
+until matching or toplevel for example. 
+
+Operator precedence will not be a thing. But; we might still want to chain the ones on the same level for convenience. 
+And; seperating syntactic operators from ordinary operators would help as well. 
+
+I think we might want `let` to just be a header? and then `=` be an assignment. 
+
+We probably want to return a more fancy enum with recovery information
+
+PROBLEMS: if we want if-guards to use the same construct. Then; our current idea for `if` wouldn't work. 
+
+But I guess we can just act on `if` in `parameter()` instead of failing?
+
+Also; I think we migth want to be more eager to produce a `Failed(...)` variant. Instead of making guesses 

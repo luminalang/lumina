@@ -8,3 +8,5 @@ lumina-util = { path = "../lumina-util" }
 logos = { git = "https://github.com/simvux/logos" }
 itertools = "*"
 insta = "*"
+tracing = "*"
+bitflags = "*"

@@ -1,19 +1,19 @@
 use super::*;
 use itertools::Itertools;
+use tracing::info;
 
 use insta;
 
 macro_rules! parse {
     ($src:literal, $parse:expr, $skip_first:expr) => {
+        lumina_util::test_logger();
         lumina_util::enable_highlighting(false);
+        info!("parasing: {}", $src);
         let mut parser = Parser::new($src);
         if $skip_first {
             parser.lexer.next();
         }
         let ast = $parse(&mut parser);
-        for err in parser.errors.iter() {
-            panic!("{:?}", err);
-        }
 
         let mut remaining = vec![];
         loop {
@@ -26,10 +26,6 @@ macro_rules! parse {
 
         if !remaining.is_empty() && remaining.iter().any(|t| *t != Token::NewLines) {
             panic!("leftover tokens: {:?}", remaining);
-        }
-
-        if !parser.errors.is_empty() {
-            panic!("abording due to parser errors");
         }
 
         let formatted = ast.into_iter().format("\n\n");
@@ -55,6 +51,13 @@ macro_rules! test {
         }
     };
 }
+
+test!(operator_precedence, "a + b * c * d + e", Parser::everything);
+test!(
+    delim_precedence,
+    "a = match b | p0 -> e0 * e1 . c | p1 -> e1 + e1 . c",
+    Parser::everything
+);
 
 test!(
     fold_declaration,

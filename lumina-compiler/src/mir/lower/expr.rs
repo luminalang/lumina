@@ -423,7 +423,7 @@ impl<'a, 's> Lower<'a, 's> {
             let espan = elems
                 .is_empty()
                 .then_some(span)
-                .unwrap_or_else(|| Span::from_params(elems, |elem| elem.span));
+                .unwrap_or_else(|| Span::from_elems(elems, |elem| elem.span));
 
             self.errors
                 .push(FinError::BadArrayCount { got: elems.len().tr(espan), exp: len });

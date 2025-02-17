@@ -2,47 +2,118 @@ use std:string [<++>]
 
 // TODO: using `<>` instead of `<++>` here causes bools to display as ints. 
 // That does not make any sense, and must be some sort of problem with our trait solver? 
-when
-  a can ToString
-  b can ToString
+when a
+  can
+  ToString
+  b
+  can
+  ToString
 impl ToString for (a, b)
   fn show (a, b) as (a, b) -> string =
     "(" <++> show a <++> show ", " <++> show b <++> show ")"
 
-when
-  a can ToString
-  b can ToString
-  c can ToString
+when a
+  can
+  ToString
+  b
+  can
+  ToString
+  c
+  can
+  ToString
 impl ToString for (a, b, c)
   fn show (a, b, c) as (a, b, c) -> string =
-    "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ")"
+    "("
+    <++> show a
+    <++> show ", "
+    <++> show b
+    <++> show ", "
+    <++> show c
+    <++> show ")"
 
-when
-  a can ToString
-  b can ToString
-  c can ToString
-  d can ToString
+when a
+  can
+  ToString
+  b
+  can
+  ToString
+  c
+  can
+  ToString
+  d
+  can
+  ToString
 impl ToString for (a, b, c, d)
   fn show (a, b, c, d) as (a, b, c, d) -> string =
-    "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ", " <++> show d <++> show ")"
+    "("
+    <++> show a
+    <++> show ", "
+    <++> show b
+    <++> show ", "
+    <++> show c
+    <++> show ", "
+    <++> show d
+    <++> show ")"
 
-when
-  a can ToString
-  b can ToString
-  c can ToString
-  d can ToString
-  e can ToString
+when a
+  can
+  ToString
+  b
+  can
+  ToString
+  c
+  can
+  ToString
+  d
+  can
+  ToString
+  e
+  can
+  ToString
 impl ToString for (a, b, c, d, e)
   fn show (a, b, c, d, e) as (a, b, c, d, e) -> string =
-    "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ", " <++> show d <++> show ", " <++> show e <++> show ")"
+    "("
+    <++> show a
+    <++> show ", "
+    <++> show b
+    <++> show ", "
+    <++> show c
+    <++> show ", "
+    <++> show d
+    <++> show ", "
+    <++> show e
+    <++> show ")"
 
-when
-  a can ToString
-  b can ToString
-  c can ToString
-  d can ToString
-  e can ToString
-  f can ToString
+when a
+  can
+  ToString
+  b
+  can
+  ToString
+  c
+  can
+  ToString
+  d
+  can
+  ToString
+  e
+  can
+  ToString
+  f
+  can
+  ToString
 impl ToString for (a, b, c, d, e, f)
   fn show (a, b, c, d, e, f) as (a, b, c, d, e, f) -> string =
-    "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ", " <++> show d <++> show ", " <++> show e <++> show ", " <++> show f <++> show ")"
+    "("
+    <++> show a
+    <++> show ", "
+    <++> show b
+    <++> show ", "
+    <++> show c
+    <++> show ", "
+    <++> show d
+    <++> show ", "
+    <++> show e
+    <++> show ", "
+    <++> show f
+    <++> show ")"

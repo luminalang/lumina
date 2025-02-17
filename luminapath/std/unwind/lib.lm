@@ -7,10 +7,10 @@ use std:io [crash]
 fn unw_getcontext outcontext as *u8 -> int
 
 @[extern "unw_init_local", platform "x86_64"]
-fn unw_init_local cursor context as *u8, *u8 -> i32
+fn unw_init_local cursor context as *u8 *u8 -> i32
 
 @[extern "unw_init_remote", platform "x86_64"]
-fn unw_init_remote cursor addr_space void as *u8, *u8, *u8 -> int
+fn unw_init_remote cursor addr_space void as *u8 *u8 *u8 -> int
 
 @[extern "unw_step", platform "x86_64"]
 fn unw_step cursor as *u8 -> i32
@@ -18,27 +18,30 @@ fn unw_step cursor as *u8 -> i32
 @[extern "unw_resume", platform "x86_64"]
 fn unw_resume cursor as *u8 -> i32
 
-
 @[repr "C"]
 type unw_proc_info {
   start_ip u32
-  end_ip   u32
-  lsda     u32
-
+  end_ip u32
+  lsda u32
   handler u32
-  _gp      u32
-  _flags   u32
-  format  u32
+  _gp u32
+  _flags u32
+  format u32
   unwind_info_size u32
   unwind_info u32
   extra u32
 }
 
 @[extern "unw_get_proc_info", platform "x86_64"]
-fn unw_get_proc_info cursor outinfo as *u8, *unw_proc_info -> i32
+fn unw_get_proc_info cursor outinfo as *u8 *unw_proc_info -> i32
 
 @[extern "unw_get_proc_name", platform "x86_64"]
-fn unw_get_proc_name cursor charptr size offp as *u8, *u8, int, *u32 -> i32
+fn unw_get_proc_name
+  cursor
+  charptr
+  size
+  offp
+  as *u8, *u8 (int (*u32)) -> i32
 
 pub type FuncUnwindInfo {
   raw *unw_proc_info
@@ -49,51 +52,73 @@ pub type FuncUnwindInfo {
 // fn UNW_CONTEXT_SIZE as int = 21
 @[platform "linux"]
 fn UNW_CONTEXT_SIZE as int = 21
+
 @[platform "linux"]
-fn CNW_CURSOR_SIZE  as int = 33
+fn CNW_CURSOR_SIZE as int = 33
 
 @[platform "windows"]
 fn UNW_CONTEXT_SIZE as int = 54
+
 @[platform "windows"]
-fn CNW_CURSOR_SIZE  as int = 204
+fn CNW_CURSOR_SIZE as int = 204
 
-val UNW_ESUCCESS     as int = 0     // no error
-val UNW_EUNSPEC      as int = -6540 // unspecified (general) error
-val UNW_ENOMEM       as int = -6541 // out of memory
-val UNW_EBADREG      as int = -6542 // bad register number
-val UNW_EREADONLYREG as int = -6543 // attempt to write read-only register
-val UNW_ESTOPUNWIND  as int = -6544 // stop unwinding
-val UNW_EINVALIDIP   as int = -6545 // invalid IP
-val UNW_EBADFRAME    as int = -6546 // bad frame
-val UNW_EINVAL       as int = -6547 // unsupported operation or bad value
-val UNW_EBADVERSION  as int = -6548 // unwind info has unsupported version
-val UNW_ENOINFO      as int = -6549 // no unwind info found
+val UNW_ESUCCESS as int = 0
 
+// no error
+val UNW_EUNSPEC as int = -6540
+
+// unspecified (general) error
+val UNW_ENOMEM as int = -6541
+
+// out of memory
+val UNW_EBADREG as int = -6542
+
+// bad register number
+val UNW_EREADONLYREG as int = -6543
+
+// attempt to write read-only register
+val UNW_ESTOPUNWIND as int = -6544
+
+// stop unwinding
+val UNW_EINVALIDIP as int = -6545
+
+// invalid IP
+val UNW_EBADFRAME as int = -6546
+
+// bad frame
+val UNW_EINVAL as int = -6547
+
+// unsupported operation or bad value
+val UNW_EBADVERSION as int = -6548
+
+// unwind info has unsupported version
+val UNW_ENOINFO as int = -6549
+
+// no unwind info found
 // TODO: we need to create an API for stack-allocations
-
 pub fn generate_unwind_info as FuncUnwindInfo =
   let context = libc:malloc (8 * UNW_CONTEXT_SIZE) in
     do io:print "context: " then
     do io:println (unw_getcontext context) then
-
-  let cursor = libc:malloc (8 * CNW_CURSOR_SIZE) in
-    do io:print "unw_init_local: " then
-    do io:println (unw_init_local cursor context) then
-        unwind_at cursor
+      let cursor = libc:malloc (8 * CNW_CURSOR_SIZE) in
+        do io:print "unw_init_local: " then
+        do io:println (unw_init_local cursor context)
+         then unwind_at cursor
 
 fn unwind_at cursor as *u8 -> FuncUnwindInfo =
-  let raw = ptr:alloc(t as unw_proc_info) in
+  let raw = ptr:alloc (t as unw_proc_info) in
   let name = vec:capacity 50 in
-  let offp = ptr:alloc(t as u32) in
+  let offp = ptr:alloc (t as u32) in
     do io:print "unw_get_proc_info: " then
     do io:println (unw_get_proc_info cursor raw) then
     do io:print "unw_get_proc_name: " then
-    do io:println (unw_get_proc_name cursor name.ptr (name.len as int) offp) then
+    do
+      io:println
+        (unw_get_proc_name cursor name.ptr (name.len as int) offp)
+    then
       { raw, name, previous = unwind_next cursor }
 
 fn unwind_next cursor as *u8 -> Maybe FuncUnwindInfo =
   if unw_step cursor == 0
     then Nothing
     else Just (unwind_at cursor)
-
-

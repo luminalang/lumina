@@ -1,0 +1,43 @@
+---
+source: lumina/tests/formatting.rs
+expression: formatted
+snapshot_kind: text
+---
+use std:io
+
+// A simple implementation of the `Maybe` sum type
+type Maybe a 
+  = Just a
+  | Nothing
+  | Very Long
+  | Variant
+  | That Keeps Going
+  | Hello
+
+fn map f m as (fn a -> b) (Maybe a) -> Maybe b =
+  match m
+  | Just a -> Just (f a)
+  | Nothing -> Nothing
+
+fn and f m as (fn a -> Maybe a) (Maybe a) -> Maybe a =
+  match m
+  | Just a -> f a
+  | Nothing -> Nothing
+
+fn or fallback m as (fn a) (Maybe a) -> a =
+  match m
+  | Just a -> a
+  | Nothing -> fallback
+
+when a can ToString
+impl ToString for Maybe a
+  fn show m as self -> string =
+    match m
+    | Nothing -> "Nothing"
+    | Just a -> "Just " <> show a
+
+fn main =
+  Just 5
+  . map #(+ 1)
+  . and #(\n -> Just (n + 1))
+  . io:println

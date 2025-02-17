@@ -40,16 +40,16 @@ pub enum Token {
     #[regex("///[^\n]*")]
     LineDocComment,
 
-    // #[token("pub")]
-    // Pub,
+    #[token("pub")]
+    Pub,
     #[token("if")]
     If,
     #[token("can")]
     Can,
     #[token("as")]
     As,
-    // #[token("=")]
-    // Equal,
+    #[token("=")]
+    Equal,
     #[token("where")]
     Where,
     #[token("when")]
@@ -78,6 +78,8 @@ pub enum Token {
     CloseList,
     #[token(";")]
     SemiColon,
+    #[token("|")]
+    Bar,
     #[token("}")]
     CloseCurly,
     #[token(",")]
@@ -108,7 +110,7 @@ pub enum Token {
     // Soft Keysymbols:
     // =
     // ..
-    #[regex(r#"[:\\!+/*&%@$?^~<>=|\-~|\.@#]+"#)]
+    #[regex(r#"[:\\!+/*&%@$?^~<>=\-~\.@#]+"#)]
     Symbol,
     // TODO: annotated symbols
 
@@ -117,6 +119,7 @@ pub enum Token {
     // for
     // pub
     // alias
+    // as
     #[regex("_|(?&path)")]
     Path,
 
@@ -132,8 +135,10 @@ impl Token {
         use Token as T;
         match self {
             T::Int | T::Float => "number",
+            T::Pub => "`pub` keyword",
             T::NewLines => "new line",
             T::Val => "static",
+            T::Bar => "`|`",
             T::LineDocComment | T::LineComment => "documentation comment",
             T::StringLiteral => "string literal",
             T::CharLiteral => "char literal",
@@ -158,6 +163,7 @@ impl Token {
             T::In => "`in` keyword",
             T::Do => "start of do expression",
             T::Fn => "`fn`",
+            T::Equal => "`=`",
             T::FnPtr => "`fnptr`",
             T::Type => "start of type declaration",
             T::Trait => "start of trait declaration",
@@ -176,6 +182,8 @@ pub struct Lexer<'src> {
     indentation: u16,
     line: u32,
 
+    keep_comments: bool,
+
     pub span_offset: usize,
 
     // we implement our own since Token is Copy
@@ -188,6 +196,7 @@ impl<'src> Clone for Lexer<'src> {
             logos: self.logos.as_lexer().clone().spanned(),
             peeked: self.peeked,
             span_offset: self.span_offset,
+            keep_comments: self.keep_comments,
             indentation: self.indentation,
             line: self.line,
         }
@@ -195,11 +204,12 @@ impl<'src> Clone for Lexer<'src> {
 }
 
 impl<'src> Lexer<'src> {
-    pub fn new(src: &'src str) -> Self {
+    pub fn new(src: &'src str, keep_comments: bool) -> Self {
         Lexer {
             logos: LogosLexer::new(src).spanned(),
             line: 1,
             span_offset: 0,
+            keep_comments,
             indentation: 0,
             peeked: None,
         }
@@ -250,7 +260,7 @@ impl<'src> Lexer<'src> {
         } else {
             let t = match self.logos.next() {
                 None => self.eof(),
-                Some((Token::LineComment, _)) => self.peek_line_sensitive(),
+                Some((Token::LineComment, _)) if !self.keep_comments => self.peek_line_sensitive(),
                 Some((t, mut range)) => {
                     if t == Token::NewLines {
                         self.register_newline(range.clone());
@@ -273,7 +283,7 @@ impl<'src> Lexer<'src> {
                 self.register_newline(span);
                 self.generate()
             }
-            Some((Token::LineComment, _)) => self.generate(),
+            Some((Token::LineComment, _)) if !self.keep_comments => self.generate(),
             Some((t, mut range)) => {
                 range.start += self.span_offset;
                 range.end += self.span_offset;

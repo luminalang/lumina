@@ -1,0 +1,21 @@
+use std:io
+use std:list
+
+fn main =
+  (1 : [2, 3, 4] ++ [5, 6, 7, 8, 9])
+  . map #(* 2)
+  . sum
+  . io:println
+
+fn digits as [int] =
+  list:from_range (0, 10) #(\i -> i as int)
+
+fn my_map f list as (fn a -> b) [a] -> [b] =
+  match list
+  | [x : xs] -> f x : my_map #f xs
+  | [] -> []
+
+pub fn my_fold f acc list as (fn b a -> b) b [a] -> b =
+  match list
+  | [x : xs] -> my_fold #f (f acc x) xs
+  | [] -> acc

@@ -7,6 +7,7 @@ use tracing_tree;
 mod build;
 use build::{build_project, run_built_binary};
 mod cli;
+mod formatter;
 mod init;
 
 fn init_logger() {
@@ -45,5 +46,6 @@ fn main() -> ExitCode {
                 Err(code) => code,
             }
         }
+        cli::Commands::Fmt(settings) => formatter::run(env, settings),
     }
 }

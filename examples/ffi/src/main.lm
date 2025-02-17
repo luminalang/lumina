@@ -4,10 +4,10 @@ fn libc_exit as i32 -> ()
 fn main =
   let outer = returns in
   let n = takes outer in
-    if n == 100 then
-      libc_exit 0
-    else
-      libc_exit n
+    if n == 100
+      then libc_exit 0
+      else libc_exit n
+  
 
 @[repr "C"]
 type Inner {

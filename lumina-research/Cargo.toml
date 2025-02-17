@@ -1,0 +1,8 @@
+[package]
+name = "lumina-research"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumina-key = { path = "../lumina-key" }
+lumina-collections = { path = "../lumina-collections" }

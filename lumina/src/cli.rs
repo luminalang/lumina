@@ -26,6 +26,9 @@ pub enum Commands {
 
     /// Build a Lumina project to temporary directory and run it
     Run(BuildFlags),
+
+    /// Format a lumina project or source file
+    Fmt(FormatFlags),
 }
 
 #[derive(Args, Debug)]
@@ -85,6 +88,16 @@ pub struct BuildFlags {
 
     /// Path to lumina project, defaults to current directory
     pub project: Option<FilePathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct FormatFlags {
+    /// Path to lumina project, defaults to current directory
+    pub project: Option<FilePathBuf>,
+
+    /// Format a single file instead of the entire project
+    #[arg(long)]
+    pub file: Option<FilePathBuf>,
 }
 
 #[derive(Debug)]

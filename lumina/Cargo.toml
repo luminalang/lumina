@@ -8,6 +8,7 @@ edition = "2021"
 lumina-util = { path = "../lumina-util" }
 lumina-key = { path = "../lumina-key" }
 lumina-compiler = { path = "../lumina-compiler" }
+lumina-gen-parser = { path = "../lumina-gen-parser" }
 itertools = "*"
 clap = { version = "4.5.*", features = ["derive"] }
 directories = "4.0.*"
@@ -15,3 +16,4 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-tree = "0.4.0"
 target-lexicon = "0.13.0"
+insta = "*"

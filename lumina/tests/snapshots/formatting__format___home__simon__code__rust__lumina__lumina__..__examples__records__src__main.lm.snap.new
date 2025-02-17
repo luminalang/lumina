@@ -1,0 +1,41 @@
+---
+source: lumina/tests/formatting.rs
+assertion_line: 23
+expression: formatted
+---
+use std:io
+
+fn main = simple_example
+
+// Simple Example
+type User {
+  name string
+  age int
+}
+
+fn simple_example =
+  let jonas = { User | name = "Jonas", age = 15 } in
+  let older_jonas = { jonas ~ age @ n = n + 10 }
+   in io:println (can_drive jonas, can_drive older_jonas)
+  
+ where
+  fn can_drive { age } as User -> bool = age >= 18
+
+// -- //
+// Complex Example
+type Pair a {
+  x a
+  y a
+}
+
+fn modify_deeply_nested pair as Pair (Pair (Pair u8)) ->
+    Pair (Pair (Pair u8)) =
+  { pair ~ x.x.x @ n = n + 1, y.x.x @ n = n + 2 }
+
+fn complex_example =
+  let inner = { Pair u8 | x = 3, y = 4 } in
+  let middle = { Pair (Pair u8) | x = inner, y = inner } in
+  let outer = { Pair (Pair (Pair u8)) | x = middle, y = middle } in
+    (modify_deeply_nested outer)
+    . x.x.x
+    . io:println

@@ -3,6 +3,13 @@ use super::*;
 trait BuilderT<'s, T> {
     fn build(&mut self, elem: &Entity<'s>) -> T;
 
+    fn multiple<V, F>(&mut self, elems: &[Tr<Entity<'s>>], mut f: F) -> Vec<V>
+    where
+        F: FnMut(&mut Self, &Entity<'s>) -> V,
+    {
+        elems.iter().map(|v| f(self, v)).collect()
+    }
+
     fn numerous<V, F>(&mut self, elem: &Entity<'s>, f: F) -> Vec<V>
     where
         F: FnMut(&mut Self, &Entity<'s>) -> V,
@@ -44,7 +51,7 @@ enum Declaration<'s> {
 impl<'s> BuilderT<'s, Declaration<'s>> for Builder<'s> {
     fn build(&mut self, tree: &Entity<'s>) -> Declaration<'s> {
         match tree {
-            Entity::Keyword("fn", decl) => self.func(decl),
+            // Entity::Header("fn", Some(decl)) => self.func(decl),
             _ => panic!("unexpected: {tree:?}"),
         }
     }
@@ -53,48 +60,49 @@ impl<'s> BuilderT<'s, Declaration<'s>> for Builder<'s> {
 impl<'s> Builder<'s> {
     fn func(&mut self, tree: &Entity<'s>) -> Declaration<'s> {
         match tree {
-            Entity::Delim(_, "as", elems) => {
-                let (name, params): (Identifier<'s>, _) = match &elems[0].value {
-                    Entity::Sequence(elems) => match &elems[0].value {
-                        Entity::Identifier(ident) => {
-                            todo!("actual numerous");
-                        }
-                        _ => panic!("no name"),
-                    },
-                    Entity::Identifier(ident) => (ident.clone(), vec![]),
-                    _ => panic!("unexpected"),
-                };
-                // elems[0].numerous(&mut buf, Self::pattern);
-                let (sig, body) = self.signature(&elems[1]);
-                let body = self.body(body);
-                Declaration::Function(name, sig, params, body)
-            }
-            Entity::Delim(_, "=", elems) => {
-                todo!();
-            }
+            // Entity::Operator(_, "as", elems) => {
+            //     let (name, params): (Identifier<'s>, _) = match &elems[0].value {
+            //         Entity::Sequence(elems) => match &elems[0].value {
+            //             Entity::Identifier(ident) => {
+            //                 let params = self.multiple(&elems[1..], Self::pattern);
+            //                 (ident.clone(), params)
+            //             }
+            //             _ => panic!("no name"),
+            //         },
+            //         Entity::Identifier(ident) => (ident.clone(), vec![]),
+            //         _ => panic!("unexpected"),
+            //     };
+            //     // elems[0].numerous(&mut buf, Self::pattern);
+            //     let (sig, body) = self.signature(&elems[1]);
+            //     let body = self.body(body);
+            //     Declaration::Function(name, sig, params, body)
+            // }
+            // Entity::Operator(_, "=", elems) => {
+            //     todo!();
+            // }
             _ => panic!("???"),
         }
     }
 
     fn signature<'e>(&mut self, tree: &'e Entity<'s>) -> (Signature<'s>, &'e Entity<'s>) {
         match tree {
-            Entity::Delim(_, "->", lhs) => {
-                println!("\n{}", &lhs[0]);
-                println!("\n{}", &lhs[1]);
+            // Entity::Operator(_, "->", lhs) => {
+            //     println!("\n{}", &lhs[0]);
+            //     println!("\n{}", &lhs[1]);
 
-                let params = self.numerous(&lhs[0], |this, v| this.ty(false, v));
+            //     let params = self.numerous(&lhs[0], |this, v| this.ty(false, v));
 
-                match &lhs[1].value {
-                    Entity::Commented(..) => todo!(),
-                    Entity::Delim(_, "=", elems) => {
-                        let ret = self.ty(true, &elems[0]);
-                        let signature = Signature(params, Box::new(ret));
-                        let body = &elems[1];
-                        (signature, body)
-                    }
-                    a => panic!("{a}"),
-                }
-            }
+            //     match &lhs[1].value {
+            //         Entity::Commented(..) => todo!(),
+            //         Entity::Operator(_, "=", elems) => {
+            //             let ret = self.ty(true, &elems[0]);
+            //             let signature = Signature(params, Box::new(ret));
+            //             let body = &elems[1];
+            //             (signature, body)
+            //         }
+            //         a => panic!("{a}"),
+            //     }
+            // }
             _ => panic!("unexpected: {tree}"),
         }
     }
@@ -105,46 +113,51 @@ impl<'s> Builder<'s> {
 
     fn ty(&mut self, params: bool, tree: &Entity<'s>) -> Type<'s> {
         match tree {
-            Entity::Clause("(", ")", None) => Type::Tuple(vec![]),
-            Entity::Clause("[", "]", None) => Type::List(vec![]),
-            Entity::Clause("(", ")", Some(inner)) => match &inner.value {
-                Entity::Delim(_, ",", _) => todo!("tuples"),
-                single => self.ty(true, single),
-            },
-            Entity::Clause("[", "]", Some(inner)) => match &inner.value {
-                Entity::Delim(_, ",", _) => todo!("lists"),
-                single => {
-                    let ty = self.ty(true, single);
-                    Type::List(vec![ty])
-                }
-            },
+            Entity::Clause("(", ")", _) => Type::Tuple(vec![]),
+            Entity::Clause("[", "]", _) => Type::List(vec![]),
+            Entity::Clause("(", ")", _) => {
+                todo!();
+            }
+            // match &inner.value {
+            //     Entity::Operator(_, ",", _) => todo!("tuples"),
+            //     single => self.ty(true, single),
+            // },
+            // Entity::Clause("[", "]", Some(inner)) => {
+            //     todo!("commas are nwo inbetween entities");
+            // }
+            // match &inner.value {
+            //     Entity::Operator(_, ",", _) => todo!("lists"),
+            //     single => {
+            //         let ty = self.ty(true, single);
+            //         Type::List(vec![ty])
+            //     }
+            // },
             Entity::Identifier(ident) => Type::Identifier(ident.clone()),
             Entity::Sequence(elems) if params => {
                 let takes = self.ty(false, &elems[0]);
-                let params = todo!("actual multiple");
-                // let params = self.numerous(&elems[1..], |v| v.ty(false));
+                let params = self.multiple(&elems[1..], |this, v| this.ty(false, v));
                 Type::WithParams(Box::new(takes), params)
             }
-            Entity::Keyword("fn", elem) if params => {
-                let sig = self.func_types(elem);
-                Type::Func(FuncKind::Pointer, sig)
-            }
+            // Entity::Header("fn", Some(elem)) if params => {
+            //     let sig = self.func_types(elem);
+            //     Type::Func(FuncKind::Pointer, sig)
+            // }
             _ => panic!("{tree:?}"),
         }
     }
 
     fn func_types(&mut self, tree: &Entity<'s>) -> Signature<'s> {
         match tree {
-            Entity::Delim(_, "->", elems) => {
-                let params = self.numerous(&elems[0], |this, v| this.ty(false, v));
-                let ret = self.ty(true, &elems[1]);
-                Signature(params, Box::new(ret))
-            },
+            // Entity::Operator(_, "->", elems) => {
+            //     let params = self.numerous(&elems[0], |this, v| this.ty(false, v));
+            //     let ret = self.ty(true, &elems[1]);
+            //     Signature(params, Box::new(ret))
+            // },
             _ => panic!("missing return type? do we want to default to unit or default to ret, probably error"),
         }
     }
 
-    fn pattern(&self, tree: &Entity<'s>) -> Pattern<'s> {
+    fn pattern(&mut self, tree: &Entity<'s>) -> Pattern<'s> {
         match tree {
             Entity::Identifier(ident) => Pattern::Identifier(ident.clone()),
             _ => panic!("not a pattern: {tree}"),
@@ -176,13 +189,15 @@ enum FuncKind {
 mod tests {
     use super::*;
 
+    // match list
+    // | [x : xs] -> fold #f (f x acc) xs
+    // | [] -> []
+
     #[test]
     fn function_from_tree() {
         let src = "
         fn fold f acc list as (fn b a -> b) b [a] -> b = 0
-          match list
-          | [x : xs] -> fold #f (f x acc) xs
-          | [] -> []
+          a | b + c | d
             ";
         let entities = Parser::new(src).everything();
 

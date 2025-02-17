@@ -1,0 +1,13 @@
+use std:env
+use std:io
+use std:fs
+
+fn main =
+  match env:get_args
+  | [_, file : xs] ->
+      fs:readFileAt file
+      . or_crash "could not read file"
+      . io:println
+
+  | _ ->
+    io:println "missing input filename"

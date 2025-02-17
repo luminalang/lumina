@@ -4,6 +4,10 @@ fn main =
   [1, 2, 3, 4, 5, 6, 7, 8, 9]
   . map #fizz
   . forEach #io:println
+  . more stuff
+  . test
+  . hello
+  
 
 fn fizz n as int -> string =
   if n % 15 == 0 then
@@ -12,4 +16,5 @@ fn fizz n as int -> string =
     "Fizz"
   else if n % 5 == 0 then
     "Buzz"
-  else show n
+  else
+    show n

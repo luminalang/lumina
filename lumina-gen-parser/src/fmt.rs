@@ -5,30 +5,65 @@ use std::fmt;
 impl<'s> fmt::Display for Entity<'s> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Entity::Commented(comment, _, then) => {
-                write!(f, "{comment}\n{then}")
+            Entity::Commented(_, _, then) => {
+                write!(
+                    f,
+                    "commented\n  {}",
+                    then.to_string().lines().format("\n  ")
+                )
             }
-            Entity::Delim(_, delim, elems) => write!(f, "{}\n'{delim}'\n{}", elems[0], elems[1]),
-            Entity::Operator(path) => path.fmt(f),
-            Entity::Literal(lit) => lit.fmt(f),
-            Entity::Sequence(elems) => write!(f, "{}", elems.iter().format(" ")),
-            Entity::Clause(start, end, None) => write!(f, "{start}{end}"),
-            Entity::Clause(start, end, Some(inner)) => {
-                write!(f, "{start}\n  {}\n{end}", indent(inner, "\n  "))
+            Entity::Isolated(token) => {
+                write!(f, "{token:?}")
             }
-            Entity::Unary(_, name, then) => write!(f, "{name}{then}"),
-            Entity::Identifier(apath) => write!(f, "{apath}"),
-            Entity::Keyword(kw, then) => write!(f, "Keyword({kw})\n  {}", indent(then, "\n  "),),
-            Entity::Where(where_) => write!(f, "where\n  {}", where_.iter().format("\n  ")),
-            Entity::Impl(impl_) => write!(f, "impl\n  {}", impl_.iter().format("\n  ")),
-            Entity::When(elems) => write!(f, "when\n  {}", elems.iter().format("\n  ")),
-            Entity::Poison => "<POISON>".fmt(f),
+            Entity::Match(_, elems) => {
+                write!(f, "match {}", &elems[0]).unwrap();
+                elems.iter().skip(1).try_for_each(|elem| {
+                    write!(f, "\n| {}", elem.to_string().lines().format("\n  "))
+                })
+            }
+            Entity::DotPostfix(elems) => {
+                write!(f, "{}.{}", elems[0], elems[1])
+            }
+            Entity::Symbol(op) => write!(f, "{op}"),
+            Entity::Literal(lit) => write!(f, "{lit}"),
+            Entity::Header(name, _, and_then) => write!(
+                f,
+                "{name}\n  {}",
+                and_then.to_string().lines().format("\n  ")
+            ),
+            Entity::Headers(headers) => {
+                for (name, _, and_then) in headers {
+                    writeln!(
+                        f,
+                        "{name}\n  {}",
+                        and_then.to_string().lines().format("\n  ")
+                    )?;
+                }
+                Ok(())
+            }
+            Entity::Clause(start, _, Some(inner)) => {
+                write!(
+                    f,
+                    "Clause({start})\n  {}",
+                    inner.to_string().lines().format("\n  ")
+                )
+            }
+            Entity::Clause(start, end, None) => {
+                write!(f, "Clause({start}{end}) -")
+            }
+            // Entity::Clause(start, end, None) => write!(f, "{start}{end}"),
+            // Entity::Clause(start, end, Some(inner)) => write!(f, "{start} {inner} {end}"),
+            Entity::Identifier(ident) => write!(f, "{ident}"),
+            Entity::Sequence(seq) => seq.iter().format("\n").fmt(f),
+            Entity::Unary(_, op, then) => write!(f, "{op}{then}"),
+            //Entity::Where(elems) => write!(f, "(where [{}])", elems.iter().format(", ")),
+            //Entity::Impl(elems) => write!(f, "(impl [{}])", elems.iter().format(", ")),
+            Entity::IndentBlock(name, elems) => {
+                write!(f, "{name}\n  {}", elems.iter().format("\n  "))
+            }
+            Entity::Missing => write!(f, "<POISON>"),
         }
     }
-}
-
-fn indent(v: impl fmt::Display, str: &str) -> String {
-    v.to_string().lines().format(str).to_string()
 }
 
 impl<'s> fmt::Display for Literal<'s> {

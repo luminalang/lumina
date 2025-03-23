@@ -1,6 +1,6 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"(*string, *fnptr(*int), ****int)\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"(*string, *(fnptr *int), ****int)\"; format! (\"\\n{}\", ast) }"
+snapshot_kind: text
 ---
-
-(*string, *fnptr(*int), ****int)
+(*string, *(fnptr *int), ****int)

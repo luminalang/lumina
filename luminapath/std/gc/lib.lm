@@ -1,8 +1,7 @@
 use std:libc
 use std:ptr
 
-pub fn alloc size as int -> *u8 = 
-  libc:malloc size
+pub fn alloc size as int -> *u8 = libc:malloc size
 
 pub fn free ptr as *u8 -> () = libc:free ptr
 

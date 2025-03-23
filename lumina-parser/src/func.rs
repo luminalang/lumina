@@ -112,7 +112,7 @@ impl<'a> Parser<'a> {
         let mut ptypes = vec![];
 
         loop {
-            match self.type_with_params() {
+            match self.type_without_params() {
                 Some(t) => ptypes.push(t),
                 None => {
                     ptypes.push(Type::Poison.tr(start));
@@ -120,26 +120,40 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let shorthand_return = |mut ptypes: Vec<_>, eq, end| {
-                let returns = ptypes.remove(0);
+            let shorthand_return = |this: &mut Self, mut ptypes: Vec<Tr<Type<'a>>>, eq, end| {
+                let returns = match &ptypes[0].value {
+                    Type::Defined(anot, params) => {
+                        let mut params = params.clone();
+                        params.extend(ptypes[1..].iter().cloned());
+                        let tspan = Span::from_elems(&ptypes, |v| v.span);
+                        Type::Defined(anot.clone(), params).tr(tspan)
+                    }
+                    _ if ptypes.len() == 1 => ptypes.remove(0),
+                    _ => {
+                        this.err_unmatched(ptypes[1].span, "function return type");
+                        Type::Poison.tr(ptypes[0].span)
+                    }
+                };
+
+                ptypes.clear();
+
                 Some((Typing { span: start.extend(end), ptypes, returns }, eq))
             };
 
             select! { self, "`->`, `=` or `,`", span peeked: true;
-                T::Equal if ptypes.len() == 1 => {
+                T::Equal  => {
                     self.progress();
-                    return shorthand_return(ptypes, true, span);
+                    return shorthand_return(self, ptypes, true, span);
                 },
                 T::Arrow => {
                     self.progress();
                     break;
                 },
-                T::Comma => {
-                    self.progress();
+                t if t.is_valid_start_of_type() => {
                     continue;
                 },
-                _ if ptypes.len() == 1 => {
-                    return shorthand_return(ptypes, false, span);
+                _  => {
+                    return shorthand_return(self,ptypes, false, span);
                 }
             }
         }
@@ -255,7 +269,7 @@ impl<'a> fmt::Display for Typing<'a> {
         if self.ptypes.is_empty() {
             self.returns.fmt(f)
         } else {
-            write!(f, "{} -> {}", self.ptypes.iter().format(", "), self.returns)
+            write!(f, "{} -> {}", self.ptypes.iter().format(" "), self.returns)
         }
     }
 }

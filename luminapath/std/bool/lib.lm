@@ -1,11 +1,5 @@
 impl ToString for bool
   fn show b as bool -> string =
-    if b then "true" else "false"
-
-// impl Compare for bool
-//   fn compare lhs rhs as bool, bool -> Ordering = 
-//     match (lhs, rhs)
-//     | (true, true) -> Ordering:Equal
-//     | (false, false) -> Ordering:Equal
-//     | (true, false) -> Ordering:Greater
-//     | (false, true) -> Ordering:Less
+    if b
+      then "true"
+      else "false"

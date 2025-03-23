@@ -5,22 +5,20 @@ use std:list [List [Slice]]
 use std:ptr
 
 @[platform "linux"]
-type File {
-  fd i32
-}
+type File { fd i32 }
 
 pub type FileMode = ReadOnly | WriteOnly | ReadWrite
 
 @[platform "linux"]
-pub fn open path mode as string, FileMode -> Result File IoError =
+pub fn open path mode as string FileMode -> Result File IoError =
   libc:open (to_c_str path) flag
   . handle_io_errno #(\fd -> Ok { fd })
- where
-  fn flag = 
-    match mode
-    | ReadOnly  -> libc:O_RDONLY
-    | WriteOnly -> libc:O_WRONLY
-    | ReadWrite -> libc:O_RDWR
+  where
+    fn flag =
+      match mode
+      | ReadOnly -> libc:O_RDONLY
+      | WriteOnly -> libc:O_WRONLY
+      | ReadWrite -> libc:O_RDWR
 
 fn errno_to_io_error as IoError =
   match libc:errno
@@ -29,7 +27,7 @@ fn errno_to_io_error as IoError =
   | n -> Unknown n
 
 when n can Num + Compare
-fn handle_io_errno f n as fn(n -> Result a IoError), n -> Result a IoError =
+fn handle_io_errno f n as (fn n -> Result a IoError) n -> Result a IoError =
   if n < Num:zero
     then Err errno_to_io_error
     else f n
@@ -39,16 +37,16 @@ pub type IoError = PermissionDenied | NoSuchFileOrDirectory | Unknown i32
 pub fn readFileAt path as string -> Result string IoError =
   open path ReadOnly . and #readFile
 
-pub fn readFile {fd} as File -> Result string IoError =
-  let rptr = ptr:alloc(t as libc:stat) in
-  libc:fstat fd rptr
-  . handle_io_errno #(\_ -> read rptr) 
- where
-  fn read rptr = 
-    let size = ptr:deref ((ptr:offset rptr 48) as *i64) in
-    let buf = vec:capacity(a as u8) (size as uint) in
-      libc:read fd buf.ptr size
-      . handle_io_errno #(\_ -> Ok (string:fromByteVec buf))
+pub fn readFile { fd } as File -> Result string IoError =
+  let rptr = ptr:alloc (t as libc:stat) in
+    libc:fstat fd rptr
+    . handle_io_errno #(\_ -> read rptr)
+  where
+    fn read rptr =
+      let size = ptr:deref ((ptr:offset rptr 48) as *i64) in
+      let buf = vec:capacity (a as u8) (size as uint) in
+        libc:read fd buf.ptr size
+        . handle_io_errno #(\_ -> Ok (string:fromByteVec buf))
 
 impl ToString for IoError
   fn show err as self -> string =

@@ -1,6 +1,6 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"fn(fnptr(a, b -> c), fn(d -> e) -> fn(f -> fn(g)))\"; format!(\"\\n{}\", ast) }"
+expression: "{\n    \"(fn (fnptr a b -> c) (fn d -> e) -> (fn f -> (fn -> g)))\"; format!\n    (\"\\n{}\", ast)\n}"
+snapshot_kind: text
 ---
-
-fn(fnptr(a, b -> c), fn(d -> e) -> fn(f -> fn(g)))
+(fn (fnptr a b -> c) (fn d -> e) -> (fn f -> (fn g)))

@@ -1,4 +1,3 @@
 use std:io
 
-fn main =
-  io:println ("Hello" <> " " <> "World!")
+fn main = io:println ("Hello" <> " " <> "World!")

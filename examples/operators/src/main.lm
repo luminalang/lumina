@@ -1,6 +1,5 @@
 use std:io
 
-fn main =
-  io:println (10 - 1 * 2 / (4 + 1) - 2 +++ 5)
+fn main = io:println (10 - 1 * 2 / (4 + 1) - 2 +++ 5)
 
-fn +++ x y as int, int -> int = x + y + y
+fn +++ x y as int int -> int = x + y + y

@@ -1,18 +1,17 @@
 use std:maybe [Maybe [..]]
-use std:math [Compare, Num [+]]
+use
+  std:math [Compare, Num [+]]
 use vec [Vec]
 use slice [Slice]
-use ring [Deque]
 use std:io [crash]
 
 @![langItem(list as List)]
-
 // NOTE: DO NOT SWITCH PLACES OF METHODS.
 //
 // THEIR INDICES ARE CONSTANTS IN COMPILER. 
 pub trait Listable a
   @[precedence 1000]
-  fn : as a, self -> self
+  fn : as a self -> self
   fn new as self = Listable(self as self, a as a):with_capacity 0
   fn with_capacity as int -> self
   fn split as self -> Maybe (a, self)
@@ -20,121 +19,80 @@ pub trait Listable a
 pub type List a = Slice (Slice a) | Concat self self | Singleton a | Nil
 
 impl Listable a for List a
-  fn : x xs as a, List a -> List a =
+  fn : x xs as a (List a) -> List a =
     match xs
     | Nil -> Singleton x
-    | _   -> Concat (Singleton x) xs
+    | _ -> Concat (Singleton x) xs
 
   fn with_capacity len as int -> List a =
     Nil
 
-  fn split list as List a -> Maybe (a, List a) = 
+  fn split list as (List a) -> Maybe (a, List a) =
     match list
-    | Slice slice -> 
+    | Slice slice ->
       slice:split slice
-      . map #(\(v, right) -> (v, if right . is_empty then Nil else Slice right))
-
+      . map
+        #(
+          \(v, right) ->
+            (
+              v
+              , if right . is_empty
+                then Nil
+                else Slice right
+            )
+        )
+    
     | Singleton a -> Just (a, Nil)
-    | Nil         -> Nothing
+    | Nil -> Nothing
+    
+    | Concat left right ->
+      split left
+      . map #(\(v, leftright) -> (v, leftright ++ right))
 
-    | Concat left right -> 
-        split left 
-        . map #(\(v, leftright) -> (v, leftright ++ right))
-
-pub fn ++ left right as List a, List a -> [a] =
+pub fn ++ left right as (List a) (List a) -> [a] =
   match left
   | Nil -> right
-  | _   -> 
+  | _ ->
     match right
     | Nil -> left
     | _ -> Concat left right
 
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
-pub fn fold f acc list as fn(b, a -> b), b, List a -> b =
+pub fn fold f acc list as (fn b a -> b) b [a] -> b =
   match list
-  | Slice slice -> slice:fold #f acc slice
-  | Concat left right -> fold #f (fold #f acc left) right
-  | Singleton v -> f acc v
-  | Nil -> acc
-  // match list
-  // | [x : xs] -> fold #f (f acc x) xs
-  // | []       -> acc
-
-// Fold over a counter
-pub fn ifold f acc n as fn(b, uint -> b), b, uint -> b = 
-  next 0 acc
- where
-  fn next i acc as uint, b -> b = 
-    if n == i then acc else next (i + 1) (f acc i)
+  | [x : xs] -> fold #f (f acc x) xs
+  | [] -> acc
 
 // TODO: we should remake this in a vastly more performant way by taking advantage of the concrete variants
-pub fn map f list as fn(a -> b), [a] -> [b] =
+pub fn map f list as (fn a -> b) [a] -> [b] =
   match list
   | [x : xs] -> f x : map #f xs
-  | []       -> []
-
-pub fn imap f list as fn(uint, a -> b), [a] -> [b] = 
-  next 0 list
- where
-  fn next i list = 
-    match list 
-    | [x : xs] -> f i x : next (i + 1) xs
-    | []       -> []
-
-// TODO: use arrays when the syntax is more friendly
-// pub fn windows of list as uint, [a] -> [[a]] = 
-//   let (x, xs) = split_at of list in
-//     if is_empty x
-//       then []
-//       else x : windows of (skip 1 x ++ xs)
-    
-fn is_empty list as List a -> bool = 
-  match list
-  | Nil -> true
-  | _ -> false
-  
-
-pub fn flat_map f list as fn(a -> [b]), [a] -> [b] = 
-  fold #(\acc x -> acc ++ f x) [] list
-
-when a can Compare
-pub fn trim v list as a, [a] -> [a] = 
-  match list
-  | [x : xs] -> 
-    if x == v
-      then trim_right v xs
-      else trim_right v (x : xs)
   | [] -> []
 
-when a can Compare
-pub fn trim_right v list as a, [a] -> [a] = 
+pub fn flat_map f list as (fn a -> [b]) [a] -> [b] =
   match list
-  | [x] -> 
-    if x == v 
-      then []
-      else [x]
-  | [x : xs] -> x : trim_right v xs
+  | [x : xs] -> f x ++ flat_map #f xs
   | [] -> []
 
 // TODO: we should split out equality operator from Compare, then we can use a constraint here instead
-pub fn deduplicate f list as fn(a, a -> bool), [a] -> [a] = 
+pub fn deduplicate f list as (fn a a -> bool) [a] -> [a] =
   match list
-  | [x : xs] -> 
+  | [x : xs] ->
     let next = deduplicate #f xs in
       if any #(\a -> f x a) next
         then next
         else x : next
   | [] -> []
 
-pub fn keep_map f list as fn(a -> Maybe b), [a] -> [b] =
+pub fn keep_map f list as (fn a -> Maybe b) [a] -> [b] =
   match list
-  | [x : xs] -> 
+  | [x : xs] ->
     match f x
-    | Just v  -> v : keep_map #f xs
+    | Just v -> v : keep_map #f xs
     | Nothing -> keep_map #f xs
   | [] -> []
 
-pub fn keep f list as fn(a -> bool), [a] -> [a] =
+pub fn keep f list as (fn a -> bool) [a] -> [a] =
   match list
   | [x : xs] ->
     if f x
@@ -144,43 +102,47 @@ pub fn keep f list as fn(a -> bool), [a] -> [a] =
 
 when n can Num
 pub fn sum list as [n] -> n =
-  fold #+ Num(self as n):zero list
+  fold #+ Num(self as n) :: zero list
 
 when n can Compare
-pub fn max list as [n] -> Maybe n = 
+pub fn max list as [n] -> Maybe n =
   match list
   | [] -> Nothing
-  | [x : xs] -> Just (fold #Compare:max x xs)
+  | [x : xs] ->
+    Just (fold #Compare:max x xs)
 
 when n can Compare
-pub fn min list as [n] -> Maybe n = 
+pub fn min list as [n] -> Maybe n =
   match list
   | [] -> Nothing
-  | [x : xs] -> Just (fold #Compare:min x xs)
+  | [x : xs] ->
+    Just (fold #Compare:min x xs)
 
-pub fn get i list as uint, [a] -> Maybe a = 
+pub fn get i list as uint [a] -> Maybe a =
   match list
-  | [x : xs] -> 
+  | [x : xs] ->
     if i == 0
       then Just x
       else get (i - 1) xs
   | [] -> Nothing
 
-pub fn len list as List a -> uint =
+pub fn len list as (List a) -> uint =
   match list
   | Slice slice -> slice . len
   | Singleton a -> 1
   | Concat left right -> len left + len right
   | Nil -> 0
 
-pub fn forEach f list as fn(a -> ()), List a -> () =
+pub fn forEach f list as (fn a -> ()) (List a) -> () =
   match list
   | Slice slice -> slice . forEach #f
   | Singleton a -> f a
-  | Concat left right -> do forEach #f left then forEach #f right
+  | Concat left right ->
+    do forEach #f left
+     then forEach #f right
   | Nil -> ()
 
-pub fn any f list as fn(a -> bool), List a -> bool =
+pub fn any f list as (fn a -> bool) (List a) -> bool =
   match list
   | Slice slice -> slice . any #f
   | Singleton a -> f a
@@ -190,135 +152,139 @@ pub fn any f list as fn(a -> bool), List a -> bool =
       else any #f right
   | Nil -> false
 
-pub fn all f list as fn(a -> bool), List a -> bool =
+pub fn all f list as (fn a -> bool) (List a) -> bool =
   not (any #(\v -> not (f v)) list)
 
 // Counts the elements which yield true from `f elem`
-pub fn count f list as fn(a -> bool), List a -> uint = 
-  fold #(\acc elem -> if f elem then acc + 1 else acc) 0 list
+pub fn count f list as (fn a -> bool) (List a) -> uint =
+  fold
+    #(
+      \acc elem ->
+        if f elem
+          then acc + 1
+          else acc
+    )
+    0
+    list
 
-pub fn from_range range f as (uint, uint), fn(uint -> a) -> List a =
+pub fn from_range range f as (uint, uint) (fn uint -> a) -> List a =
   Slice (vec:to_slice (vec:from_range range #f))
 
-pub fn reverse list as [a] -> [a] = 
+pub fn reverse list as [a] -> [a] =
   match list
   | [x : xs] -> reverse xs ++ [x]
   | [] -> []
 
-pub fn itimes f n as fn(uint -> ()), uint -> () = 
+pub fn itimes f n as (fn uint -> ()) uint -> () =
   next 0
- where
-  fn next i as uint -> () =
-    if n == i then () else do f i then next (i + 1)
+  where
+    fn next i as uint -> () =
+      if n == i then
+        ()
+      else do f i then
+        next (i + 1)
 
-pub fn break f list as fn(a -> bool), [a] -> ([a], [a]) =
+pub fn break f list as (fn a -> bool) [a] -> ([a], [a]) =
   match list
   | [] -> ([], [])
-  | [x : xs] -> 
+  | [x : xs] ->
     if f x then
       (Nil, x : xs)
-    else 
-      let (left, right) = break #f xs in
-        (x : left, right)
-      // TODO: if we do pointer-equality on `:` could we optimise appending two `Slice`s
-      // into shifting start of a singlular Slice?
+    else let (left, right) = break #f xs in
+      (x : left, right)
 
-pub fn take at list as uint, List a -> List a =
+// TODO: if we do pointer-equality on `:` could we optimise appending two `Slice`s
+// into shifting start of a singlular Slice?
+pub fn take at list as uint (List a) -> List a =
   let (lhs, rhs) = split_at at list
    in lhs
 
-pub fn skip at list as uint, List a -> List a = 
+pub fn skip at list as uint (List a) -> List a =
   let (lhs, rhs) = split_at at list
    in rhs
 
-pub fn toVec list as List a -> Vec a =
+pub fn toVec list as (List a) -> Vec a =
   match list
   | List:Slice { Slice a | source, ptr, len } -> { Vec a | ptr, len }
-  | _ -> 
+  | _ ->
     let vec = vec:capacity (len list) in
       do list
-         . fold #(\i v -> do vec:unsafe_set i v vec then i + 1) 0
-      then vec
+      . fold
+        #(
+          \i v ->
+            do vec:unsafe_set i v vec
+             then i + 1
+        )
+        0
+       then vec
 
-pub fn split_at at list as uint, List a -> ([a], [a]) =
+pub fn split_at at list as uint (List a) -> (List a, List a) =
   if at == 0 then
     (Nil, list)
-  else 
+  else
     match list
-    | Slice slice -> 
-      let (left, right) = slice . split_at at
-       in (Slice left, if right . is_empty then Nil else Slice right)
-
-    | Singleton a -> 
-      (Singleton a, Nil)
-
+    | Slice slice ->
+      let (left, right) = slice . split_at at in
+        (
+          Slice left
+          , if right . is_empty
+            then Nil
+            else Slice right
+        )
+    
+    | Singleton a -> (Singleton a, Nil)
+    
     | Concat left right ->
       let (l, r) = split_at at left in
-
       let received = len l in
-
         if received == at then
           (l, r ++ right)
-
         else if received < at then
           let remaining = at - received in
-           let (x, y) = split_at remaining (r ++ right)
-            in (l ++ x, y)
-
+          let (x, y) =
+            split_at remaining (r ++ right)
+           in (l ++ x, y)
         else
-          io:crash "split yielded more elemements than requested" // we can remove this check in the future
+          io:crash "split yielded more elemements than requested"
 
+    // we can remove this check in the future
     | Nil -> ([], [])
-
-when a can Compare
-pub fn contains sub list as [a], [a] -> bool = 
-  let (corresponding, after) = split_at (len sub) list in
-    match corresponding
-    | [] -> (len sub) == 0
-    | [x : xs] -> 
-      corresponding == sub
-      || contains sub (xs ++ after)
-    
 
 when a can ToString
 impl ToString for [a]
   fn show list as [a] -> string =
     "[" <> show_ list
-  where
-    fn show_ list as [a] -> string = 
-      match list
-      | [] -> "]"
-      | [last] -> show last <> "]"
-      | [x : xs] -> show x <> ", " <> show_ xs
+    where
+      fn show_ list as [a] -> string =
+        match list
+        | [] -> "]"
+        | [last] -> show last <> "]"
+        | [x : xs] ->
+          show x <> ", " <> show_ xs
 
-pub fn zip lhs rhs as [a], [b] -> [(a, b)] =
+pub fn zip lhs rhs as [a] [b] -> [(a, b)] =
   match (lhs, rhs)
   | ([l : lxs], [r : rxs]) -> (l, r) : zip lxs rxs
   | _ -> []
 
-pub fn something f list as fn(a, a -> Ordering), [a] -> ([a], bool) =
+pub fn something f list as (fn a a -> Ordering) [a] -> ([a], bool) =
   match list
   | [] -> ([], false)
   | [x] -> ([x], false)
-  | [x, y : xs] -> 
+  | [x, y : xs] ->
     match f x y
-    | Ordering:Greater -> 
+    | Ordering:Greater ->
       let (after, _) = something #f (x : xs)
        in (y : after, true)
-    | _ -> 
-      let (after, changed) =  something #f (y : xs)
+    | _ ->
+      let (after, changed) = something #f (y : xs)
        in (x : after, changed)
 
-pub fn sortBy f list as fn(a, a -> Ordering), [a] -> [a] =
+pub fn sortBy f list as (fn a a -> Ordering) [a] -> [a] =
   let (new, changed) = something #f list in
     if changed
       then sortBy #f new
       else new
-
-pub fn head list as [a] -> a = 
-  match list
-  | [x : _] -> x
-  | [] -> io:crash "attempted to get head of empty list"
 
 // TODO: Considder splitting equality out from Compare
 // (Eq + Ordering)
@@ -326,20 +292,21 @@ pub fn head list as [a] -> a =
 // Since adding it for string is kinda stupid
 //
 // Trait aliases could be nice here
+
 when a can Compare
 impl Compare for [a]
-  fn compare lhs rhs as [a], [a] -> Ordering =
+  fn compare lhs rhs as [a] [a] -> Ordering =
     match compare (len lhs) (len rhs)
-    | Ordering:Less    -> Ordering:Less
+    | Ordering:Less -> Ordering:Less
     | Ordering:Greater -> Ordering:Greater
-    | Ordering:Equal   ->
-    // TODO: this repeats the length check for each element which is of course wrong
+    | Ordering:Equal ->
+      // TODO: this repeats the length check for each element which is of course wrong
       match (lhs, rhs)
-      | ([lx : lxs], [rx : rxs]) -> 
+      | ([lx : lxs], [rx : rxs]) ->
         match compare lx rx
         | Ordering:Less -> Ordering:Less
         | Ordering:Greater -> Ordering:Greater
-        | Ordering:Equal -> 
-          compare lxs rxs
+        | Ordering:Equal -> compare lxs rxs
       | ([], []) -> Ordering:Equal
-      | _        -> crash "linear scan for lists of non-equal length shouldn't happen"
+      | _ ->
+        crash "linear scan for lists of non-equal length shouldn't happen"

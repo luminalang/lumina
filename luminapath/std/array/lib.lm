@@ -4,7 +4,7 @@ use std:list
 
 fn len arr as [a; n] -> uint = builtin:array_len arr
 
-fn get i arr as uint, [a; n] -> a =
+fn get i arr as uint [a; n] -> a =
   if builtin:array_len arr >= i
     then builtin:array_get i arr
     else io:crash "out of bound"
@@ -15,15 +15,14 @@ fn get i arr as uint, [a; n] -> a =
 // We could probably do that by just setting a flag in `Translator::self`
 // OR: we can have a `VEntry::StackSlot` to edge-case statically known pointers?
 // nah that wouldn't help here. (or no I think it actually would, hm)
-
-fn map f arr as fn(a -> b), [a; n] -> [b; n] =
-  let raw = builtin:alloca([b; n]) as *b in 
-    do list:itimes #(transform_and_write raw) (len arr) 
+fn map f arr as (fn a -> b) [a; n] -> [b; n] =
+  let raw = builtin:alloca([b; n]) as *b in
+    do list:itimes #(transform_and_write raw) (len arr)
      then raw as [b; n]
- where
-  fn transform_and_write raw i as *b, uint -> () = 
-    let elem = get i arr
-     in ptr:write (ptr:offsetu raw (Type(b):size * i)) (f elem)
+  where
+    fn transform_and_write raw i as *b uint -> () =
+      let elem = get i arr
+       in ptr:write (ptr:offsetu raw (Type(b):: size * i)) (f elem)
 
-fn for_each f arr as fn(a -> ()), [a; n] -> () =
-  list:itimes #(\i -> get i arr . f) (len arr) 
+fn for_each f arr as (fn a -> ()) [a; n] -> () =
+  list:itimes #(\i -> get i arr . f) (len arr)

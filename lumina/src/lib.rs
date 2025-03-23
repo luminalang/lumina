@@ -3,6 +3,7 @@
 mod build;
 pub use build::{build_project, run_built_binary};
 pub mod cli;
+pub mod formatter;
 use lumina_util::test_logger;
 use std::path::PathBuf;
 

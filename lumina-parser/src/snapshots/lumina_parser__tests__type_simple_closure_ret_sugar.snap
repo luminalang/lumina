@@ -1,6 +1,6 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"fn(b)\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"(fn -> b)\"; format! (\"\\n{}\", ast) }"
+snapshot_kind: text
 ---
-
-fn(b)
+(fn b)

@@ -1,32 +1,31 @@
 use std:io
 
 // A simple implementation of the `Maybe` sum type
-
-type Maybe a
+type Maybe a 
   = Just a
   | Nothing
 
-fn map f m as fn(a -> b), Maybe a -> Maybe b =
+fn map f m as (fn a -> b) (Maybe a) -> Maybe b =
   match m
-  | Just a  -> Just (f a)
+  | Just a -> Just (f a)
   | Nothing -> Nothing
 
-fn and f m as fn(a -> Maybe a), Maybe a -> Maybe a =
+fn and f m as (fn a -> Maybe a) (Maybe a) -> Maybe a =
   match m
-  | Just a  -> f a
+  | Just a -> f a
   | Nothing -> Nothing
 
-fn or fallback m as fn(a), Maybe a -> a = 
+fn or fallback m as (fn a) (Maybe a) -> a =
   match m
-  | Just a  -> a
+  | Just a -> a
   | Nothing -> fallback
 
-when a can ToString
+when a as ToString
 impl ToString for Maybe a
   fn show m as self -> string =
     match m
     | Nothing -> "Nothing"
-    | Just a  -> "Just " <> show a
+    | Just a -> "Just " <> show a
 
 fn main =
   Just 5

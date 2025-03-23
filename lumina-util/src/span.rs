@@ -2,7 +2,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut, Range};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Span {
     pub indice: u32,
     pub length: u16,
@@ -111,16 +111,18 @@ impl From<Range<usize>> for Span {
     }
 }
 
-impl std::hash::Hash for Span {
-    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
-}
-
-impl Eq for Span {}
-impl PartialEq for Span {
-    fn eq(&self, _: &Self) -> bool {
-        true
-    }
-}
+// We should just use `Tr` or `Ign` instead
+//
+// impl std::hash::Hash for Span {
+//     fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+// }
+//
+// impl Eq for Span {}
+// impl PartialEq for Span {
+//     fn eq(&self, _: &Self) -> bool {
+//         true
+//     }
+// }
 
 impl Span {
     pub fn new(indice: u32, length: u16) -> Self {
@@ -134,11 +136,8 @@ impl Span {
         }
     }
 
-    pub fn from_params<'a, T>(
-        params: impl IntoIterator<Item = T>,
-        get: impl Fn(T) -> Span,
-    ) -> Self {
-        let mut params = params.into_iter();
+    pub fn from_elems<'a, T>(elems: impl IntoIterator<Item = T>, get: impl Fn(T) -> Span) -> Self {
+        let mut params = elems.into_iter();
         let x = params.next().unwrap();
         match params.last() {
             Some(last) => get(x).extend(get(last)),
@@ -165,8 +164,17 @@ impl Span {
         self
     }
 
-    pub fn shift_left(&mut self, by: i16) -> Self {
+    pub fn shift_left(self, by: i16) -> Self {
         self.move_indice(by as i32).extend_length(by)
+    }
+
+    pub fn start_of_line(mut self, src: &[u8]) -> Self {
+        loop {
+            match src.get(self.indice as usize) {
+                Some(b'\n') | None => return self.move_indice(1),
+                _ => self.indice -= 1,
+            }
+        }
     }
 
     pub fn extend_length(mut self, by: i16) -> Self {

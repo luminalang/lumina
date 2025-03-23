@@ -5,7 +5,7 @@ use std::path::{Path as FilePath, PathBuf};
 use tinyvec::TinyVec;
 
 /// An either incomplete or complete path
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Identifier<'src> {
     segments: TinyVec<[&'src str; 4]>,
 }
@@ -56,8 +56,8 @@ impl<'src> Identifier<'src> {
             .map(|segments| Identifier { segments })
     }
 
-    pub fn from_segments(segments: &[&'src str]) -> Self {
-        Self { segments: TinyVec::from(segments) }
+    pub fn from_segments(segments: Vec<&'src str>) -> Self {
+        Self { segments: TinyVec::Heap(segments) }
     }
 
     /// Returns true if path only contains a single segment
@@ -148,6 +148,12 @@ impl<'src> Add<&Self> for Identifier<'src> {
 impl<'src> fmt::Display for Identifier<'src> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.segments.iter().format(":").fmt(f)
+    }
+}
+
+impl<'src> fmt::Debug for Identifier<'src> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{self}")
     }
 }
 

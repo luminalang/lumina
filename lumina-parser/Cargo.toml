@@ -9,6 +9,7 @@ edition = "2021"
 [dependencies]
 lumina-util = { path = "../lumina-util/" }
 lumina-key = { path = "../lumina-key" }
+lumina-tokentree = { path = "../lumina-tokentree" }
 itertools = "0.10.*" 
 logos = { git = "https://github.com/simvux/logos" }
 insta = "1.39.*"

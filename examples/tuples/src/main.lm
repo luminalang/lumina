@@ -1,8 +1,8 @@
 use std:io
 
 fn main =
-  let user = ("Jonas", 25) in
-    print_user user
+  let user = ("Jonas", 25)
+   in print_user user
 
 fn print_user (name, age) as (string, int) -> () =
   io:println (name <> " " <> show age)

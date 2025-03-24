@@ -1,3 +1,6 @@
+// extern crate libc;
+// extern crate mmtk;
+
 use std::sync::OnceLock;
 
 use mmtk::vm::VMBinding;
@@ -27,23 +30,19 @@ impl VMBinding for DummyVM {
 
     /// Allowed maximum alignment in bytes.
     const MAX_ALIGNMENT: usize = 1 << 6;
+
+    const MIN_ALIGNMENT: usize = 4;
 }
 
-use mmtk::util::{Address, ObjectReference};
-
-impl DummyVM {
-    pub fn object_start_to_ref(start: Address) -> ObjectReference {
-        // Safety: start is the allocation result, and it should not be zero with an offset.
-        unsafe {
-            ObjectReference::from_raw_address_unchecked(
-                start + crate::object_model::OBJECT_REF_OFFSET,
-            )
-        }
-    }
-}
-
-pub static SINGLETON: OnceLock<Box<MMTK<DummyVM>>> = OnceLock::new();
+pub static GC: OnceLock<Box<MMTK<DummyVM>>> = OnceLock::new();
 
 fn mmtk() -> &'static MMTK<DummyVM> {
-    SINGLETON.get().unwrap()
+    GC.get().unwrap()
 }
+
+// MMTK expects the langauge runtime to spawn threads.
+//
+// This makes sense; since it means Lumina will always be aware of which threads exist
+// (including those implicitly created by MMTK)
+//
+// However; it also means that hooking up the musl/glibc calls for that will be important.

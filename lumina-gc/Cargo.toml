@@ -15,8 +15,9 @@ lto = true
 lto = true
 
 [dependencies]
-mmtk = "0.26.0"
+mmtk = "0.30.0"
 log = "*"
+libc = "*"
 
 [features]
 default = []

@@ -236,7 +236,7 @@ impl<'s> Collector<'s> {
                     take_mut::take(&mut body.expr, |expr| {
                         let span = expr.span;
                         let print = Expr::Call(
-                            AnnotatedPath::without(Identifier::from_segments(&[
+                            AnnotatedPath::without(Identifier::from_segments(vec![
                                 "std",
                                 "io",
                                 "raw_print",
@@ -558,6 +558,12 @@ impl<'s> Collector<'s> {
         let error = self.sources.error("syntax error").m(module);
 
         match err {
+            ParseError::FnNeedsParenthesis(span) => {
+                error.eline(span, "closure type needs wrapping parenthesis")
+            }
+            ParseError::ToplevelWhere(span) => {
+                error.eline(span, "where needs an indentation level greater than 0")
+            }
             ParseError::InvalidAttributes(_, aspan) => {
                 error.eline(aspan, "this declaration can not take attributes")
             }

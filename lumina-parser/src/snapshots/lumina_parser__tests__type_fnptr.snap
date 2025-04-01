@@ -1,6 +1,6 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"fnptr(a -> b)\"; format!(\"\\n{}\", ast) }"
+expression: "{ \"(fnptr a -> b)\"; format! (\"\\n{}\", ast) }"
+snapshot_kind: text
 ---
-
-fnptr(a -> b)
+(fnptr a -> b)

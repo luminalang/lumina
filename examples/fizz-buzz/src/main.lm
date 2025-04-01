@@ -12,4 +12,5 @@ fn fizz n as int -> string =
     "Fizz"
   else if n % 5 == 0 then
     "Buzz"
-  else show n
+  else
+    show n

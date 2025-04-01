@@ -2,6 +2,7 @@ use super::{select, when, Expr, Parser, Pattern, Span, Tr, Type, T};
 use itertools::Itertools;
 use lumina_util::{Highlighting, Identifier, Spanned};
 use std::fmt;
+use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct Declaration<'a> {
@@ -54,6 +55,8 @@ impl<'a> Parser<'a> {
             self.err_expected_but_got(span, "a name", "a path");
             identifier.split_last().1
         });
+
+        trace!("parsing function {name}");
 
         let params = match self.pat_params(false) {
             Some(params) => params,
@@ -112,7 +115,7 @@ impl<'a> Parser<'a> {
         let mut ptypes = vec![];
 
         loop {
-            match self.type_with_params() {
+            match self.type_without_params() {
                 Some(t) => ptypes.push(t),
                 None => {
                     ptypes.push(Type::Poison.tr(start));
@@ -120,26 +123,40 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let shorthand_return = |mut ptypes: Vec<_>, eq, end| {
-                let returns = ptypes.remove(0);
+            let shorthand_return = |this: &mut Self, mut ptypes: Vec<Tr<Type<'a>>>, eq, end| {
+                let returns = match &ptypes[0].value {
+                    Type::Defined(anot, params) => {
+                        let mut params = params.clone();
+                        params.extend(ptypes[1..].iter().cloned());
+                        let tspan = Span::from_elems(&ptypes, |v| v.span);
+                        Type::Defined(anot.clone(), params).tr(tspan)
+                    }
+                    _ if ptypes.len() == 1 => ptypes.remove(0),
+                    _ => {
+                        this.err_unmatched(ptypes[1].span, "function return type");
+                        Type::Poison.tr(ptypes[0].span)
+                    }
+                };
+
+                ptypes.clear();
+
                 Some((Typing { span: start.extend(end), ptypes, returns }, eq))
             };
 
             select! { self, "`->`, `=` or `,`", span peeked: true;
-                T::Equal if ptypes.len() == 1 => {
+                T::Equal  => {
                     self.progress();
-                    return shorthand_return(ptypes, true, span);
+                    return shorthand_return(self, ptypes, true, span);
                 },
                 T::Arrow => {
                     self.progress();
                     break;
                 },
-                T::Comma => {
-                    self.progress();
+                t if t.is_valid_start_of_type() => {
                     continue;
                 },
-                _ if ptypes.len() == 1 => {
-                    return shorthand_return(ptypes, false, span);
+                _  => {
+                    return shorthand_return(self,ptypes, false, span);
                 }
             }
         }
@@ -155,6 +172,12 @@ impl<'a> Parser<'a> {
     fn where_binds(&mut self, kw_span: Span) -> Vec<Declaration<'a>> {
         let base_indent = self.lexer.current_indent();
 
+        if base_indent == 0 {
+            self.err_toplevel_where(kw_span);
+            self.recover_next_toplevel();
+            return vec![];
+        }
+
         let mut where_binds = Vec::with_capacity(1);
 
         loop {
@@ -165,17 +188,11 @@ impl<'a> Parser<'a> {
                 //
                 // We should probably pass that information along to here so we can create an error for it.
                 T::Fn if belongs_to_where(base_indent, indent) => {
-                    self.progress();
-                    match self.func(when::Constraints::empty(), Some(kw_span), vec![]) {
-                        Some(decl) => where_binds.push(decl),
-                        None => {
-                            self.recover_next_toplevel();
-                            continue;
-                        }
-                    }
+                    self.accept_where_item(kw_span, &mut where_binds);
                 }
                 T::Pub | T::OpenAttribute | T::Default if belongs_to_where(base_indent, indent) => {
                     self.err_bad_header_for_where(span, t);
+                    self.progress();
                 }
                 _ if t.is_header() => break where_binds,
                 other => {
@@ -185,6 +202,16 @@ impl<'a> Parser<'a> {
                     );
                     self.recover_next_toplevel();
                 }
+            }
+        }
+    }
+
+    fn accept_where_item(&mut self, kw_span: Span, buf: &mut Vec<Declaration<'a>>) {
+        self.progress();
+        match self.func(when::Constraints::empty(), Some(kw_span), vec![]) {
+            Some(decl) => buf.push(decl),
+            None => {
+                self.recover_next_toplevel();
             }
         }
     }
@@ -255,7 +282,7 @@ impl<'a> fmt::Display for Typing<'a> {
         if self.ptypes.is_empty() {
             self.returns.fmt(f)
         } else {
-            write!(f, "{} -> {}", self.ptypes.iter().format(", "), self.returns)
+            write!(f, "{} -> {}", self.ptypes.iter().format(" "), self.returns)
         }
     }
 }

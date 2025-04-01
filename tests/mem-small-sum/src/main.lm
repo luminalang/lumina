@@ -8,7 +8,8 @@ fn returns a as i32 -> Option =
 fn exits a as Option -> () =
   match a
   | Some n -> libc_exit n
-  | None   -> libc_exit 100
+  | None -> libc_exit 100
 
 fn main =
   exits (passes (returns 40))
+

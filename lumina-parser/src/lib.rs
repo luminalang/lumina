@@ -5,6 +5,7 @@ use std::fmt;
 mod lexer;
 pub use lexer::Token;
 use lexer::{Lexer, Token as T};
+use tracing::trace;
 
 mod expr;
 pub use expr::{Expr, Literal};
@@ -57,7 +58,9 @@ macro_rules! select {
                     $then
                 },)+
                 #[allow(unreachable_patterns)]
-                _ => {
+                other => {
+                    tracing::trace!("unexpected token {other:?}; starting recovery");
+
                     $parser.err_unexpected_token((t, _select_span), $exp);
                     if !settings.recovery {
                         return None;
@@ -152,6 +155,7 @@ impl<'a> Parser<'a> {
 
     pub fn declaration(&mut self) -> Option<(Span, Declaration<'a>)> {
         let ((kw, span), ind) = self.lexer.peek_with_indent();
+        trace!("attempting to get next declaration at {kw:?}");
 
         if ind > 0 && kw.is_header() {
             self.err_bad_indentation(span);

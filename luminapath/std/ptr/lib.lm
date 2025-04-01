@@ -1,16 +1,17 @@
 // Overwrite the data stored at pointer location with supplied value
-pub fn write ptr v as *a, a -> () = builtin:write ptr v
+pub fn write ptr v as *a a -> () = builtin:write ptr v
 
 // Dereference the pointer
 pub fn deref ptr as *a -> a = builtin:deref ptr
 
 // TODO: pretty sure we made it so that builtin:add works with pointer.
 // So; we shouldn't need builtin:offset anymore. 
-
 // Offset the pointer by a set amount of bytes
-pub fn offset ptr by as *a, int -> *a = builtin:offset ptr (by as uint)
+pub fn offset ptr by as *a int -> *a =
+  builtin:offset ptr (by as uint)
 
-pub fn offsetu ptr by as *a, uint -> *a = builtin:offset ptr by
+pub fn offsetu ptr by as *a uint -> *a =
+  builtin:offset ptr by
 
 pub fn null as *a = 0 as *a
 
@@ -18,12 +19,11 @@ when t can Type
 pub fn alloc as *t = std:prelude:alloc (Type(t):size as int) as *t
 
 when t can Type
-pub fn dealloc ptr as *t -> () = std:prelude:dealloc (ptr as *u8) (Type(t):size as int)
+pub fn dealloc ptr as *t -> () =
+  std:prelude:dealloc (ptr as *u8) (Type(t):size as int)
 
 when t can Type
 pub fn box v as t -> *t =
   let ptr = alloc(t as t) in
-    do write ptr v then ptr
-
-pub fn memcpy to from count as *a, *a, uint -> () =
-  builtin:memcpy to from (Type(a):size * count)
+    do write ptr v
+     then ptr

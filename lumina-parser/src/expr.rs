@@ -4,6 +4,7 @@ use super::{
 use itertools::Itertools;
 use lumina_util::{Highlighting, Identifier, Span, Spanned, Tr};
 use std::fmt;
+use tracing::trace;
 
 #[derive(Clone, Debug)]
 pub enum Expr<'a> {
@@ -622,6 +623,11 @@ impl<'p, 'a> ExprParser<'p, 'a> {
     }
 
     fn expr_match(&mut self, kw_span: Span) -> Option<Tr<Expr<'a>>> {
+        trace!(
+            "entering match: {}",
+            kw_span.get_line(self.parser.lexer.source()).0
+        );
+
         if let Err(err) = self.indent_tracker.new_match(kw_span) {
             self.parser.err_invalid_nested_match(err.kw, kw_span);
             return None;
@@ -672,19 +678,25 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                     }
                     IndentOwnership::InvalidSameLine => {
                         self.err_invalidly_placed_vertical_bar();
-                        self.indent_tracker.finish_match();
+                        // self.indent_tracker.finish_match();
                         return None;
                     }
                     IndentOwnership::InvalidSameDiff(conflict) => {
                         // TODO: we probably still want to run the exprs for errors. But then just
                         // discard the results.
                         self.parser.err_bad_bar_indent(span, conflict);
-                        self.indent_tracker.finish_match();
+                        // self.indent_tracker.finish_match();
                         return None;
                     }
-                    IndentOwnership::Other => break,
+                    IndentOwnership::Other => {
+                        // self.indent_tracker.finish_match();
+                        break;
+                    }
                 },
-                _ => break,
+                _ => {
+                    // self.indent_tracker.finish_match();
+                    break;
+                }
             }
         }
 

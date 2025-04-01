@@ -108,17 +108,17 @@ r#type!(type_ints, "Con int uint i8 i64 u8 u64");
 r#type!(type_floats, "Con f32 f64");
 r#type!(type_bool, "bool");
 r#type!(type_simple_defined, "Con int");
-r#type!(type_simple_closure, "fn(a -> b)");
-r#type!(type_simple_closure_ret_sugar, "fn(b)");
-r#type!(type_fnptr, "fnptr(a -> b)");
+r#type!(type_simple_closure, "(fn a -> b)");
+r#type!(type_simple_closure_ret_sugar, "(fn -> b)");
+r#type!(type_fnptr, "(fnptr a -> b)");
 r#type!(
     type_nested_higher_order,
-    "fn(fnptr(a, b -> c), fn(d -> e) -> fn(f -> fn(g)))"
+    "(fn (fnptr a b -> c) (fn d -> e) -> (fn f -> (fn -> g)))"
 );
 r#type!(type_simple_tuple, "(a, b)");
 r#type!(type_nested_tuple, "((((a, b), c)), d)");
 r#type!(type_annotated_trait, "std:Iterator(Item as Option int)");
-r#type!(type_ptr, "(*string, *fnptr(*int), ****int)");
+r#type!(type_ptr, "(*string, *(fnptr *int), ****int)");
 
 expr!(expr_simple_list, "[1,2, 3]");
 expr!(expr_nested_list, "[[[], 1], [[2], [[3, 4]], 5]]");
@@ -226,7 +226,7 @@ trait Iterator
 declaration!(
     decl_map,
     "
-fn map f list as fn(a -> b), [a] -> [b] = 
+fn map f list as (fn a -> b) [a] -> [b] = 
   match list
   | x : xs -> f x : map #f xs
   | []     -> []

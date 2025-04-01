@@ -14,7 +14,7 @@ mod span;
 pub use span::*;
 
 mod helpers;
-pub use helpers::ParamFmt;
+pub use helpers::{Indentation, ParamFmt};
 
 mod test_logger;
 pub use test_logger::test_logger;

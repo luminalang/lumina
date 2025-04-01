@@ -1,51 +1,52 @@
 use std:libc
 use std:list [List [Slice]]
 use std:list:vec [Vec]
- 
+
 @[platform "linux"]
 pub fn stdout as i32 = 1
 
 @[platform "linux"]
-pub fn stdin as i32  = 0
+pub fn stdin as i32 = 0
 
+// PROBLEM: We need to check param vs ret more deeply because the params can be short-hand return and if they are we use the same header
+//
+// No wait, that's what the `->` is meant to disambiguate
 @[platform "linux"]
 when s can ToString
 pub fn print str as s -> () =
-  let {ptr, len} = show str . toByteVec in
+  let { ptr, len } = show str . toByteVec in
     do libc:write stdout ptr (len as int)
-    then ()
-  
+     then ()
 
 @[platform "linux"]
 when s can ToString
 pub fn println str as s -> () =
-  let {ptr, len} = (str <> "\n") . toByteVec in
+  let { ptr, len } = (str <> "\n") . toByteVec in
     do libc:write stdout ptr (len as int)
-    then ()
-
-pub fn readln as string = 
-  let ptr = std:prelude:alloc 100 in
-  let len = libc:read stdin ptr 1 in
-    { string | inner = { Vec u8 | ptr, len = len as uint } . to_slice . to_list }
+     then ()
 
 @[platform "linux"]
 pub fn interupt = libc:raise sigint
 
 fn sigint = 2
 
-pub fn raw_print str len as string, uint -> () =
+pub fn raw_print str len as string uint -> () =
   match str.inner
-  | Slice {vec:Slice u8 | ptr, len } -> do libc:write stdout ptr (len as int) then ()
+  | Slice { vec:Slice u8 | ptr, len } ->
+    do libc:write stdout ptr (len as int)
+     then ()
+  
   | _ -> ()
 
 when s can ToString
 pub fn trace s as s -> s =
   do print "trace: " then
-  do print s then 
-    do print "\n" then s
+  do print s then
+  do print "\n"
+   then s
 
 @[platform ["linux-gnu", "linux-musl"]]
 pub fn crash text as string -> a =
   do println text then
-  do libc:exit 1 then
-   builtin:unreachable(self as a)
+  do libc:exit 1
+   then builtin:unreachable(self as a)

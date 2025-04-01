@@ -709,14 +709,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lumina-research"
-version = "0.1.0"
-dependencies = [
- "lumina-collections",
- "lumina-key",
-]
-
-[[package]]
 name = "lumina-tokentree"
 version = "0.1.0"
 dependencies = [

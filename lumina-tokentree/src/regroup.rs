@@ -4,12 +4,12 @@ use super::*;
 
 impl<'s> Entity<'s> {
     pub fn for_double_sided_operator<'a>(
-        mut lhs: Tr<&'a Entity<'s>>,
-        parts: &'a [Tr<Entity<'s>>],
-        mut f: impl FnMut(Tr<&Entity<'s>>, &[Tr<Entity<'s>>]),
+        mut lhs: Meta<&'a Entity<'s>>,
+        parts: &'a [Meta<Entity<'s>>],
+        mut f: impl FnMut(Meta<&Entity<'s>>, &[Meta<Entity<'s>>]),
     ) {
         for (i, part) in parts.iter().enumerate() {
-            match &part.value {
+            match &part.kind {
                 Entity::Sequence(elems) => {
                     let (next_lhs, xs) = elems.split_last().unwrap();
                     f(lhs, xs);
@@ -19,7 +19,7 @@ impl<'s> Entity<'s> {
                     if i == parts.len() - 1 {
                         f(lhs, &[part.clone()])
                     } else {
-                        f(lhs, &[Entity::Missing.tr(part.span)]);
+                        f(lhs, &[Meta::n(Entity::Missing, Span::null())]);
                         lhs = part.as_ref();
                     }
                 }

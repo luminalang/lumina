@@ -1,5 +1,4 @@
-use
-  std:list:vec [unsafe_take, from_range]
+use std:list:vec [unsafe_take, from_range]
 
 pub type Slice a {
   // For pointer marking to work in the GC we need to hold on to the root
@@ -38,8 +37,8 @@ pub fn len { len } as (Slice a) -> uint = len
 
 pub fn forEach f slice as (fn a -> ()) (Slice a) -> () =
   list:itimes #visit slice.len
-  where
-    fn visit i as uint -> () = weak_vec slice . unsafe_get i . f
+ where
+  fn visit i as uint -> () = weak_vec slice . unsafe_get i . f
 
 pub fn map f slice as (fn a -> b) (Slice a) -> Slice b =
   from_range
@@ -62,19 +61,19 @@ pub fn skip n slice as uint (Slice a) -> (Slice a) =
       slice
       ~ ptr =
         ptr:offsetu slice.ptr (n * Type(a) :: size)
-      , len = slice.len - n
+        , len = slice.len - n
     }
 
 pub fn any f slice as (fn a -> bool) (Slice a) -> bool =
   next 0
-  where
-    fn next i as uint -> bool =
-      match get i slice
-      | Nothing -> false
-      | Just elem ->
-        if f elem
-          then true
-          else next (i + 1)
+ where
+  fn next i as uint -> bool =
+    match get i slice
+    | Nothing -> false
+    | Just elem ->
+      if f elem
+        then true
+        else next (i + 1)
 
 pub fn all f slice as (fn a -> bool) (Slice a) -> bool =
   not (any #(\v -> not (f v)) slice)
@@ -85,16 +84,16 @@ pub fn to_list slice as (Slice a) -> List a =
     else List:Slice slice
 
 // TODO: do something more efficient
-
 when a can ToString
 impl ToString for (Slice a)
   fn show slice as self -> string =
     "[" <> show_ slice
-    where
-      fn show_ slice as (Slice a) -> string =
-        match split slice
-        | Nothing -> "]"
-        | Just (x, xs) ->
-          if xs.len == 0
-            then show x <> "]"
-            else show x <> ", " <> show_ xs
+   where
+    fn show_ slice as (Slice a) -> string =
+      match split slice
+      | Nothing -> "]"
+      | Just (x, xs) ->
+        if xs.len == 0
+          then show x <> "]"
+          else show x <> ", " <> show_ xs
+

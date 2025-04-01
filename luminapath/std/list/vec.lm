@@ -53,11 +53,11 @@ pub fn from_range (start, end) f as (uint, uint) (fn uint -> a) -> Vec a =
 
 fn bytes_from_null_terminated ptr as *u8 -> Vec u8 =
   findZero 0
-  where
-    fn findZero i as uint -> Vec u8 =
-      if ptr:deref (ptr:offsetu ptr i) == 0
-        then { ptr, len = i }
-        else findZero (i + 1)
+ where
+  fn findZero i as uint -> Vec u8 =
+    if ptr:deref (ptr:offsetu ptr i) == 0
+      then { ptr, len = i }
+      else findZero (i + 1)
 
 pub fn unsafe_take n { ptr, len } as uint (Vec a) -> Vec a =
   { ptr, len = n }
@@ -76,3 +76,4 @@ when a can ToString
 impl ToString for Vec a
   fn show vec as self -> string =
     show (vec . to_slice)
+

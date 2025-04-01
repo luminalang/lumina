@@ -1,7 +1,7 @@
 use logos::{Lexer as LogosLexer, Logos, SpannedIter};
 use lumina_util::Span;
 
-fn find_str_end<'src>(end: u8, lex: &mut LogosLexer<'src, Token>) {
+fn find_str_end<'src>(end: u8, lex: &mut LogosLexer<'src, TokenKind>) {
     let mut i = 0;
     let bytes = lex.remainder().as_bytes();
 
@@ -17,35 +17,12 @@ fn find_str_end<'src>(end: u8, lex: &mut LogosLexer<'src, Token>) {
     lex.bump(i + 1);
 }
 
-fn find_comment_end<'src>(lex: &mut LogosLexer<'src, Token>) {
-    let mut i = 0;
-    let bytes = lex.remainder().as_bytes();
-
-    while let Some(&c) = bytes.get(i) {
-        match c {
-            b'\n' => {
-                match bytes[i..].iter().position(|&b| !b" \t\n".contains(&b)) {
-                    None => i += 1,
-                    Some(first_char) => {
-                        if &bytes[i + first_char..i + first_char + 2] == b"//" {
-                            i += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                };
-            }
-            _ => i += 1,
-        }
-    }
-
-    lex.bump(i);
-}
+pub type Token = super::Meta<TokenKind>;
 
 #[derive(PartialEq, Debug, Clone, Copy, Logos)]
 #[logos(subpattern name = "[_a-zA-Z][-_0-9a-zA-Z]*")]
 #[logos(subpattern path = "(?&name)(:(?&name))+|(?&name)")]
-pub enum Token {
+pub enum TokenKind {
     #[token("\"", |lex| find_str_end(34, lex))]
     StringLiteral,
     #[token("'", |lex| find_str_end(b'\'', lex))]
@@ -56,8 +33,7 @@ pub enum Token {
     #[regex("\\d+\\.\\d+")]
     Float,
 
-    // #[regex("//[^\n]*")]
-    #[token("//", find_comment_end)]
+    #[regex("//[^\n]*")]
     LineComment,
 
     #[regex("///[^\n]*")]
@@ -99,8 +75,8 @@ pub enum Token {
     CloseList,
     // #[token(";")]
     // SemiColon,
-    #[token("|")]
-    Bar,
+    // #[token("|")]
+    // Bar,
     #[token("}")]
     CloseCurly,
     #[token(",")]
@@ -133,7 +109,7 @@ pub enum Token {
     // Soft Keysymbols:
     // =
     // ..
-    #[regex(r#"[:\\!+/*&%@$?^~<>=\-~\.@;#]+"#)]
+    #[regex(r#"[\|:\\!+/*&%@$?^~<>=\-~\.@;#]+"#)]
     Symbol,
     // ok nope, i think the only reasonable way to do this is to remove `+` from operator regex as well and then merge the ops in the parser
     // #[regex(r#"[!#*-]"#, priority = 10, callback = is_unary_callback)]
@@ -155,16 +131,16 @@ pub enum Token {
     EOF,
 }
 
-impl Token {
+impl TokenKind {
     pub fn describe(self) -> &'static str {
-        use Token as T;
+        use TokenKind as T;
         match self {
             T::Int | T::Float => "number",
             T::Alias => "alias",
             T::Pub => "`pub` keyword",
             T::Equal => "`=`",
             T::Val => "static",
-            T::Bar => "`|`",
+            // T::Bar => "`|`",
             T::LineDocComment | T::LineComment => "documentation comment",
             T::StringLiteral => "string literal",
             T::CharLiteral => "char literal",
@@ -204,14 +180,14 @@ impl Token {
 }
 
 pub struct Lexer<'src> {
-    logos: SpannedIter<'src, Token>,
+    logos: SpannedIter<'src, TokenKind>,
     indentation: u16,
     line: u32,
 
     keep_comments: bool,
 
     // we implement our own since Token is Copy
-    peeked: Option<(Token, Span)>,
+    peeked: Option<Token>,
 }
 
 impl<'src> Clone for Lexer<'src> {
@@ -247,24 +223,39 @@ impl<'src> Lexer<'src> {
         self.logos.source()
     }
 
-    fn generate(&mut self) -> (Token, Span) {
-        let (token, span) = match self.logos.next() {
-            None => return self.eof(),
-            Some((Err(()), span)) => (Token::Error, span),
-            Some((Ok(t), span)) => (t, span),
-        };
-        let span = Span::from(span);
-        (token, span)
+    fn generate(&mut self) -> Token {
+        let mut comment = Span::null();
+        let (token, span) = self.logos_generate(&mut comment);
+        Token::new(token, span, comment)
     }
 
-    pub fn next(&mut self) -> (Token, Span) {
+    fn logos_generate(&mut self, comment: &mut Span) -> (TokenKind, Span) {
+        match self.logos.next() {
+            None => {
+                let Token { span, kind: data, .. } = self.eof();
+                (data, span)
+            }
+            Some((Err(()), span)) => (TokenKind::Error, Span::from(span)),
+            Some((Ok(TokenKind::LineComment | TokenKind::LineDocComment), span)) => {
+                if *comment == Span::null() {
+                    *comment = Span::from(span);
+                } else {
+                    *comment = comment.extend(Span::from(span));
+                }
+                self.logos_generate(comment)
+            }
+            Some((Ok(t), span)) => (t, Span::from(span)),
+        }
+    }
+
+    pub fn next(&mut self) -> Token {
         match self.peeked {
             None => self.generate(),
             Some(_) => std::mem::replace(&mut self.peeked, None).unwrap(),
         }
     }
 
-    pub fn peek(&mut self) -> (Token, Span) {
+    pub fn peek(&mut self) -> Token {
         match self.peeked {
             Some(t) => t,
             None => {
@@ -275,9 +266,9 @@ impl<'src> Lexer<'src> {
         }
     }
 
-    fn eof(&self) -> (Token, Span) {
-        (
-            Token::EOF,
+    fn eof(&self) -> Token {
+        Token::n(
+            TokenKind::EOF,
             Span::new(self.source().len().checked_sub(1).unwrap_or(0) as u32, 1),
         )
     }
@@ -286,20 +277,20 @@ impl<'src> Lexer<'src> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Token as T;
+    use TokenKind as T;
 
     macro_rules! cmp {
         ($src:literal => $exp:expr) => {
-            cmp! { $src => $exp, Token::EOF };
+            cmp! { $src => $exp, TokenKind::EOF };
         };
         ($src:literal => $($exp:expr),+) => {
             let mut lexer = Lexer::new($src, false);
             let iter = std::iter::from_fn(|| {
-                let (t, _) = lexer.next();
-                if t == Token::EOF {
+                let t = lexer.next();
+                if t.kind == TokenKind::EOF {
                     None
                 } else {
-                    Some(t)
+                    Some(t.kind)
                 }
             });
             let mut tokens = iter.collect::<Vec<_>>();
@@ -330,11 +321,6 @@ mod tests {
         cmp! { "(fn fn" => T::OpenParen, T::Fn, T::Fn, T::EOF };
         cmp! { "#0 #(f 1)" => T::Symbol, T::Int, T::Symbol, T::OpenParen, T::Path, T::Int, T::CloseParen, T::EOF };
         cmp! { "_" => T::Path };
-    }
-
-    #[test]
-    fn connected_comments() {
-        cmp! { "// hello\n// world\n\n// extra\nfn func" => T::LineComment, T::Fn, T::Path, T::EOF };
     }
 
     #[test]

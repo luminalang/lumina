@@ -12,8 +12,9 @@ pub struct Formatter<'s> {
 enum Item {
     Use,
     Other,
-    Comment,
+    // Comment,
     Attribute,
+    ModAttribute,
     Alias,
     When,
     Impl,
@@ -27,16 +28,16 @@ impl<'s> Formatter<'s> {
         Self { src, previous: Item::None }
     }
 
-    pub fn toplevel(&mut self, buf: &mut String, entity: Tr<&Entity<'s>>) {
-        info!("{entity}");
+    pub fn toplevel(&mut self, buf: &mut String, entity: Meta<&Entity<'s>>) {
+        info!("tree form: \n{entity}");
         self.item_spacing(buf, entity).unwrap();
 
-        let snippet = self.entity(&entity);
+        let snippet = self.entity(entity);
 
         buf.push_str(&snippet.buf);
     }
 
-    fn item_spacing(&mut self, buf: &mut String, entity: Tr<&Entity<'s>>) -> std::fmt::Result {
+    fn item_spacing(&mut self, buf: &mut String, entity: Meta<&Entity<'s>>) -> std::fmt::Result {
         let mut irules = |item: Item, single: &[Item]| {
             let previous = std::mem::replace(&mut self.previous, item);
             match previous {
@@ -46,7 +47,7 @@ impl<'s> Formatter<'s> {
             }
         };
 
-        match &entity.value {
+        match &entity.kind {
             Entity::Header(Tr { value: "pub", .. }, item) => {
                 self.item_spacing(buf, (**item).as_ref())
             }
@@ -56,36 +57,33 @@ impl<'s> Formatter<'s> {
             Entity::Header(Tr { value: "impl", .. }, _) => {
                 irules(Item::Impl, &[Item::When, Item::Attribute])
             }
-            Entity::Header(Tr { value: "use", .. }, _) => irules(
-                Item::Use,
-                &[Item::When, Item::Attribute, Item::Comment, Item::Use],
-            ),
+            Entity::Header(Tr { value: "use", .. }, _) => {
+                irules(Item::Use, &[Item::When, Item::Attribute, Item::Use])
+            }
             Entity::Headers(elems) if *elems[0].0 == "alias" => {
-                irules(Item::Alias, &[Item::Alias, Item::Comment, Item::Attribute])
+                irules(Item::Alias, &[Item::Alias, Item::Attribute])
             }
-            Entity::Unary(Tr { value: "@", .. }, _) => irules(
-                Item::Attribute,
-                &[Item::When, Item::Attribute, Item::Comment],
-            ),
-            Entity::Comment(_) if follows_a_blank_line(self.src, entity.span) => {
-                irules(Item::Comment, &[Item::When, Item::Attribute])
+            Entity::Unary(Tr { value: "@", .. }, next)
+                if matches!(**next, Entity::Unary(Tr { value: "!", .. }, _)) =>
+            {
+                irules(Item::ModAttribute, &[Item::ModAttribute])
             }
-            Entity::Comment(_) => {
-                irules(Item::Comment, &[Item::When, Item::Attribute, Item::Comment])
+            Entity::Unary(Tr { value: "@", .. }, _) => {
+                irules(Item::Attribute, &[Item::When, Item::Attribute])
             }
-            _ => irules(Item::Other, &[Item::When, Item::Attribute, Item::Comment]),
+            _ => irules(Item::Other, &[Item::When, Item::Attribute]),
         }
     }
 
-    fn entity(&mut self, entity: &Entity<'s>) -> Snippet {
-        match entity {
+    fn entity(&mut self, entity: Meta<&Entity<'s>>) -> Snippet {
+        let snippet = match entity.kind {
             Entity::SingleQuote(text) => self.str_literal('\'', text),
             Entity::DoubleQuote(text) => self.str_literal('"', text),
             Entity::DotAccess { lhs, field } => self.dot_access((**lhs).as_ref(), *field),
-            Entity::Unary(op, then) => self.unary(*op, (**then).as_ref()),
+            Entity::Unary(op, then) => self.unary(*op, then),
             Entity::Header(header, then) => self.header(*header, (**then).as_ref()),
             Entity::Headers(headers) => self.headers(headers),
-            Entity::Clause(open, close, inner) => self.clause(open, close, &inner),
+            Entity::Clause(open, close, inner) => self.clause(open, close, (**inner).as_ref()),
             Entity::Operators { lhs, operator, parts } => {
                 self.operators((**lhs).as_ref(), *operator, parts, false)
             }
@@ -95,17 +93,25 @@ impl<'s> Formatter<'s> {
             Entity::Int(n) => Snippet::singleline(n.to_string()),
             Entity::Float(n) => Snippet::singleline(n.to_string()),
             Entity::Identifier(identifier, anot) => self.identifier(identifier, anot),
-            Entity::Comment(text) => Snippet::multiline(format!("//{text}")),
-            Entity::Commented(text, then) => {
-                Snippet::multiline(format!("//{text}\n{}", self.entity(then)))
-            }
+            // Entity::Comment(text) => Snippet::multiline(format!("//{text}")),
+            // Entity::Commented(text, then) => {
+            //     Snippet::multiline(format!("//{text}\n{}", self.entity((**then).as_ref())))
+            // }
             Entity::Missing => Snippet::singleline("".into()),
             Entity::EOF => Snippet::singleline(String::new()),
+        };
+
+        match entity.get_comment(self.src) {
+            Some(text) => {
+                let buf = format!("{text}\n{snippet}");
+                Snippet::multiline(buf)
+            }
+            None => snippet,
         }
     }
 
-    fn when(&mut self, span: Span, then: Tr<&Entity<'s>>) -> Snippet {
-        match then.value {
+    fn when(&mut self, span: Span, then: Meta<&Entity<'s>>) -> Snippet {
+        match then.kind {
             Entity::Operators { lhs, operator, parts } if **operator == "can" => {
                 self.when_binds((**lhs).as_ref(), parts)
             }
@@ -113,17 +119,17 @@ impl<'s> Formatter<'s> {
         }
     }
 
-    fn when_binds(&mut self, lhs: Tr<&Entity<'s>>, parts: &[Tr<Entity<'s>>]) -> Snippet {
+    fn when_binds(&mut self, lhs: Meta<&Entity<'s>>, parts: &[Meta<Entity<'s>>]) -> Snippet {
         match parts {
             [single] => Snippet::singleline(format!(
                 "when {} can {}",
-                self.entity(*lhs),
-                self.entity(single)
+                self.entity(lhs),
+                self.entity(single.as_ref())
             )),
             _ => {
                 let mut buf = format!("when");
                 Entity::for_double_sided_operator(lhs, parts, |lhs, rhs| {
-                    let lhs = self.entity(*lhs);
+                    let lhs = self.entity(lhs);
                     let mut multiline = false;
                     let rhs = self
                         .entities(rhs)
@@ -147,40 +153,40 @@ impl<'s> Formatter<'s> {
         }
     }
 
-    fn dot_access(&mut self, lhs: Tr<&Entity<'s>>, field: Tr<&'s str>) -> Snippet {
-        let mut lhs = self.entity(&lhs);
+    fn dot_access(&mut self, lhs: Meta<&Entity<'s>>, field: Tr<&'s str>) -> Snippet {
+        let mut lhs = self.entity(lhs);
         lhs.buf.push('.');
         lhs.buf.push_str(*field);
         lhs
     }
 
-    fn entities(&mut self, vs: &[Tr<Entity<'s>>]) -> Vec<Snippet> {
-        vs.iter().map(|v| self.entity(v)).collect()
+    fn entities(&mut self, vs: &[Meta<Entity<'s>>]) -> Vec<Snippet> {
+        vs.iter().map(|v| self.entity(v.as_ref())).collect()
     }
 
-    fn unary(&mut self, op: Tr<&'s str>, rhs: Tr<&Entity<'s>>) -> Snippet {
-        let rhs = self.entity(&rhs);
+    fn unary(&mut self, op: Tr<&'s str>, rhs: &Entity<'s>) -> Snippet {
+        let rhs = self.entity(Meta::n(&rhs, op.span.move_indice(1)));
         Snippet { multiline: rhs.multiline, buf: format!("{op}{rhs}") }
     }
 
-    fn r#type(&mut self, header: Tr<&str>, then: Tr<&Entity<'s>>) -> Snippet {
-        match then.value {
+    fn r#type(&mut self, header: Tr<&str>, then: Meta<&Entity<'s>>) -> Snippet {
+        match then.kind {
             Entity::Sequence(elems) => {
                 let (body, ident) = elems.split_last().unwrap();
                 let ident = self.entities(ident);
                 let ident_multiline = ident.iter().any(|snippet| snippet.multiline);
                 let ident = ident.into_iter().format(" ");
 
-                let body = match &body.value {
+                let body = match &body.kind {
                     Entity::Clause("{", "}", fields) => self.record_fields((**fields).as_ref()),
                     Entity::Header(Tr { value: "=", .. }, rhs) => {
-                        match &rhs.value {
+                        match &rhs.kind {
                             // Strip unecesarry `=` on struct type definition
                             Entity::Clause("{", "}", fields) => {
                                 self.record_fields((**fields).as_ref())
                             }
                             _ => {
-                                let variants = self.entity(rhs);
+                                let variants = self.entity((**rhs).as_ref());
                                 if variants.multiline {
                                     Snippet::multiline(format!("\n  = {}", variants.indent()))
                                 } else {
@@ -189,7 +195,7 @@ impl<'s> Formatter<'s> {
                             }
                         }
                     }
-                    _ => self.entity(body),
+                    _ => self.entity(body.as_ref()),
                 };
 
                 Snippet {
@@ -198,19 +204,19 @@ impl<'s> Formatter<'s> {
                 }
             }
             _ => {
-                let then = self.entity(&then);
+                let then = self.entity(then);
                 Snippet { multiline: then.multiline, buf: format!("{header} {then}") }
             }
         }
     }
 
-    fn record_fields(&mut self, fields: Tr<&Entity<'s>>) -> Snippet {
-        let fields = match fields.value {
+    fn record_fields(&mut self, fields: Meta<&Entity<'s>>) -> Snippet {
+        let fields = match fields.kind {
             Entity::Sequence(elems) => self.line_separated_fields(elems),
             Entity::Operators { lhs, operator, parts } => {
                 self.operators((**lhs).as_ref(), *operator, parts, true)
             }
-            _ => self.entity(&fields),
+            _ => self.entity(fields),
         };
 
         if fields.multiline {
@@ -222,7 +228,7 @@ impl<'s> Formatter<'s> {
         }
     }
 
-    fn line_separated_fields(&mut self, elems: &[Tr<Entity<'s>>]) -> Snippet {
+    fn line_separated_fields(&mut self, elems: &[Meta<Entity<'s>>]) -> Snippet {
         let mut iter = elems.iter().peekable();
         let mut buf = String::new();
         let mut multiline = false;
@@ -232,7 +238,7 @@ impl<'s> Formatter<'s> {
                 buf.push('\n');
             }
 
-            let name = self.entity(v);
+            let name = self.entity(v.as_ref());
             buf.push_str(&name.buf);
 
             while let Some(ty) = iter.peek() {
@@ -241,7 +247,7 @@ impl<'s> Formatter<'s> {
                     buf.push_str("\n");
                     break;
                 }
-                let ty = self.entity(ty);
+                let ty = self.entity(ty.as_ref());
                 buf.push_str(" ");
                 buf.push_str(&ty.buf);
                 iter.next();
@@ -251,7 +257,7 @@ impl<'s> Formatter<'s> {
         Snippet { multiline, buf: buf.trim_matches('\n').to_string() }
     }
 
-    fn header(&mut self, header: Tr<&str>, then: Tr<&Entity<'s>>) -> Snippet {
+    fn header(&mut self, header: Tr<&str>, then: Meta<&Entity<'s>>) -> Snippet {
         match header.value {
             "type" => self.r#type(header, then),
             "match" => self.r#match(header, then),
@@ -260,15 +266,14 @@ impl<'s> Formatter<'s> {
         }
     }
 
-    fn generic_header(&mut self, header: Tr<&str>, thenv: Tr<&Entity<'s>>) -> Snippet {
-        let then = self.entity(*thenv);
+    fn generic_header(&mut self, header: Tr<&str>, thenv: Meta<&Entity<'s>>) -> Snippet {
+        let then = self.entity(thenv);
 
         let mut multiline = match *header {
-            "val" | "trait" | "pub" | "as" => false,
+            "val" | "trait" | "pub" | "as" | "use" => false,
             _ => {
-                then.multiline
-                    || self.different_lines(&[header.span, thenv.span])
-                    || then.buf.len() > HEADER_LINEBREAK_LIMIT
+                then.multiline || self.different_lines(&[header.span, thenv.span])
+                // || then.buf.len() > HEADER_LINEBREAK_LIMIT
             }
         };
 
@@ -282,7 +287,7 @@ impl<'s> Formatter<'s> {
         Snippet { multiline, buf }
     }
 
-    fn headers(&mut self, headers: &[(Tr<&'s str>, Tr<Entity<'s>>)]) -> Snippet {
+    fn headers(&mut self, headers: &[(Tr<&'s str>, Meta<Entity<'s>>)]) -> Snippet {
         let is_fn = |v| ["fn", "fnptr"].contains(&v);
 
         match &headers[..] {
@@ -323,11 +328,11 @@ impl<'s> Formatter<'s> {
 
     fn parts_from_headers(
         &mut self,
-        headers: &[(Tr<&'s str>, Tr<Entity<'s>>)],
+        headers: &[(Tr<&'s str>, Meta<Entity<'s>>)],
     ) -> Vec<HeaderPart<'s>> {
         headers
             .iter()
-            .map(|(header, then)| HeaderPart { header: *header, then: self.entity(&then.value) })
+            .map(|(header, then)| HeaderPart { header: *header, then: self.entity(then.as_ref()) })
             .collect()
     }
 
@@ -344,10 +349,10 @@ impl<'s> Formatter<'s> {
     fn function(
         &mut self,
         header: &str,
-        names: &Tr<Entity<'s>>,
-        types: Option<&Tr<Entity<'s>>>,
-        ret: Option<&Tr<Entity<'s>>>,
-        expr: Option<&Tr<Entity<'s>>>,
+        names: &Meta<Entity<'s>>,
+        types: Option<&Meta<Entity<'s>>>,
+        ret: Option<&Meta<Entity<'s>>>,
+        expr: Option<&Meta<Entity<'s>>>,
         shorthand_return_kw: &str,
     ) -> Snippet {
         let mut last_span = names.span;
@@ -355,7 +360,7 @@ impl<'s> Formatter<'s> {
         let mut multiline;
         let mut buf = format!("{header}");
 
-        match &names.value {
+        match &names.kind {
             Entity::Sequence(elems) => multiline = self.function_names(&mut buf, elems),
             Entity::Operators { lhs, operator: Tr { value: ",", .. }, parts } => {
                 warn!("removing outdated function parameter type syntax");
@@ -365,7 +370,7 @@ impl<'s> Formatter<'s> {
             }
             _ => {
                 buf.push(' ');
-                let names = self.entity(&names);
+                let names = self.entity(names.as_ref());
                 multiline = names.multiline;
                 buf.push_str(&names.buf);
             }
@@ -376,14 +381,14 @@ impl<'s> Formatter<'s> {
 
             if let Some(types) = types {
                 buf.push_str(" as ");
-                let types = match &types.value {
+                let types = match &types.kind {
                     Entity::Operators { lhs, operator: Tr { value: ",", .. }, parts } => {
                         let mut elems = vec![(**lhs).clone()];
                         elems.extend(parts.iter().cloned());
-                        let seq = Entity::Sequence(elems);
-                        self.entity(&seq)
+                        let seq = Meta::new(Entity::Sequence(elems), types.span, types.comment);
+                        self.entity(seq.as_ref())
                     }
-                    _ => self.entity(&types),
+                    _ => self.entity(types.as_ref()),
                 };
                 multiline |= types.multiline;
                 buf.push_str(&types.buf);
@@ -392,7 +397,7 @@ impl<'s> Formatter<'s> {
                 buf.push_str(shorthand_return_kw);
             }
 
-            let ret = self.entity(&ret);
+            let ret = self.entity(ret.as_ref());
             multiline |= ret.multiline;
             buf.push_str(&ret.buf);
         } else {
@@ -401,7 +406,7 @@ impl<'s> Formatter<'s> {
 
         if let Some(expr) = expr {
             multiline |= self.different_lines(&[last_span, expr.span]);
-            let expr = self.entity(&expr);
+            let expr = self.entity(expr.as_ref());
             multiline |= expr.multiline;
 
             if multiline {
@@ -414,7 +419,7 @@ impl<'s> Formatter<'s> {
         Snippet { multiline, buf }
     }
 
-    fn function_names(&mut self, buf: &mut String, elems: &[Tr<Entity<'s>>]) -> bool {
+    fn function_names(&mut self, buf: &mut String, elems: &[Meta<Entity<'s>>]) -> bool {
         buf.push(' ');
         let elems = self.entities(elems);
         let multiline = elems.iter().any(|elem| elem.multiline);
@@ -531,10 +536,10 @@ impl<'s> Formatter<'s> {
         ))
     }
 
-    fn r#match(&mut self, header: Tr<&str>, then: Tr<&Entity<'s>>) -> Snippet {
-        match then.value {
+    fn r#match(&mut self, header: Tr<&str>, then: Meta<&Entity<'s>>) -> Snippet {
+        match then.kind {
             Entity::Operators { lhs, operator, parts } => {
-                let lhs = self.entity(lhs);
+                let lhs = self.entity((**lhs).as_ref());
                 let mut buf = if lhs.multiline {
                     format!("{header}\n  {}", lhs.indent())
                 } else {
@@ -544,17 +549,20 @@ impl<'s> Formatter<'s> {
                 for branch in parts {
                     let branch_start_span = branch.span.start_of_line(self.src.as_bytes());
                     let spacing = select_spacing(self.src, branch_start_span, "\n\n", "\n");
-                    let branch = self.entity(branch);
+                    if branch.comment != Span::null() {
+                        write!(buf, "\n{}", branch.comment.get_str(self.src)).unwrap();
+                    }
+                    let branch = self.entity(branch.without_comment());
                     write!(buf, "{spacing}{operator} {}", branch).unwrap();
                 }
 
                 Snippet::multiline(buf)
             }
-            _ => self.header(header, then),
+            _ => self.generic_header(header, then),
         }
     }
 
-    fn block(&mut self, header: Tr<&str>, members: &[Tr<Entity<'s>>]) -> Snippet {
+    fn block(&mut self, header: Tr<&str>, members: &[Meta<Entity<'s>>]) -> Snippet {
         if members.is_empty() {
             return Snippet::singleline(header.to_string());
         }
@@ -563,7 +571,7 @@ impl<'s> Formatter<'s> {
             "impl" => self.block_with_item_members("impl", &members),
             "trait" => self.block_with_item_members("trait", &members),
             _ => {
-                let members = self.indented_keep_spacing(members, true);
+                let members = self.indented_keep_spacing(members, true, "\n\n  ", "\n  ");
                 let buf = format!("{header}\n  {}", members.into_iter().format("\n"));
                 Snippet::multiline(buf)
             }
@@ -572,8 +580,10 @@ impl<'s> Formatter<'s> {
 
     fn indented_keep_spacing(
         &mut self,
-        members: &[Tr<Entity<'s>>],
+        members: &[Meta<Entity<'s>>],
         skip_first: bool,
+        large_spacing: &str,
+        small_spacing: &str,
     ) -> Vec<Snippet> {
         members
             .iter()
@@ -582,9 +592,9 @@ impl<'s> Formatter<'s> {
                 let spacing = if skip_first && i == 0 {
                     ""
                 } else {
-                    select_spacing(self.src, entity.span, "\n\n  ", "\n  ")
+                    select_spacing(self.src, entity.span, large_spacing, small_spacing)
                 };
-                let snippet = self.entity(&entity);
+                let snippet = self.entity(entity.as_ref());
                 Snippet {
                     multiline: snippet.multiline,
                     buf: format!("{spacing}{}", snippet.indent()),
@@ -593,10 +603,10 @@ impl<'s> Formatter<'s> {
             .collect()
     }
 
-    fn block_with_item_members(&mut self, kw: &str, members: &[Tr<Entity<'s>>]) -> Snippet {
+    fn block_with_item_members(&mut self, kw: &str, members: &[Meta<Entity<'s>>]) -> Snippet {
         let (name, members) = members.split_first().unwrap();
-        let name = self.entity(name);
-        let members = self.indented_keep_spacing(members, true);
+        let name = self.entity(name.as_ref());
+        let members = self.indented_keep_spacing(members, true, "\n\n  ", "\n ");
         if members.is_empty() {
             let buf = format!("{kw} {name}");
             Snippet::singleline(buf)
@@ -606,7 +616,7 @@ impl<'s> Formatter<'s> {
         }
     }
 
-    fn clause(&mut self, open: &str, close: &str, inner: &Entity<'s>) -> Snippet {
+    fn clause(&mut self, open: &str, close: &str, inner: Meta<&Entity<'s>>) -> Snippet {
         let inner = self.entity(inner);
         if inner.multiline {
             let buf = format!("{open}\n  {}\n{close}", inner.indent());
@@ -626,21 +636,31 @@ impl<'s> Formatter<'s> {
 
     fn operators(
         &mut self,
-        lhs: Tr<&Entity<'s>>,
+        lhs: Meta<&Entity<'s>>,
         operator: Tr<&'s str>,
-        parts: &[Tr<Entity<'s>>],
+        parts: &[Meta<Entity<'s>>],
         comma_at_line_end: bool,
     ) -> Snippet {
-        let Snippet { mut buf, multiline } = self.entity(&lhs);
+        const POSTFIX: &[&str] = &[",", ";"];
+        const PARAMETER: &[&str] = &["@"];
 
-        let sides = self.entities(parts);
+        let Snippet { mut buf, multiline } = self.entity(lhs);
 
-        let any_multiline = sides.iter().any(|side| side.multiline);
-        let total_size = sides.iter().map(|side| side.buf.len()).sum::<usize>();
+        let sides = parts
+            .iter()
+            .map(|v| (self.entity(v.without_comment()), v.comment))
+            .collect::<Vec<_>>();
+
+        let any_multiline = sides.iter().any(|(side, _)| side.multiline);
+        let total_size = sides.iter().map(|(side, _)| side.buf.len()).sum::<usize>();
         let requested = self.different_lines(&[lhs.span, parts.last().unwrap().span]);
         let multiline = multiline || any_multiline || (requested && total_size > 8);
 
-        for rhs in sides.iter() {
+        for (rhs, comment) in sides.iter() {
+            if *comment != Span::null() {
+                write!(buf, "\n{}", comment.get_str(self.src)).unwrap();
+            }
+
             if rhs.buf.is_empty() {
                 write!(buf, "{operator}")
             } else if multiline {
@@ -649,8 +669,10 @@ impl<'s> Formatter<'s> {
                 } else {
                     write!(buf, "\n{operator} ")
                 }
-            } else if *operator == "," || *operator == ";" || buf.is_empty() {
+            } else if buf.is_empty() || POSTFIX.contains(&operator) {
                 write!(buf, "{operator} ")
+            } else if PARAMETER.contains(&operator) {
+                write!(buf, "{operator}")
             } else {
                 write!(buf, " {operator} ")
             }
@@ -683,7 +705,7 @@ impl<'s> Formatter<'s> {
 
         let mut add_annotation = |buf: &mut String, i: usize| {
             if let Some(assign) = anot.get(&i) {
-                let assign = self.entity(&assign);
+                let assign = self.entity(assign.as_ref());
                 multiline |= assign.multiline;
 
                 if assign.multiline {
@@ -711,17 +733,17 @@ impl<'s> Formatter<'s> {
         }
     }
 
-    fn seq(&mut self, elems: &[Tr<Entity<'s>>]) -> Snippet {
+    fn seq(&mut self, elems: &[Meta<Entity<'s>>]) -> Snippet {
         if elems.len() == 1 {
-            return self.entity(&elems[0]);
+            return self.entity(elems[0].as_ref());
         }
 
         let snippets = self.entities(elems);
 
         match elems.split_last().unwrap() {
             (
-                Tr {
-                    value: Entity::IndentBlock(Tr { value: "where", span }, members),
+                Meta {
+                    kind: Entity::IndentBlock(Tr { value: "where", span }, members),
                     ..
                 },
                 earlier,
@@ -734,13 +756,13 @@ impl<'s> Formatter<'s> {
                 };
 
                 let members = self.block("where".tr(*span), members);
-                write!(snippet.buf, "  {}", members.indent()).unwrap();
+                write!(snippet.buf, " {}", members).unwrap();
                 snippet.multiline |= members.multiline;
 
                 snippet
             }
             // If we end with a header, we don't want its newline to affect the sequence newline
-            (Tr { value: Entity::Header(header, then), .. }, earlier) => {
+            (Meta { kind: Entity::Header(header, then), .. }, earlier) => {
                 let seq = self.seq(earlier);
                 let then = self.generic_header(*header, (**then).as_ref());
 
@@ -834,7 +856,7 @@ impl fmt::Display for Snippet {
 }
 
 struct NextInChain<'a, 's> {
-    headers: &'a [(Tr<&'s str>, Tr<Entity<'s>>)],
+    headers: &'a [(Tr<&'s str>, Meta<Entity<'s>>)],
     is_tail: bool,
 }
 
@@ -842,7 +864,7 @@ impl<'a, 's> NextInChain<'a, 's> {
     fn get(entity: &'a Entity<'s>) -> Option<Self> {
         match entity {
             Entity::Headers(headers) => Some(NextInChain {
-                is_tail: match &headers.last().unwrap().1.value {
+                is_tail: match &headers.last().unwrap().1.kind {
                     Entity::Header(..) | Entity::Headers(..) => false,
                     _ => true,
                 },

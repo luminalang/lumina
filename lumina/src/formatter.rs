@@ -37,14 +37,14 @@ pub fn run_src(src: &str) -> String {
 
     loop {
         let entity = parser.next(false);
-        match entity.value {
+        match entity.kind {
             lumina_tokentree::Entity::EOF => {
+                formatter.toplevel(&mut buf, entity.as_ref());
                 if !buf.ends_with('\n') {
                     buf.push('\n');
                 }
                 break buf;
             }
-            _ if buf.is_empty() => formatter.toplevel(&mut buf, entity.as_ref()),
             _ => formatter.toplevel(&mut buf, entity.as_ref()),
         }
     }

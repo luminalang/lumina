@@ -130,9 +130,12 @@ impl Span {
     }
 
     pub fn extend(self, other: Self) -> Self {
-        Self {
-            indice: self.indice,
-            length: (other.indice - self.indice) as u16 + other.length,
+        match other.indice.checked_sub(self.indice) {
+            Some(length) => Self::new(self.indice, length as u16 + other.length),
+            None => Self::new(
+                other.indice,
+                (self.indice - other.indice) as u16 - other.length,
+            ),
         }
     }
 

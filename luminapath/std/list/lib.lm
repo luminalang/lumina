@@ -1,11 +1,11 @@
 use std:maybe [Maybe [..]]
-use
-  std:math [Compare, Num [+]]
+use std:math [Compare, Num [+]]
 use vec [Vec]
 use slice [Slice]
 use std:io [crash]
 
 @![langItem(list as List)]
+
 // NOTE: DO NOT SWITCH PLACES OF METHODS.
 //
 // THEIR INDICES ARE CONSTANTS IN COMPILER. 
@@ -177,12 +177,13 @@ pub fn reverse list as [a] -> [a] =
 
 pub fn itimes f n as (fn uint -> ()) uint -> () =
   next 0
-  where
-    fn next i as uint -> () =
-      if n == i then
-        ()
-      else do f i then
-        next (i + 1)
+
+where
+  fn next i as uint -> () =
+    if n == i then
+      ()
+    else do f i then
+      next (i + 1)
 
 pub fn break f list as (fn a -> bool) [a] -> ([a], [a]) =
   match list
@@ -246,7 +247,6 @@ pub fn split_at at list as uint (List a) -> (List a, List a) =
            in (l ++ x, y)
         else
           io:crash "split yielded more elemements than requested"
-
     // we can remove this check in the future
     | Nil -> ([], [])
 
@@ -254,13 +254,13 @@ when a can ToString
 impl ToString for [a]
   fn show list as [a] -> string =
     "[" <> show_ list
-    where
-      fn show_ list as [a] -> string =
-        match list
-        | [] -> "]"
-        | [last] -> show last <> "]"
-        | [x : xs] ->
-          show x <> ", " <> show_ xs
+  where
+    fn show_ list as [a] -> string =
+      match list
+      | [] -> "]"
+      | [last] -> show last <> "]"
+      | [x : xs] ->
+        show x <> ", " <> show_ xs
 
 pub fn zip lhs rhs as [a] [b] -> [(a, b)] =
   match (lhs, rhs)
@@ -292,7 +292,6 @@ pub fn sortBy f list as (fn a a -> Ordering) [a] -> [a] =
 // Since adding it for string is kinda stupid
 //
 // Trait aliases could be nice here
-
 when a can Compare
 impl Compare for [a]
   fn compare lhs rhs as [a] [a] -> Ordering =
@@ -310,3 +309,4 @@ impl Compare for [a]
       | ([], []) -> Ordering:Equal
       | _ ->
         crash "linear scan for lists of non-equal length shouldn't happen"
+

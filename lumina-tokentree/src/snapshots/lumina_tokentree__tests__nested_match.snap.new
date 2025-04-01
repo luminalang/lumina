@@ -1,0 +1,49 @@
+---
+source: lumina-tokentree/src/tests.rs
+assertion_line: 17
+expression: entity
+---
+Header(match)
+  Operators(3)
+    0
+  Op(0, |)
+    [ outer0
+    , Header(->)
+        r0
+    ]
+  Op(1, |)
+    [ outer1
+    , Header(->)
+        Header(match)
+          Operators(1)
+            1
+          Op(0, |)
+            Operators(1)
+              [ inner0
+              , Header(->)
+                  10
+              ]
+            Op(0, |)
+              [ inner1
+              , Header(->)
+                  11
+              ]
+    ]
+  Op(2, |)
+    [ outer2
+    , Header(->)
+        Header(match)
+          Operators(1)
+            2
+          Op(0, |)
+            Operators(1)
+              [ inner0
+              , Header(->)
+                  20
+              ]
+            Op(0, |)
+              [ inner1
+              , Header(->)
+                  21
+              ]
+    ]

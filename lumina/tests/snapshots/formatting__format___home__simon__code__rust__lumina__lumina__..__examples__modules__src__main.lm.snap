@@ -11,7 +11,6 @@ use other_dir:file [Color [..], Direction [Right, Down]]
 fn main =
   do file:print (hello <> world)
    then file:print (other_file:hello <> project:other_dir:world)
-  
 
 fn allowed as (Color, Direction) = (Green, Down)
 

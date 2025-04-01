@@ -102,7 +102,7 @@ pub fn keep f list as (fn a -> bool) [a] -> [a] =
 
 when n can Num
 pub fn sum list as [n] -> n =
-  fold #+ Num(self as n) :: zero list
+  fold #+ Num(self as n):zero list
 
 when n can Compare
 pub fn max list as [n] -> Maybe n =
@@ -178,7 +178,7 @@ pub fn reverse list as [a] -> [a] =
 pub fn itimes f n as (fn uint -> ()) uint -> () =
   next 0
 
-where
+ where
   fn next i as uint -> () =
     if n == i then
       ()

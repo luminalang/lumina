@@ -18,12 +18,13 @@ type Option = Some LargeStruct | None
 fn passes v as Option -> Option = v
 
 fn returns (a, b, x, y, c, d, e, f) as (i32, i8, i32, i32, i32, i64, i32, i32) -> Option =
-  Some { a, b, small = {x, y}, c, d, e, f}
+  Some { a, b, small = { x, y }, c, d, e, f }
 
 fn exits a as Option -> () =
   match a
-  | Some { a, b, small = {x, y}, c, d, e, f} -> libc_exit (a + x + y + c + e + f)
-  | None   -> libc_exit 100
+  | Some { a, b, small = { x, y }, c, d, e, f } -> libc_exit (a + x + y + c + e + f)
+  | None -> libc_exit 100
 
 fn main =
   exits (passes (returns (1, 2, 3, 4, 5, 6, 7, 8)))
+

@@ -1,7 +1,7 @@
 ---
 source: lumina-tokentree/src/tests.rs
-assertion_line: 17
 expression: entity
+snapshot_kind: text
 ---
 Header(match)
   Operators(3)

@@ -12,34 +12,41 @@ type Indirect extra {
   and_then extra
 }
 
-type Construct {
-  field LargeStruct (Indirect (LargeStruct i32))
-}
+type Construct { field LargeStruct (Indirect (LargeStruct i32)) }
 
 fn passes v as Construct -> Construct = v
 
-fn returns a b v d e f arg as i32, i8, i32, i64, i32, i32, i32 -> Construct =
-  { field =
-    { a, b,
-      tuple = (
-        { v, and_then = {a, b, tuple = (arg, arg), d, e, f} },
-        { v, and_then = {a, b, tuple = (arg, arg), d, e, f} }
-      ),
-      d, e, f
-    }
+fn returns a b v d e f arg as i32 i8 i32 i64 i32 i32 i32 -> Construct =
+  {
+    field =
+      {
+        a
+        , b
+        , tuple =
+          (
+            { v, and_then = { a, b, tuple = (arg, arg), d, e, f } }
+            , { v, and_then = { a, b, tuple = (arg, arg), d, e, f } }
+          )
+          , d
+          , e
+          , f
+      }
   }
 
-fn exits {field = {a, b, tuple = (fst, snd), d, e, f}} as Construct -> () =
+fn exits { field = { a, b, tuple = (fst, snd), d, e, f } } as Construct -> () =
   let (fst_arg_one, fst_arg_two) = fst.and_then.tuple in
   let (snd_arg_one, snd_arg_two) = snd.and_then.tuple in
-  libc_exit (
-    a
-    + (fst.v + fst.and_then.a + fst.and_then.e + fst.and_then.f)
-    + (snd.v + snd.and_then.a + snd.and_then.e + snd.and_then.f)
-    + (fst_arg_one + fst_arg_two + snd_arg_one + snd_arg_two)
-    + e + f
-  )
+    libc_exit
+      (
+        a
+        + (fst.v + fst.and_then.a + fst.and_then.e + fst.and_then.f)
+        + (snd.v + snd.and_then.a + snd.and_then.e + snd.and_then.f)
+        + (fst_arg_one + fst_arg_two + snd_arg_one + snd_arg_two)
+        + e
+        + f
+      )
 
 // a + v + a + e + f + v + a + e + f + arg + arg + arg + arg + e + f == 70
 fn main =
   exits (passes (returns 1 2 3 4 5 6 7))
+

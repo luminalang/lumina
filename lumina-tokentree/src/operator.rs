@@ -77,6 +77,7 @@ impl<'s> Parser<'s> {
     ) -> Result<Meta<Entity<'s>>, Meta<Entity<'s>>> {
         if PARAM_BINDED.contains(&*name) {
             let name = Meta::n(name.value, name.span);
+            self.lexer.next();
             return Ok(self.handle_parameter_operator(entity, name));
         }
 

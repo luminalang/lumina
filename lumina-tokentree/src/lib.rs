@@ -125,8 +125,11 @@ impl<'s> Parser<'s> {
                 if ["@", "@!"].contains(&self.take(t.span))
                     && self.take(t.span.following(1)) == "[" =>
             {
+                dbg!(&t.comment);
                 let entity = self.next_then(|this| this.unary(t.span));
-                return t.union(entity, |_, rhs| rhs.kind);
+                let this = t.union(entity, |_, rhs| rhs.kind);
+                dbg!(&this.comment);
+                return this;
             }
             TokenKind::Val => self.next_then(|this| this.header(t.span)),
             TokenKind::Then => self.handle_header_if_not_expected(&["if", "do"], t.span),
@@ -373,7 +376,10 @@ impl<'s> Parser<'s> {
         match after.kind {
             TokenKind::Symbol => {
                 let name = Meta::new(self.take(after.span), after.span, after.comment);
-                if operator::PARAM_BINDED.contains(&name) {
+                if operator::PARAM_BINDED.contains(&name)
+                    && self.take(after.span.extend_length(1)) != "@["
+                    && self.take(after.span.extend_length(2)) != "@!["
+                {
                     self.lexer.next();
                     param = self.handle_parameter_operator(param, name);
                 }

@@ -1,9 +1,7 @@
 use std:io
 
 // A simple implementation of the `Maybe` sum type
-type Maybe a 
-  = Just a
-  | Nothing
+type Maybe a = Just a | Nothing
 
 fn map f m as (fn a -> b) (Maybe a) -> Maybe b =
   match m
@@ -20,7 +18,7 @@ fn or fallback m as (fn a) (Maybe a) -> a =
   | Just a -> a
   | Nothing -> fallback
 
-when a as ToString
+when a can ToString
 impl ToString for Maybe a
   fn show m as self -> string =
     match m
@@ -32,3 +30,4 @@ fn main =
   . map #(+ 1)
   . and #(\n -> Just (n + 1))
   . io:println
+

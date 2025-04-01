@@ -561,6 +561,9 @@ impl<'s> Collector<'s> {
             ParseError::FnNeedsParenthesis(span) => {
                 error.eline(span, "closure type needs wrapping parenthesis")
             }
+            ParseError::ToplevelWhere(span) => {
+                error.eline(span, "where needs an indentation level greater than 0")
+            }
             ParseError::InvalidAttributes(_, aspan) => {
                 error.eline(aspan, "this declaration can not take attributes")
             }

@@ -315,8 +315,8 @@ mod tests {
         cmp! { "std:io:stdin.handle.socket" => T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::EOF };
         cmp! { "\"awefwafef ewa\n fewafewa\"" => T::StringLiteral };
         cmp! { "\\!+/*&%@$?^~<>=|-" => T::Symbol };
-        cmp! { "// test\n0" => T::LineComment, T::Int, T::EOF };
-        cmp! { "/// test\n0" => T::LineDocComment, T::Int, T::EOF };
+        cmp! { "// test\n0" => T::Int, T::EOF };
+        cmp! { "/// test\n0" => T::Int, T::EOF };
         cmp! { "0.0 12.34 10" => T::Float, T::Float, T::Int, T::EOF };
         cmp! { "(fn fn" => T::OpenParen, T::Fn, T::Fn, T::EOF };
         cmp! { "#0 #(f 1)" => T::Symbol, T::Int, T::Symbol, T::OpenParen, T::Path, T::Int, T::CloseParen, T::EOF };
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn record() {
-        cmp! { "{ f 0 | a.b.c @ c = c, b = 0 }" => T::OpenCurly, T::Path, T::Int, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Comma, T::Path, T::Symbol, T::Int, T::CloseCurly, T::EOF };
+        cmp! { "{ f 0 | a.b.c @ c = c, b = 0 }" => T::OpenCurly, T::Path, T::Int, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Equal, T::Path, T::Comma, T::Path, T::Equal, T::Int, T::CloseCurly, T::EOF };
         cmp! { "{ Point int . x }" => T::OpenCurly, T::Path, T::Path, T::Symbol, T::Path ,T::CloseCurly, T::EOF };
     }
 }

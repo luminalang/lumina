@@ -21,14 +21,14 @@ enum Item {
     None,
 }
 
-const HEADER_LINEBREAK_LIMIT: usize = 25;
-
 impl<'s> Formatter<'s> {
     pub fn new(src: &'s str) -> Self {
         Self { src, previous: Item::None }
     }
 
     pub fn toplevel(&mut self, buf: &mut String, entity: Meta<&Entity<'s>>) {
+        dbg!(&entity.comment);
+        println!("{}", entity.comment.get_str(self.src));
         info!("tree form: \n{entity}");
         self.item_spacing(buf, entity).unwrap();
 
@@ -606,7 +606,7 @@ impl<'s> Formatter<'s> {
     fn block_with_item_members(&mut self, kw: &str, members: &[Meta<Entity<'s>>]) -> Snippet {
         let (name, members) = members.split_first().unwrap();
         let name = self.entity(name.as_ref());
-        let members = self.indented_keep_spacing(members, true, "\n\n  ", "\n ");
+        let members = self.indented_keep_spacing(members, true, "\n\n  ", "\n  ");
         if members.is_empty() {
             let buf = format!("{kw} {name}");
             Snippet::singleline(buf)

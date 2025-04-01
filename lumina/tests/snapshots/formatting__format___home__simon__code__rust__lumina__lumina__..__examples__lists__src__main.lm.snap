@@ -11,7 +11,6 @@ fn main =
   . map #(* 2)
   . sum
   . io:println
-  
 
 fn digits as [int] = list:from_range (0, 10) #(\i -> i as int)
 

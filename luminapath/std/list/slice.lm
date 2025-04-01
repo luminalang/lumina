@@ -51,7 +51,7 @@ pub fn split_at at slice as uint (Slice a) -> ((Slice a), (Slice a)) =
   (take at slice, skip (at) slice)
 
 pub fn take n slice as uint (Slice a) -> (Slice a) =
-  { slice ~ len @ len = min n len }
+  { slice ~ len@len = min n len }
 
 pub fn skip n slice as uint (Slice a) -> (Slice a) =
   if n >= slice.len then
@@ -60,7 +60,7 @@ pub fn skip n slice as uint (Slice a) -> (Slice a) =
     {
       slice
       ~ ptr =
-        ptr:offsetu slice.ptr (n * Type(a) :: size)
+        ptr:offsetu slice.ptr (n * Type(a):size)
         , len = slice.len - n
     }
 

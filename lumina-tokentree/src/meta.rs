@@ -30,10 +30,13 @@ impl<T> Meta<T> {
     pub fn union<U, O>(self, other: Meta<U>, f: impl FnOnce(Meta<T>, Meta<U>) -> O) -> Meta<O> {
         let span = self.span.extend(other.span);
         let comment = if self.comment == Span::null() {
+            dbg!();
             other.comment
         } else {
+            dbg!(&self.comment, &other.comment);
             self.comment.extend(other.comment)
         };
+        dbg!(&comment);
         let kind = f(self, other);
         Meta { kind, span, comment }
     }

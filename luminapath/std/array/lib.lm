@@ -22,7 +22,7 @@ fn map f arr as (fn a -> b) [a; n] -> [b; n] =
   where
     fn transform_and_write raw i as *b uint -> () =
       let elem = get i arr
-       in ptr:write (ptr:offsetu raw (Type(b):: size * i)) (f elem)
+       in ptr:write (ptr:offsetu raw (Type(b):size * i)) (f elem)
 
 fn for_each f arr as (fn a -> ()) [a; n] -> () =
   list:itimes #(\i -> get i arr . f) (len arr)

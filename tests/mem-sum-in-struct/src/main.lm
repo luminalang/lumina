@@ -12,10 +12,11 @@ fn passes v as Wrapper -> Wrapper = v
 fn returns (x, a, b, c, d, y, z) as (i8, i32, i32, i32, i32, i32, i64) -> Wrapper =
   { x, sum = Some (a, b, c, d), y, z }
 
-fn exits {x, sum, y, z} as Wrapper -> () =
+fn exits { x, sum, y, z } as Wrapper -> () =
   match sum
   | Some (a, b, c, d) -> libc_exit (a + b + c + d + y)
-  | None   -> libc_exit 100
+  | None -> libc_exit 100
 
 fn main =
   exits (passes (returns (1, 2, 3, 4, 5, 6, 7)))
+

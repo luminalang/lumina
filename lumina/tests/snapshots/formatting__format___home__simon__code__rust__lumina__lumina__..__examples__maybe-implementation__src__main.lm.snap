@@ -6,13 +6,7 @@ snapshot_kind: text
 use std:io
 
 // A simple implementation of the `Maybe` sum type
-type Maybe a 
-  = Just a
-  | Nothing
-  | Very Long
-  | Variant
-  | That Keeps Going
-  | Hello
+type Maybe a = Just a | Nothing
 
 fn map f m as (fn a -> b) (Maybe a) -> Maybe b =
   match m

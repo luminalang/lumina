@@ -13,7 +13,6 @@ fn main =
     handlers.this 5
     . handlers.that
     . std:io:println
-  
 
 fn this_handler n as i32 -> u32 = n as u32
 

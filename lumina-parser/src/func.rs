@@ -2,6 +2,7 @@ use super::{select, when, Expr, Parser, Pattern, Span, Tr, Type, T};
 use itertools::Itertools;
 use lumina_util::{Highlighting, Identifier, Spanned};
 use std::fmt;
+use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct Declaration<'a> {
@@ -54,6 +55,8 @@ impl<'a> Parser<'a> {
             self.err_expected_but_got(span, "a name", "a path");
             identifier.split_last().1
         });
+
+        trace!("parsing function {name}");
 
         let params = match self.pat_params(false) {
             Some(params) => params,
@@ -169,6 +172,12 @@ impl<'a> Parser<'a> {
     fn where_binds(&mut self, kw_span: Span) -> Vec<Declaration<'a>> {
         let base_indent = self.lexer.current_indent();
 
+        if base_indent == 0 {
+            self.err_toplevel_where(kw_span);
+            self.recover_next_toplevel();
+            return vec![];
+        }
+
         let mut where_binds = Vec::with_capacity(1);
 
         loop {
@@ -179,17 +188,11 @@ impl<'a> Parser<'a> {
                 //
                 // We should probably pass that information along to here so we can create an error for it.
                 T::Fn if belongs_to_where(base_indent, indent) => {
-                    self.progress();
-                    match self.func(when::Constraints::empty(), Some(kw_span), vec![]) {
-                        Some(decl) => where_binds.push(decl),
-                        None => {
-                            self.recover_next_toplevel();
-                            continue;
-                        }
-                    }
+                    self.accept_where_item(kw_span, &mut where_binds);
                 }
                 T::Pub | T::OpenAttribute | T::Default if belongs_to_where(base_indent, indent) => {
                     self.err_bad_header_for_where(span, t);
+                    self.progress();
                 }
                 _ if t.is_header() => break where_binds,
                 other => {
@@ -199,6 +202,16 @@ impl<'a> Parser<'a> {
                     );
                     self.recover_next_toplevel();
                 }
+            }
+        }
+    }
+
+    fn accept_where_item(&mut self, kw_span: Span, buf: &mut Vec<Declaration<'a>>) {
+        self.progress();
+        match self.func(when::Constraints::empty(), Some(kw_span), vec![]) {
+            Some(decl) => buf.push(decl),
+            None => {
+                self.recover_next_toplevel();
             }
         }
     }

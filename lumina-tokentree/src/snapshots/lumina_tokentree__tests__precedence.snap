@@ -1,7 +1,7 @@
 ---
 source: lumina-tokentree/src/tests.rs
-assertion_line: 16
 expression: entity
+snapshot_kind: text
 ---
 [ 1
 , Header(=)

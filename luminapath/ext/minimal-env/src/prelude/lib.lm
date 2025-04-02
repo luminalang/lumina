@@ -2,20 +2,23 @@
 
 // mandatory but unused lang items
 trait Listable
+
 type string {}
+
 trait Type
+
 type List a = Nil
 
 pub type Maybe a = Just a | Nothing
 
-pub fn + a b as i32, i32 -> i32 = builtin:plus a b
+pub fn + a b as i32 i32 -> i32 = builtin:plus a b
 
 trait Stringable
-  fn split_at as self, int -> (self, self)
-  fn split_while as self, fn(u8 -> bool) -> (self, self)
+  fn split_at as self int -> (self, self)
+  fn split_while as self (fn u8 -> bool) -> (self, self)
   fn split_first as self -> (u8, self)
-  fn equals as self, self -> bool
-  fn from_raw_parts as *u8, uint -> self
+  fn equals as self self -> bool
+  fn from_raw_parts as *u8 uint -> self
 
 //impl Stringable for string
 //  fn split_at _ _ as self, int -> (self, self) =
@@ -29,26 +32,24 @@ trait Stringable
 //  fn equals _ _ as self, self -> bool = true
 //
 //  fn from_raw_parts _ _ as *u8, uint -> self = { string | }
-
 @![langItem(list as List)]
 
 trait Closure p r
-  fn call as self, p -> r
+  fn call as self p -> r
 
-pub trait Size 
+pub trait Size
   fn of as uint
 
 impl Size for a
   fn of as uint = builtin:size_of(self as a)
 
 // fn string_from_raw_parts _ _ as *u8, uint -> string = { string | }
-
 @[platform "linux"]
 fn alloc size as int -> *u8 =
   libc_alloc size
 
 @[platform "linux"]
-fn dealloc ptr size as *u8, int -> () = free ptr
+fn dealloc ptr size as *u8 int -> () = free ptr
 
 @[extern "malloc", platform "linux"]
 fn libc_alloc as int -> *u8
@@ -60,10 +61,11 @@ fn free as *u8 -> ()
 pub fn libc_exit code as i32 -> ()
 
 @[no_mangle, platform ["linux-gnu", "linux-musl"]]
-fn _lumina_sys_init argc argv as i32, **u8 -> () = ()
+fn _lumina_sys_init argc argv as i32 **u8 -> () = ()
 
 @[no_mangle, platform "linux-syscall"]
 fn _lumina_sys_init as () = ()
 
 @[extern "x86_64_syscall", platform "linux"]
-pub fn syscall as int, int, int, int, int, int -> ()
+pub fn syscall as int int int int int int -> ()
+

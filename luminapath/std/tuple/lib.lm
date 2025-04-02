@@ -2,6 +2,7 @@ use std:string [<++>]
 
 // TODO: using `<>` instead of `<++>` here causes bools to display as ints. 
 // That does not make any sense, and must be some sort of problem with our trait solver? 
+
 when
   a can ToString
   b can ToString
@@ -15,7 +16,13 @@ when
   c can ToString
 impl ToString for (a, b, c)
   fn show (a, b, c) as (a, b, c) -> string =
-    "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ")"
+    "("
+    <++> show a
+    <++> show ", "
+    <++> show b
+    <++> show ", "
+    <++> show c
+    <++> show ")"
 
 when
   a can ToString
@@ -24,7 +31,15 @@ when
   d can ToString
 impl ToString for (a, b, c, d)
   fn show (a, b, c, d) as (a, b, c, d) -> string =
-    "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ", " <++> show d <++> show ")"
+    "("
+    <++> show a
+    <++> show ", "
+    <++> show b
+    <++> show ", "
+    <++> show c
+    <++> show ", "
+    <++> show d
+    <++> show ")"
 
 when
   a can ToString
@@ -34,7 +49,17 @@ when
   e can ToString
 impl ToString for (a, b, c, d, e)
   fn show (a, b, c, d, e) as (a, b, c, d, e) -> string =
-    "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ", " <++> show d <++> show ", " <++> show e <++> show ")"
+    "("
+    <++> show a
+    <++> show ", "
+    <++> show b
+    <++> show ", "
+    <++> show c
+    <++> show ", "
+    <++> show d
+    <++> show ", "
+    <++> show e
+    <++> show ")"
 
 when
   a can ToString
@@ -45,14 +70,16 @@ when
   f can ToString
 impl ToString for (a, b, c, d, e, f)
   fn show (a, b, c, d, e, f) as (a, b, c, d, e, f) -> string =
-    "(" <++> show a <++> show ", " <++> show b <++> show ", " <++> show c <++> show ", " <++> show d <++> show ", " <++> show e <++> show ", " <++> show f <++> show ")"
-
-when
-  a can Compare
-  b can Compare
-impl Compare for (a, b)
-  fn compare (x, y) (a, b) =
-    match compare x a
-    | Ordering:Equal -> compare y b
-    | Ordering:Less  -> Ordering:Less
-    | Ordering:Greater  -> Ordering:Greater
+    "("
+    <++> show a
+    <++> show ", "
+    <++> show b
+    <++> show ", "
+    <++> show c
+    <++> show ", "
+    <++> show d
+    <++> show ", "
+    <++> show e
+    <++> show ", "
+    <++> show f
+    <++> show ")"

@@ -10,20 +10,20 @@ pub fn abs n as n -> n =
 
 pub trait Num
   @[precedence 4500]
-  fn ** as self, self -> self
+  fn ** as self self -> self
   @[precedence 5000]
-  fn + as self, self -> self
+  fn + as self self -> self
   @[precedence 5000]
-  fn - as self, self -> self
+  fn - as self self -> self
   @[precedence 5500]
-  fn * as self, self -> self
+  fn * as self self -> self
   @[precedence 5500]
-  fn / as self, self -> self
+  fn / as self self -> self
   @[precedence 5500]
-  fn % as self, self -> self
+  fn % as self self -> self
 
   fn zero as self
-  fn one  as self
+  fn one as self
 
   fn succ n as self -> self = n + Num:one
   fn pred n as self -> self = n - Num:one
@@ -41,74 +41,81 @@ impl ToString for Ordering
     | Equal -> "Equal"
 
 pub trait Compare
-  fn compare as self, self -> Ordering
+  fn compare as self self -> Ordering
 
   @[precedence 4000]
-  fn == lhs rhs as self, self -> bool = 
+  fn == lhs rhs as self self -> bool =
     match compare lhs rhs
     | Equal -> true
-    | _     -> false
+    | _ -> false
 
   @[precedence 4000]
-  fn < lhs rhs as self, self -> bool =
+  fn < lhs rhs as self self -> bool =
     match compare lhs rhs
     | Less -> true
-    | _    -> false
+    | _ -> false
 
   @[precedence 4000]
-  fn > lhs rhs as self, self -> bool =
+  fn > lhs rhs as self self -> bool =
     match compare lhs rhs
     | Greater -> true
-    | _    -> false
+    | _ -> false
 
   @[precedence 4000]
-  fn >= lhs rhs as self, self -> bool =
+  fn >= lhs rhs as self self -> bool =
     match compare lhs rhs
     | Equal -> true
     | Greater -> true
     | Less -> false
 
   @[precedence 4000]
-  fn <= lhs rhs as self, self -> bool =
+  fn <= lhs rhs as self self -> bool =
     match compare lhs rhs
     | Equal -> true
     | Less -> true
     | Greater -> false
 
   @[precedence 4000]
-  fn /= x y as self, self -> bool =
+  fn /= x y as self self -> bool =
     not (x == y)
 
-  fn max x y as self, self -> self =
-    if y > x then y else x
+  fn max x y as self self -> self =
+    if y > x
+      then y
+      else x
 
-  fn min x y as self, self -> self =
-    if y < x then y else x
+  fn min x y as self self -> self =
+    if y < x
+      then y
+      else x
 
 when a can ToString
-fn or_overflow_error char lhs rhs (n, overflown) as u8, a, a, (a, bool) -> a =
+fn or_overflow_error char lhs rhs (n, overflown) as u8 a a (a, bool) -> a =
   if overflown
     then crash ("integer overflow " <> lhs <> " " <+> char <> " " <> show rhs)
     else n
 
 when a can ToString
-fn or_underflow_error char lhs rhs (n, underflown) as u8, a, a, (a, bool) -> a =
+fn or_underflow_error char lhs rhs (n, underflown) as u8 a a (a, bool) -> a =
   if underflown
     then crash ("integer underflow " <> lhs <> " " <+> char <> " " <> rhs)
     else n
 
 impl Num for u8
-  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
-  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
-  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
-  fn / a b as self, self -> self = builtin:div a b
-  fn % a b as self, self -> self = a - (a / b * b)
+  fn ** a b as self self -> self =
+    if b == 0
+      then a
+      else (a * a) ** (b - 1)
+  fn + a b as self self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
+  fn / a b as self self -> self = builtin:div a b
+  fn % a b as self self -> self = a - (a / b * b)
   fn zero = 0
-  fn one  = 1
+  fn one = 1
 
 impl Compare for u8
-  fn compare a b as self, self -> Ordering = 
+  fn compare a b as self self -> Ordering =
     if builtin:eq a b then
       Equal
     else if builtin:lt a b then
@@ -117,17 +124,20 @@ impl Compare for u8
       Greater
 
 impl Num for u16
-  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
-  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
-  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
-  fn / a b as self, self -> self = builtin:div a b
-  fn % a b as self, self -> self = a - (a / b * b)
+  fn ** a b as self self -> self =
+    if b == 0
+      then a
+      else (a * a) ** (b - 1)
+  fn + a b as self self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
+  fn / a b as self self -> self = builtin:div a b
+  fn % a b as self self -> self = a - (a / b * b)
   fn zero = 0
-  fn one  = 1
+  fn one = 1
 
 impl Compare for u16
-  fn compare a b as self, self -> Ordering = 
+  fn compare a b as self self -> Ordering =
     if builtin:eq a b then
       Equal
     else if builtin:lt a b then
@@ -136,17 +146,20 @@ impl Compare for u16
       Greater
 
 impl Num for u32
-  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
-  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
-  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
-  fn / a b as self, self -> self = builtin:div a b
-  fn % a b as self, self -> self = a - (a / b * b)
+  fn ** a b as self self -> self =
+    if b == 0
+      then a
+      else (a * a) ** (b - 1)
+  fn + a b as self self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
+  fn / a b as self self -> self = builtin:div a b
+  fn % a b as self self -> self = a - (a / b * b)
   fn zero = 0
-  fn one  = 1
+  fn one = 1
 
 impl Compare for u32
-  fn compare a b as self, self -> Ordering = 
+  fn compare a b as self self -> Ordering =
     if builtin:eq a b then
       Equal
     else if builtin:lt a b then
@@ -155,17 +168,20 @@ impl Compare for u32
       Greater
 
 impl Num for u64
-  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
-  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
-  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
-  fn / a b as self, self -> self = builtin:div a b
-  fn % a b as self, self -> self = a - (a / b * b)
+  fn ** a b as self self -> self =
+    if b == 0
+      then a
+      else (a * a) ** (b - 1)
+  fn + a b as self self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
+  fn / a b as self self -> self = builtin:div a b
+  fn % a b as self self -> self = a - (a / b * b)
   fn zero = 0
-  fn one  = 1
+  fn one = 1
 
 impl Compare for u64
-  fn compare a b as self, self -> Ordering = 
+  fn compare a b as self self -> Ordering =
     if builtin:eq a b then
       Equal
     else if builtin:lt a b then
@@ -174,17 +190,20 @@ impl Compare for u64
       Greater
 
 impl Num for i8
-  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
-  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
-  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
-  fn / a b as self, self -> self = builtin:div a b
-  fn % a b as self, self -> self = a - (a / b * b)
+  fn ** a b as self self -> self =
+    if b == 0
+      then a
+      else (a * a) ** (b - 1)
+  fn + a b as self self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
+  fn / a b as self self -> self = builtin:div a b
+  fn % a b as self self -> self = a - (a / b * b)
   fn zero = 0
-  fn one  = 1
+  fn one = 1
 
 impl Compare for i8
-  fn compare a b as self, self -> Ordering = 
+  fn compare a b as self self -> Ordering =
     if builtin:eq a b then
       Equal
     else if builtin:lt a b then
@@ -193,17 +212,20 @@ impl Compare for i8
       Greater
 
 impl Num for i16
-  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
-  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
-  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
-  fn / a b as self, self -> self = builtin:div a b
-  fn % a b as self, self -> self = a - (a / b * b)
+  fn ** a b as self self -> self =
+    if b == 0
+      then a
+      else (a * a) ** (b - 1)
+  fn + a b as self self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
+  fn / a b as self self -> self = builtin:div a b
+  fn % a b as self self -> self = a - (a / b * b)
   fn zero = 0
-  fn one  = 1
+  fn one = 1
 
 impl Compare for i16
-  fn compare a b as self, self -> Ordering = 
+  fn compare a b as self self -> Ordering =
     if builtin:eq a b then
       Equal
     else if builtin:lt a b then
@@ -212,17 +234,20 @@ impl Compare for i16
       Greater
 
 impl Num for i32
-  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
-  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
-  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
-  fn / a b as self, self -> self = builtin:div a b
-  fn % a b as self, self -> self = a - (a / b * b)
+  fn ** a b as self self -> self =
+    if b == 0
+      then a
+      else (a * a) ** (b - 1)
+  fn + a b as self self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
+  fn / a b as self self -> self = builtin:div a b
+  fn % a b as self self -> self = a - (a / b * b)
   fn zero = 0
-  fn one  = 1
+  fn one = 1
 
 impl Compare for i32
-  fn compare a b as self, self -> Ordering = 
+  fn compare a b as self self -> Ordering =
     if builtin:eq a b then
       Equal
     else if builtin:lt a b then
@@ -231,17 +256,20 @@ impl Compare for i32
       Greater
 
 impl Num for i64
-  fn ** a b as self, self -> self = if b == 0 then a else (a * a) ** (b - 1)
-  fn + a b as self, self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
-  fn - a b as self, self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
-  fn * a b as self, self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
-  fn / a b as self, self -> self = builtin:div a b
-  fn % a b as self, self -> self = a - (a / b * b)
+  fn ** a b as self self -> self =
+    if b == 0
+      then a
+      else (a * a) ** (b - 1)
+  fn + a b as self self -> self = builtin:plus_checked a b . or_overflow_error 43 a b
+  fn - a b as self self -> self = builtin:minus_checked a b . or_underflow_error 45 a b
+  fn * a b as self self -> self = builtin:mul_checked a b . or_overflow_error 42 a b
+  fn / a b as self self -> self = builtin:div a b
+  fn % a b as self self -> self = a - (a / b * b)
   fn zero = 0
-  fn one  = 1
+  fn one = 1
 
 impl Compare for i64
-  fn compare a b as self, self -> Ordering = 
+  fn compare a b as self self -> Ordering =
     if builtin:eq a b then
       Equal
     else if builtin:lt a b then

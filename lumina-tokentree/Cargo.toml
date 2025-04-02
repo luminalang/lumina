@@ -1,0 +1,13 @@
+[package]
+name = "lumina-tokentree"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lumina-util = { path = "../lumina-util" }
+logos = "*"
+itertools = "*"
+insta = "*"
+tracing = "*"
+bitflags = "*"
+take_mut = "*"

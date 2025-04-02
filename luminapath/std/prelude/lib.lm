@@ -28,24 +28,26 @@ use std:bool
 @![langItem(list as List)]
 
 trait Closure p r
-  fn call as self, p -> r
+  fn call as self p -> r
 
 @[platform ["linux-gnu", "linux-musl"]]
 fn alloc size as int -> *u8 = std:gc:alloc size
 
 @[platform ["linux-gnu", "linux-musl"]]
-fn dealloc ptr size as *u8, int -> () = std:gc:free ptr
+fn dealloc ptr size as *u8 int -> () = std:gc:free ptr
 
 @[extern "x86_64_syscall", platform "linux"]
-fn syscall as int, int, int, int, int, int -> ()
+fn syscall as int int int int int int -> ()
 
 @[no_mangle, platform ["linux-gnu", "linux-musl"]]
-fn _lumina_sys_init argc argv as i32, **u8 -> () = 
+fn _lumina_sys_init argc argv as i32 **u8 -> () =
   setup_args argc argv
 
-fn setup_args argc argv as i32, **u8 -> () =
+fn setup_args argc argv as i32 **u8 -> () =
   let args = vec:from_range (0, argc as uint) #(\i -> vec:bytes_from_null_terminated (ptr:offsetu argv (i * 8) . ptr:deref))
-    in ptr:write (builtin:val_to_ref process_arguments) args
+   in ptr:write (builtin:val_to_ref process_arguments) args
 
 pub fn not b as bool -> bool =
-  if b then false else true
+  if b
+    then false
+    else true

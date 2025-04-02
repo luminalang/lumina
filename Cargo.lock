@@ -581,7 +581,32 @@ name = "logos"
 version = "0.12.1"
 source = "git+https://github.com/simvux/logos#c88c6fd91a297e6ffc5ce1c0bb147fe040922870"
 dependencies = [
- "logos-derive",
+ "logos-derive 0.12.1",
+]
+
+[[package]]
+name = "logos"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab6f536c1af4c7cc81edf73da1f8029896e7e1e16a219ef09b184e76a296f3db"
+dependencies = [
+ "logos-derive 0.15.0",
+]
+
+[[package]]
+name = "logos-codegen"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "189bbfd0b61330abea797e5e9276408f2edbe4f822d7ad08685d67419aafb34e"
+dependencies = [
+ "beef",
+ "fnv",
+ "lazy_static",
+ "proc-macro2",
+ "quote",
+ "regex-syntax 0.8.5",
+ "rustc_version",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -599,14 +624,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "logos-derive"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebfe8e1a19049ddbfccbd14ac834b215e11b85b90bab0c2dba7c7b92fb5d5cba"
+dependencies = [
+ "logos-codegen",
+]
+
+[[package]]
 name = "lumina"
 version = "0.1.0"
 dependencies = [
  "clap",
  "directories",
+ "insta",
  "itertools 0.13.0",
  "lumina-compiler",
  "lumina-key",
+ "lumina-tokentree",
  "lumina-util",
  "target-lexicon 0.13.0",
  "tracing",
@@ -664,10 +700,24 @@ version = "0.1.0"
 dependencies = [
  "insta",
  "itertools 0.10.5",
- "logos",
+ "logos 0.12.1",
  "lumina-key",
+ "lumina-tokentree",
  "lumina-util",
  "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "lumina-tokentree"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "insta",
+ "itertools 0.10.5",
+ "logos 0.15.0",
+ "lumina-util",
+ "take_mut",
  "tracing",
 ]
 
@@ -874,6 +924,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7fb8039b3032c191086b10f11f319a6e99e1e82889c5cc6046f515c9db1d497"
 
 [[package]]
+name = "rustc_version"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
+dependencies = [
+ "semver",
+]
+
+[[package]]
 name = "ruzstd"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -881,6 +940,12 @@ checksum = "fad02996bfc73da3e301efe90b1837be9ed8f4a462b6ed410aa35d00381de89f"
 dependencies = [
  "twox-hash",
 ]
+
+[[package]]
+name = "semver"
+version = "1.0.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56e6fa9c48d24d85fb3de5ad847117517440f6beceb7798af16b4a87d616b8d0"
 
 [[package]]
 name = "serde"

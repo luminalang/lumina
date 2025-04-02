@@ -3,36 +3,36 @@ use std:io [crash]
 
 pub type Maybe a = Just a | Nothing
 
-pub fn isJust m as Maybe a -> bool =
+pub fn isJust m as (Maybe a) -> bool =
   match m
-  | Just _  -> true
+  | Just _ -> true
   | Nothing -> false
 
-pub fn or f opt as fn(a), Maybe a -> a =
+pub fn or f opt as (fn a) (Maybe a) -> a =
   match opt
-  | Just a  -> a
+  | Just a -> a
   | Nothing -> f
 
-pub fn and f opt as fn(a -> Maybe b), Maybe a -> Maybe b =
+pub fn and f opt as (fn a -> Maybe b) (Maybe a) -> Maybe b =
   match opt
-  | Just a  -> f a
+  | Just a -> f a
   | Nothing -> Nothing
 
-pub fn map f m as fn(a -> b), Maybe a -> Maybe b = 
+pub fn map f m as (fn a -> b) (Maybe a) -> Maybe b =
   match m
-  | Just a  -> Just (f a)
+  | Just a -> Just (f a)
   | Nothing -> Nothing
 
-pub fn or_crash msg m as string, Maybe a -> a =
+pub fn or_crash msg m as string (Maybe a) -> a =
   match m
   | Just a -> a
   | Nothing -> crash msg
 
 when a can Compare
 impl Compare for Maybe a
-  fn compare a b as self, self -> Ordering =
+  fn compare a b as self self -> Ordering =
     match (a, b)
     | (Nothing, Nothing) -> Ordering:Equal
-    | (Just x, Just y)   -> compare x y
-    | (Nothing, Just _)  -> Ordering:Less
-    | (Just _, Nothing)  -> Ordering:Greater
+    | (Just x, Just y) -> compare x y
+    | (Nothing, Just _) -> Ordering:Less
+    | (Just _, Nothing) -> Ordering:Greater

@@ -1,0 +1,35 @@
+---
+source: lumina/tests/formatting.rs
+expression: formatted
+snapshot_kind: text
+---
+@[extern "exit", platform ["linux-gnu", "linux-musl"]]
+fn libc_exit as i32 -> ()
+
+fn main =
+  let outer = returns in
+  let n = takes outer in
+    if n == 100
+      then libc_exit 0
+      else libc_exit n
+
+@[repr "C"]
+type Inner {
+  a u32
+  b u8
+  c u64
+  d u16
+}
+
+@[repr "C"]
+type Outer {
+  a u16
+  b Inner
+  c u8
+}
+
+@[extern "takes"]
+fn takes as Outer -> i32
+
+@[extern "returns"]
+fn returns as Outer

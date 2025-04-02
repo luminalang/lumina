@@ -1,0 +1,9 @@
+---
+source: lumina/tests/formatting.rs
+expression: formatted
+snapshot_kind: text
+---
+use std:io
+use ext:example_lib [text]
+
+fn main = io:println text

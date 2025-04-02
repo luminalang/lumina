@@ -1,7 +1,7 @@
 use std:string [<:>, <+>]
 
 impl ToString for i64
-  fn show n = 
+  fn show n =
     let str = show ((std:math:i64:abs n) as u64) in
       if n < 0
         then 45 <:> str
@@ -23,14 +23,17 @@ impl ToString for i8
 // Since `string` has the same layout as `List` perhaps we could do it transparently post-monomorphisation?
 impl ToString for u64
   fn show n =
-    if n == 0 then "0" else showNext n
-  where
-    fn showNext n as u64 -> string =
-      match n
-      | 0 -> ""
-      | _ ->
-        let c = ((n % 10) as u8) + 48 in
-           showNext (n / 10) <+> c
+    if n == 0
+      then "0"
+      else showNext n
+  
+    where
+      fn showNext n as u64 -> string =
+        match n
+        | 0 -> ""
+        | _ ->
+          let c = ((n % 10) as u8) + 48
+           in showNext (n / 10) <+> c
 
 impl ToString for u32
   fn show n = ToString:show (n as u64)

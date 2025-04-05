@@ -316,3 +316,18 @@ fn list_x_xs() {
 
     snapshot_tree_and_missing!(lower, tree);
 }
+
+#[test]
+fn nested_lists() {
+    let mut lower = Lower::new();
+    let tree = lower.patterns(
+        list(list(tuplet([]).tr(Span::null()))).value,
+        &[
+            (cons(bind(0, any()), bind(1, any())), true),
+            (cons(cons(tuple([]), nil()), nil()), false),
+            (any(), true),
+        ],
+    );
+
+    snapshot_tree_and_missing!(lower, tree);
+}

@@ -149,7 +149,10 @@ impl<'a> ErrorBuilder<'a> {
 
     #[track_caller]
     pub fn emit(self) {
-        self.sources.has_failed.set(true);
+        if !self.error.is_warning {
+            self.sources.has_failed.set(true);
+        }
+
         if self.sources.panicy {
             panic!("{}", self.error);
         } else {

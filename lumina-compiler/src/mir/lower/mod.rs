@@ -390,7 +390,7 @@ pub fn emit_fin_error<'s>(
             .iline(field.span, "later assigned again here")
             .emit(),
         FinError::UnreachablePattern(span) => sources
-            .error("unreachable pattern")
+            .warning("unreachable pattern")
             .m(module)
             .eline(span, "")
             .emit(),

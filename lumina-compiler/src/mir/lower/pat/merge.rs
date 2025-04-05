@@ -459,7 +459,6 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                 let next = DecTree::End(TreeTail::Unreached(types));
 
                 *tree = self.merge.to_init().reached_from_type(to_expand, next);
-
                 self.merge_any(span, tree)
             }
 
@@ -543,10 +542,14 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
         assert!(!matches!(pat.value, Pattern::Any));
 
         match tail {
-            TreeTail::Reached(_, _, _) => {
+            TreeTail::Poison => true,
+            TreeTail::Reached(_, excess, _) if excess.is_empty() => {
                 panic!("reached end of tree with remaining: {pat}")
             }
-            TreeTail::Poison => true,
+            TreeTail::Reached(_, _, _) => {
+                let _expr = self.merge.generate_tail();
+                false
+            }
             TreeTail::Unreached(types) => {
                 let types = std::mem::take(types);
                 *tree = self.merge.to_init().expand_first_then_extend_excess(types);

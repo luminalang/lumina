@@ -5,7 +5,7 @@
 Functions are defined using the `fn` keyword. 
 
 ```lm
-fn add x y as int, int -> int =
+fn add x y as int int -> int =
   x + y
 ```
 <sup><sub>&nbsp;&nbsp;&nbsp;&nbsp; A function which takes two parameters, x and y of type int, then adds them together to return a single int</sub></sup>
@@ -39,12 +39,12 @@ fn main =
 The parameters in a function declaration may be any infallible pattern, not just plain identifiers. 
 
 ```lm
-fn add_pairs xy ab as (int, int), (int, int) -> (int, int) =
+fn add_pairs xy ab as (int, int) (int, int) -> (int, int) =
   ...
 
 // can instead be written as
 
-fn add_pairs (x, y) (a, b) as (int, int), (int, int) -> (int, int) =
+fn add_pairs (x, y) (a, b) as (int, int) (int, int) -> (int, int) =
   (x + a, y + b)
 
 fn main =
@@ -71,6 +71,6 @@ fn main =
 New operators can also be defined similarly to functions. 
 
 ```lm
-fn +++ left right as int, int -> int =
+fn +++ left right as int int -> int =
   left + right + right + right
 ```

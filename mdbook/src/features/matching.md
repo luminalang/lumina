@@ -14,7 +14,7 @@ fn check_integer n as int -> string =
   | _    -> "large number"
 
 // Matching sum types
-fn or default m as int, Maybe int -> int =
+fn or default m as int (Maybe int) -> int =
   match m
   | Nothing -> default
   | Just n  -> n

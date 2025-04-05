@@ -16,7 +16,7 @@ fn(int, int -> int)
 So for example; 
 
 ```lm
-fn change_if_just f m as fn(int -> int), Maybe int -> Maybe int =
+fn change_if_just f m as (fn int -> int) (Maybe int) -> Maybe int =
   match m
   | Nothing -> Nothing
   | Just n  -> Just (f n)
@@ -39,24 +39,24 @@ fn add_five x as int -> int =
 The `#` symbol is a general-purpose way to pass various expressions as closures and can be used in a couple of different ways. 
 
 ```lm
-fn add x y as int, int -> int = x + y
+fn add x y as int int -> int = x + y
 
 // ... //
 
 // turns the function into a closure of type
-// fn(int, int -> int)
+// (fn int int -> int)
 #add
 
 // partially applys the function to create a closure with one less parameter
-// fn(int -> int)
+// (fn int -> int)
 #(add 5)
 
 // partially applys an operator to create a closure with a single parameter
-// fn(int -> int)
+// (fn int -> int)
 #(+ 5)
 
 // turn a literal value into a closure
-// fn( -> int), can also be written as fn(int)
+// (fn -> int), can also be written as fn(int)
 #5
 ```
 With this in mind, we can rewrite the previous example as:

@@ -6,10 +6,12 @@ use crate::Target;
 use cranelift::codegen::ir;
 use cranelift::codegen::isa::CallConv;
 use cranelift::prelude::*;
+use cranelift_codegen::ir::FuncRef;
 use cranelift_entity::PrimaryMap;
 use cranelift_module::FuncOrDataId;
 use cranelift_module::{DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
+use ssa::InstHelper;
 use std::sync::Arc;
 use tracing::info_span;
 
@@ -224,21 +226,13 @@ impl<'a> Context<'a> {
 
             let funcid = self.funcmap[mfunc];
             let dataid = self.val_to_globals[val];
-            let flayout = &self.flayouts[funcid];
+            let fret = self.flayouts[funcid].ret.clone();
 
             let mut func_imports = HashMap::new();
-            let mut ins = ssa::InstHelper::new(
-                &mut builder,
-                &self.structs,
-                self.size_t(),
-                self.funcmap[self.lir.alloc],
-                self.isa.clone(),
-                &mut self.objmodule,
-                &mut func_imports,
-            );
+            let mut ins = self.inst(&mut func_imports, &mut builder);
             let ptr = ins.dataid_as_pointer(dataid);
 
-            let call = ins.new_call(0, &flayout.ret);
+            let call = ins.new_call(0, &fret);
             let vlayout = ins.call_direct(funcid, call);
             ins.write_vlayout_to_ptr(ptr, &vlayout);
         }
@@ -257,6 +251,22 @@ impl<'a> Context<'a> {
         self.unwindinfo.add_function(id, &mut fctx, &*self.isa);
 
         id
+    }
+
+    fn inst<'v, 't>(
+        &'v mut self,
+        func_imports: &'v mut HashMap<FuncId, FuncRef>,
+        builder: &'v mut FunctionBuilder<'t>,
+    ) -> InstHelper<'v, 'a, 't> {
+        ssa::InstHelper::new(
+            builder,
+            &self.structs,
+            self.size_t(),
+            self.funcmap[self.lir.alloc],
+            self.isa.clone(),
+            &mut self.objmodule,
+            func_imports,
+        )
     }
 
     fn declare_entrypoint(&mut self, target: Target) -> FuncId {
@@ -301,7 +311,13 @@ impl<'a> Context<'a> {
                 builder.ins().call(sys_init, &[argc, argv]);
 
                 // Call the lumina main function
-                builder.ins().call(lumina_main, &[]);
+                {
+                    let fret = self.flayouts[lumina_main_id].ret.clone();
+                    let mut func_imports = HashMap::new();
+                    let mut ins = self.inst(&mut func_imports, &mut builder);
+                    let call = ins.new_call(0, &fret);
+                    ins.call_direct(lumina_main_id, call);
+                }
 
                 let exit_code = builder.ins().iconst(types::I32, 0);
                 builder.ins().return_(&[exit_code]);

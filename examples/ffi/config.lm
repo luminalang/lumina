@@ -1,8 +1,12 @@
 val name = "ffi"
+
 val version = "1.0"
+
 val authors = []
 
 val dependencies = []
 
 val linker_args = ["-flto"]
+
 val linker_libs = ["src/main.c"]
+

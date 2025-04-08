@@ -12,3 +12,4 @@ fn main =
 fn this_handler n as i32 -> u32 = n as u32
 
 fn that_handler n as u32 -> i32 = n as i32
+

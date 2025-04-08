@@ -22,7 +22,7 @@ type Pair a {
   y a
 }
 
-fn modify_deeply_nested pair as (Pair (Pair (Pair u8))) -> (Pair (Pair (Pair u8))) =
+fn modify_deeply_nested pair as Pair (Pair (Pair u8)) -> (Pair (Pair (Pair u8))) =
   { pair ~ x.x.x@n = n + 1, y.x.x@n = n + 2 }
 
 fn complex_example =

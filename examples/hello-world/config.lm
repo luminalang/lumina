@@ -1,5 +1,8 @@
 val name = "hello-world"
+
 val version = "1.0"
+
 val authors = ["Simon Larsson"]
 
 val dependencies = []
+

@@ -4,3 +4,4 @@ pub fn print str as string -> () =
 pub type Color = Red | Green | Blue
 
 pub type Direction = Up | Down | Left | Right
+

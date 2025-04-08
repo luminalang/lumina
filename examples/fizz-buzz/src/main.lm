@@ -14,3 +14,4 @@ fn fizz n as int -> string =
     "Buzz"
   else
     show n
+

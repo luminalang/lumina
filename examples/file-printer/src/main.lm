@@ -8,6 +8,6 @@ fn main =
     fs:readFileAt file
     . or_crash "could not read file"
     . io:println
-    
-  | _ -> io:println "missing input filename"
   
+  | _ -> io:println "missing input filename"
+

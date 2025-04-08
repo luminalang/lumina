@@ -1,6 +1,5 @@
 use other_file [hello]
 use other_dir [world]
-
 // using a directory will refer to the `lib.lm` file
 use other_dir:file [Color [..], Direction [Right, Down]]
 
@@ -12,3 +11,4 @@ fn allowed as (Color, Direction) = (Green, Down)
 
 // Variants of a sum type can also be access through the sum type's namespace
 fn blocked as (Color, Direction) = (Color:Red, Direction:Up)
+

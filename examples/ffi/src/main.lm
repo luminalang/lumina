@@ -7,7 +7,6 @@ fn main =
     if n == 100
       then libc_exit 0
       else libc_exit n
-  
 
 @[repr "C"]
 type Inner {
@@ -29,3 +28,4 @@ fn takes as Outer -> i32
 
 @[extern "returns"]
 fn returns as Outer
+

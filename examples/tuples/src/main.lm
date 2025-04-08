@@ -6,3 +6,4 @@ fn main =
 
 fn print_user (name, age) as (string, int) -> () =
   io:println (name <> " " <> show age)
+

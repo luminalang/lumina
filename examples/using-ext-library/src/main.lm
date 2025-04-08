@@ -2,3 +2,4 @@ use std:io
 use ext:example_lib [text]
 
 fn main = io:println text
+

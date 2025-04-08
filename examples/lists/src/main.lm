@@ -18,3 +18,4 @@ pub fn my_fold f acc list as (fn b a -> b) b [a] -> b =
   match list
   | [x : xs] -> my_fold #f (f acc x) xs
   | [] -> acc
+

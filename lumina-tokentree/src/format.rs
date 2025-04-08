@@ -386,7 +386,11 @@ impl<'s> Formatter<'s> {
                         let seq = Meta::new(Entity::Sequence(elems), types.span, types.comment);
                         self.entity(seq.as_ref())
                     }
-                    Entity::Clause("(", ")", inner) => self.entity((**inner).as_ref()),
+                    Entity::Clause("(", ")", inner)
+                        if !matches!(inner.kind, Entity::Operators { .. }) =>
+                    {
+                        self.entity((**inner).as_ref())
+                    }
                     _ => self.entity(types.as_ref()),
                 };
                 multiline |= types.multiline;

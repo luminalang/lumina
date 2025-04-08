@@ -124,7 +124,7 @@ impl<'a, 's> Verify<'a, 's> {
                 }
 
                 let record = self.items.pinfo.string;
-                IType::defined(record, vec![])
+                IType::string(record, vec![])
             }
             hir::Pattern::Poison => todo!(),
         }

@@ -15,12 +15,14 @@ fn run(path: &str, file: &str, checked: bool) {
         }
     }
 
+    let name = path;
+
     let manifest = env!("CARGO_MANIFEST_DIR");
     let path = PathBuf::from(format!("{manifest}/../{path}/{file}"));
 
     let formatted = lumina::formatter::run_file(&path);
 
-    insta::assert_snapshot!(format!("format_{}", path.display()), formatted);
+    insta::assert_snapshot!(format!("format_{name}"), formatted);
 }
 
 #[test]

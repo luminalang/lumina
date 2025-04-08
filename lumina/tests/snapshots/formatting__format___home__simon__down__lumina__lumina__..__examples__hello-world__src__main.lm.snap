@@ -1,8 +1,0 @@
----
-source: lumina/tests/formatting.rs
-expression: formatted
-snapshot_kind: text
----
-use std:io
-
-fn main = io:println ("Hello" <> " " <> "World!")

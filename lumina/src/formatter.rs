@@ -8,12 +8,16 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub fn run(_: cli::Environment, settings: cli::FormatFlags) -> ExitCode {
+pub fn run(env: cli::Environment, settings: cli::FormatFlags) -> ExitCode {
     match settings.file.as_deref() {
         None => {
-            let project = settings.project.as_deref().unwrap();
-            if let Err(err) = run_project(project, settings.overwrite) {
-                file_io_error(err);
+            let folder = settings
+                .project
+                .as_deref()
+                .unwrap_or_else(|| env.current_directory.as_path());
+
+            if let Err(err) = run_project(folder, settings.overwrite) {
+                file_io_error(Some(folder), err);
                 return ExitCode::FAILURE;
             }
         }
@@ -62,11 +66,13 @@ pub fn run_project(path: &Path, overwrite: bool) -> Result<(), std::io::Error> {
     for_each_file_with_ext(path, OsStr::new("lm"), &mut |path, mut file| {
         let mut src = String::new();
         if let Err(error) = file.read_to_string(&mut src) {
-            file_io_error(error);
+            file_io_error(Some(&path), error);
+            return;
         }
         let formatted = run_src(&src);
 
         if overwrite {
+            let mut file = File::create(path).unwrap();
             file.write_all(formatted.as_bytes()).unwrap();
         } else {
             print!(" {}\n{formatted}", path.display().keyword());
@@ -82,13 +88,13 @@ where
 
     for file in dir {
         match file {
-            Err(error) => file_io_error(error),
+            Err(error) => file_io_error(None, error),
             Ok(entry) => match entry.file_type() {
                 Ok(kind) if kind.is_file() => {
                     let path = entry.path();
                     if path.extension() == Some(ext) {
-                        match File::open(&path) {
-                            Err(error) => file_io_error(error),
+                        match File::options().write(true).read(true).open(&path) {
+                            Err(error) => file_io_error(Some(&path), error),
                             Ok(file) => f(path, file),
                         }
                     }
@@ -96,17 +102,20 @@ where
                 Ok(_) => {
                     let path = entry.path();
                     if let Err(error) = for_each_file_with_ext(&path, ext, f) {
-                        file_io_error(error);
+                        file_io_error(Some(&path), error);
                     }
                 }
-                Err(error) => file_io_error(error),
+                Err(error) => file_io_error(None, error),
             },
         }
     }
     Ok(())
 }
 
-fn file_io_error(err: std::io::Error) {
-    let error = lumina_util::Error::error("could not format file").with_text(err.to_string());
+fn file_io_error(at: Option<&Path>, err: std::io::Error) {
+    let mut error = lumina_util::Error::error("could not format file").with_text(err.to_string());
+    if let Some(path) = at {
+        error = error.with_text(path.display().to_string());
+    }
     eprintln!("{error}");
 }

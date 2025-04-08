@@ -125,10 +125,8 @@ impl<'s> Parser<'s> {
                 if ["@", "@!"].contains(&self.take(t.span))
                     && self.take(t.span.following(1)) == "[" =>
             {
-                dbg!(&t.comment);
                 let entity = self.next_then(|this| this.unary(t.span));
                 let this = t.union(entity, |_, rhs| rhs.kind);
-                dbg!(&this.comment);
                 return this;
             }
             TokenKind::Val => self.next_then(|this| this.header(t.span)),

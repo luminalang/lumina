@@ -27,8 +27,6 @@ impl<'s> Formatter<'s> {
     }
 
     pub fn toplevel(&mut self, buf: &mut String, entity: Meta<&Entity<'s>>) {
-        dbg!(&entity.comment);
-        println!("{}", entity.comment.get_str(self.src));
         info!("tree form: \n{entity}");
         self.item_spacing(buf, entity).unwrap();
 
@@ -388,6 +386,7 @@ impl<'s> Formatter<'s> {
                         let seq = Meta::new(Entity::Sequence(elems), types.span, types.comment);
                         self.entity(seq.as_ref())
                     }
+                    Entity::Clause("(", ")", inner) => self.entity((**inner).as_ref()),
                     _ => self.entity(types.as_ref()),
                 };
                 multiline |= types.multiline;

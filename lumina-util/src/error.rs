@@ -35,7 +35,7 @@ impl ErrorHandler {
 #[derive(Clone, Debug)]
 pub struct Error {
     pub name: &'static str,
-    is_warning: bool,
+    pub is_warning: bool,
     contexts: Vec<Context>,
 }
 

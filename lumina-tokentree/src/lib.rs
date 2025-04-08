@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use lexer::{Lexer, Token, TokenKind};
-use lumina_util::{Identifier, Indentation, Span, Spanned, Tr};
+use lumina_util::{Highlighting, Identifier, Indentation, Span, Spanned, Tr};
 use std::collections::HashMap;
 use std::{cmp::Ordering, fmt};
 use tracing::trace;
@@ -424,13 +424,17 @@ impl<'s> Parser<'s> {
         }
 
         self.ctx.push(Context::Clause(open));
-        let inner = self.next(false);
+        let mut inner = self.next(false);
 
         loop {
             let token = self.lexer.peek();
             if token.kind == close {
                 self.lexer.next();
                 self.ctx.pop().unwrap();
+                if !token.comment.is_null() {
+                    inner =
+                        Entity::merge(inner, Meta::new(Entity::Missing, token.span, token.comment));
+                }
                 return Entity::Clause(open, closen, Box::new(inner));
             } else {
                 todo!("find the next `{closen}` at all cost: {token:?}");
@@ -705,11 +709,14 @@ impl<'s> fmt::Display for Entity<'s> {
             Entity::Symbol(name) => write!(f, "Symbol({name})"),
             // Entity::Comment(text) => write!(f, "//{text}"),
             // Entity::Commented(text, then) => write!(f, "//{text}\n{then}"),
-            Entity::Sequence(elems) => write!(
-                f,
-                "[ {}\n]",
-                elems.iter().map(|elem| elem.indent()).format("\n, ")
-            ),
+            Entity::Sequence(elems) => {
+                dbg!(&elems);
+                write!(
+                    f,
+                    "[ {}\n]",
+                    elems.iter().map(|elem| elem.indent()).format("\n, ")
+                )
+            }
             Entity::Operators { lhs, operator, parts } => {
                 write!(f, "Operators({})\n  {}", parts.len(), lhs.indent())?;
                 for (i, rhs) in parts.iter().enumerate() {

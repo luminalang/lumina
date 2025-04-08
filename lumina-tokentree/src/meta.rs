@@ -77,6 +77,10 @@ impl<T: fmt::Display> fmt::Display for Meta<T> {
 
 impl<T: fmt::Debug> fmt::Debug for Meta<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Tr::new(self.span, &self.kind).fmt(f)
+        if self.comment != Span::null() {
+            write!(f, "{:?}({:?})", self.kind, self.comment)
+        } else {
+            Tr::new(self.span, &self.kind).fmt(f)
+        }
     }
 }

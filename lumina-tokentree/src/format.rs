@@ -16,6 +16,7 @@ enum Item {
     Attribute,
     ModAttribute,
     Alias,
+    Val,
     When,
     Impl,
     None,
@@ -36,12 +37,22 @@ impl<'s> Formatter<'s> {
     }
 
     fn item_spacing(&mut self, buf: &mut String, entity: Meta<&Entity<'s>>) -> std::fmt::Result {
-        let mut irules = |item: Item, single: &[Item]| {
+        let mut irules = |item: Item, single: &[Item], allow_requesting: bool| {
             let previous = std::mem::replace(&mut self.previous, item);
             match previous {
                 Item::None => Ok(()),
-                item if single.contains(&item) => write!(buf, "\n"),
-                _ => write!(buf, "\n\n"),
+                item if single.contains(&item) => {
+                    let spacing = allow_requesting
+                        .then(|| select_spacing(self.src, entity.span, "\n\n", "\n"))
+                        .unwrap_or("\n");
+                    write!(buf, "{spacing}")
+                }
+                _ => {
+                    let spacing = allow_requesting
+                        .then(|| select_spacing(self.src, entity.span, "\n", "\n\n"))
+                        .unwrap_or("\n\n");
+                    write!(buf, "{spacing}")
+                }
             }
         };
 
@@ -50,26 +61,29 @@ impl<'s> Formatter<'s> {
                 self.item_spacing(buf, (**item).as_ref())
             }
             Entity::Header(Tr { value: "when", .. }, _) => {
-                irules(Item::When, &[Item::When, Item::Attribute])
+                irules(Item::When, &[Item::When, Item::Attribute], false)
+            }
+            Entity::Header(Tr { value: "val", .. }, _) => {
+                irules(Item::Val, &[Item::Val, Item::Attribute], true)
             }
             Entity::Header(Tr { value: "impl", .. }, _) => {
-                irules(Item::Impl, &[Item::When, Item::Attribute])
+                irules(Item::Impl, &[Item::When, Item::Attribute], false)
             }
             Entity::Header(Tr { value: "use", .. }, _) => {
-                irules(Item::Use, &[Item::When, Item::Attribute, Item::Use])
+                irules(Item::Use, &[Item::When, Item::Attribute, Item::Use], false)
             }
             Entity::Headers(elems) if *elems[0].0 == "alias" => {
-                irules(Item::Alias, &[Item::Alias, Item::Attribute])
+                irules(Item::Alias, &[Item::Alias, Item::Attribute], false)
             }
             Entity::Unary(Tr { value: "@", .. }, next)
                 if matches!(**next, Entity::Unary(Tr { value: "!", .. }, _)) =>
             {
-                irules(Item::ModAttribute, &[Item::ModAttribute])
+                irules(Item::ModAttribute, &[Item::ModAttribute], false)
             }
             Entity::Unary(Tr { value: "@", .. }, _) => {
-                irules(Item::Attribute, &[Item::When, Item::Attribute])
+                irules(Item::Attribute, &[Item::When, Item::Attribute], false)
             }
-            _ => irules(Item::Other, &[Item::When, Item::Attribute]),
+            _ => irules(Item::Other, &[Item::When, Item::Attribute], false),
         }
     }
 
@@ -232,7 +246,7 @@ impl<'s> Formatter<'s> {
         let mut multiline = false;
 
         while let Some(v) = iter.next() {
-            if follows_a_blank_line(self.src, v.span) {
+            if follows_a_blank_line(self.src, v.span) || !v.comment.is_null() {
                 buf.push('\n');
             }
 

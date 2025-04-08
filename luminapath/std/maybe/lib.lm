@@ -3,7 +3,7 @@ use std:io [crash]
 
 pub type Maybe a = Just a | Nothing
 
-pub fn isJust m as (Maybe a) -> bool =
+pub fn isJust m as Maybe a -> bool =
   match m
   | Just _ -> true
   | Nothing -> false
@@ -36,3 +36,4 @@ impl Compare for Maybe a
     | (Just x, Just y) -> compare x y
     | (Nothing, Just _) -> Ordering:Less
     | (Just _, Nothing) -> Ordering:Greater
+

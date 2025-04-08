@@ -3,3 +3,4 @@ impl ToString for bool
     if b
       then "true"
       else "false"
+

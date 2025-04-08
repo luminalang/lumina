@@ -2,7 +2,7 @@ use std:io
 
 pub type Result a e = Ok a | Err e
 
-pub fn is_ok m as (Result a e) -> bool =
+pub fn is_ok m as Result a e -> bool =
   match m
   | Ok _ -> true
   | Err _ -> false
@@ -28,3 +28,4 @@ pub fn or_crash_ msg r as string (Result a e) -> a =
   match r
   | Ok v -> v
   | Err _ -> io:crash msg
+

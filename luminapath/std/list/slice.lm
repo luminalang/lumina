@@ -10,14 +10,14 @@ pub type Slice a {
 
 // zero-cost conversion from slice to vector
 // must never outlive the slice
-fn weak_vec { ptr, len } as (Slice a) -> Vec a =
+fn weak_vec { ptr, len } as Slice a -> Vec a =
   { Vec a | ptr, len }
 
-pub fn split slice as (Slice a) -> Maybe (a, (Slice a)) =
+pub fn split slice as Slice a -> Maybe (a, (Slice a)) =
   get 0 slice
   . map #(\v -> (v, skip 1 slice))
 
-pub fn is_empty { len } as (Slice a) -> bool = len == 0
+pub fn is_empty { len } as Slice a -> bool = len == 0
 
 pub fn empty as (Slice a) =
   {
@@ -33,7 +33,7 @@ pub fn unsafe_get i slice as uint (Slice a) -> a =
 
 // TODO: we should make it so that dot-calls prioritise type-specific *over* defined in current module
 // for the sake of overloading. Local bindings should still be prioritised though?
-pub fn len { len } as (Slice a) -> uint = len
+pub fn len { len } as Slice a -> uint = len
 
 pub fn forEach f slice as (fn a -> ()) (Slice a) -> () =
   list:itimes #visit slice.len
@@ -78,7 +78,7 @@ pub fn any f slice as (fn a -> bool) (Slice a) -> bool =
 pub fn all f slice as (fn a -> bool) (Slice a) -> bool =
   not (any #(\v -> not (f v)) slice)
 
-pub fn to_list slice as (Slice a) -> List a =
+pub fn to_list slice as Slice a -> List a =
   if len slice == 0
     then List:Nil
     else List:Slice slice
@@ -89,7 +89,7 @@ impl ToString for (Slice a)
   fn show slice as self -> string =
     "[" <> show_ slice
    where
-    fn show_ slice as (Slice a) -> string =
+    fn show_ slice as Slice a -> string =
       match split slice
       | Nothing -> "]"
       | Just (x, xs) ->

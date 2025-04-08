@@ -1,9 +1,14 @@
 use std:libc
 use std:ptr
 
+// val session as () = lumina_gc_init
 pub fn alloc size as int -> *u8 = libc:malloc size
 
+// pub fn alloc size as int -> *u8 = mmtk_alloc (size as uint) 4 0
 pub fn free ptr as *u8 -> () = libc:free ptr
+
+@[extern "mmtk_alloc"]
+fn mmtk_alloc as uint uint i32 -> *u8
 
 // used for internal debugging
 // @[extern "mmtk_info_log_number", platform "linux"]
@@ -12,8 +17,8 @@ pub fn free ptr as *u8 -> () = libc:free ptr
 @[extern "mmtk_init", platform "linux"]
 fn lumina_gc_init as ()
 
-@[extern "mmtk_bind_mutator", platform "linux"]
-fn mmtk_bind_mutator as *u8 -> *u8
+// @[extern "mmtk_bind_mutator", platform "linux"]
+// fn mmtk_bind_mutator as *u8 -> *u8
 
 // @[extern "mmtk_alloc", platform "linux"]
 // pub fn mmtk_alloc mutator size align offset allocator
@@ -22,10 +27,11 @@ fn mmtk_bind_mutator as *u8 -> *u8
 // // TODO: To support multi-threadding we'd need thread local storage
 // // then initialise MMTK seperately from creating the mutator
 // // then create a mutator for each thread
-pub val main_thread_mutator as *u8 = 
-  do lumina_gc_init then
-     let mutator = mmtk_bind_mutator ptr:null in 
-       do mmtk_initialize_collection mutator then mutator
+// pub val main_thread_mutator as *u8 =
+//   do lumina_gc_init then mutator
+    // let mutator = mmtk_bind_mutator ptr:null in
+    //   do mmtk_initialize_collection mutator
+    //    then mutator
 
-@[extern "mmtk_initialize_collection", platform "linux"]
-fn mmtk_initialize_collection as *u8 -> ()
+// @[extern "mmtk_initialize_collection", platform "linux"]
+// fn mmtk_initialize_collection as *u8 -> ()

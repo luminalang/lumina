@@ -6,6 +6,7 @@ val process_arguments as Vec (Vec u8) = vec:empty
 
 pub fn get_args as [string] =
   process_arguments
-    . map #std:string:fromByteVec
-    . to_slice
-    . to_list
+  . map #std:string:fromByteVec
+  . to_slice
+  . to_list
+

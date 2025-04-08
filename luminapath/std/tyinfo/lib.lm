@@ -1,12 +1,13 @@
 pub trait Type
   fn size as uint
   fn align as uint
-  // fn kind  as TypeKind
 
+// fn kind  as TypeKind
 impl Type for a
   fn size as uint = builtin:size_of(a)
   fn align as uint = builtin:align_of(a)
-  // fn kind  as TypeKind = builtin:kind_of(a)
+
+// fn kind  as TypeKind = builtin:kind_of(a)
 
 // pub type TypeKind = UInt u8 | Int u8 | Defined u64
 

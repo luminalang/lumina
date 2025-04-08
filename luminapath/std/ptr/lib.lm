@@ -27,3 +27,4 @@ pub fn box v as t -> *t =
   let ptr = alloc(t as t) in
     do write ptr v
      then ptr
+

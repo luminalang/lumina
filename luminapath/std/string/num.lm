@@ -27,13 +27,13 @@ impl ToString for u64
       then "0"
       else showNext n
   
-    where
-      fn showNext n as u64 -> string =
-        match n
-        | 0 -> ""
-        | _ ->
-          let c = ((n % 10) as u8) + 48
-           in showNext (n / 10) <+> c
+   where
+    fn showNext n as u64 -> string =
+      match n
+      | 0 -> ""
+      | _ ->
+        let c = ((n % 10) as u8) + 48
+         in showNext (n / 10) <+> c
 
 impl ToString for u32
   fn show n = ToString:show (n as u64)
@@ -43,3 +43,4 @@ impl ToString for u16
 
 impl ToString for u8
   fn show n = show (n as u64)
+

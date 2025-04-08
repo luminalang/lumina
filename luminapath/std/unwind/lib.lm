@@ -56,36 +56,25 @@ fn UNW_CONTEXT_SIZE as int = 54
 
 @[platform "windows"]
 fn CNW_CURSOR_SIZE as int = 204
-
 val UNW_ESUCCESS as int = 0
-
 // no error
 val UNW_EUNSPEC as int = -6540
-
 // unspecified (general) error
 val UNW_ENOMEM as int = -6541
-
 // out of memory
 val UNW_EBADREG as int = -6542
-
 // bad register number
 val UNW_EREADONLYREG as int = -6543
-
 // attempt to write read-only register
 val UNW_ESTOPUNWIND as int = -6544
-
 // stop unwinding
 val UNW_EINVALIDIP as int = -6545
-
 // invalid IP
 val UNW_EBADFRAME as int = -6546
-
 // bad frame
 val UNW_EINVAL as int = -6547
-
 // unsupported operation or bad value
 val UNW_EBADVERSION as int = -6548
-
 // unwind info has unsupported version
 val UNW_ENOINFO as int = -6549
 
@@ -115,3 +104,4 @@ fn unwind_next cursor as *u8 -> Maybe FuncUnwindInfo =
   if unw_step cursor == 0
     then Nothing
     else Just (unwind_at cursor)
+

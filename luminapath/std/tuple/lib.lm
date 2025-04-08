@@ -2,7 +2,6 @@ use std:string [<++>]
 
 // TODO: using `<>` instead of `<++>` here causes bools to display as ints. 
 // That does not make any sense, and must be some sort of problem with our trait solver? 
-
 when
   a can ToString
   b can ToString
@@ -83,3 +82,4 @@ impl ToString for (a, b, c, d, e, f)
     <++> show ", "
     <++> show f
     <++> show ")"
+

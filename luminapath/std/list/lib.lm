@@ -27,7 +27,7 @@ impl Listable a for List a
   fn with_capacity len as int -> List a =
     Nil
 
-  fn split list as (List a) -> Maybe (a, List a) =
+  fn split list as List a -> Maybe (a, List a) =
     match list
     | Slice slice ->
       slice:split slice
@@ -126,7 +126,7 @@ pub fn get i list as uint [a] -> Maybe a =
       else get (i - 1) xs
   | [] -> Nothing
 
-pub fn len list as (List a) -> uint =
+pub fn len list as List a -> uint =
   match list
   | Slice slice -> slice . len
   | Singleton a -> 1
@@ -204,7 +204,7 @@ pub fn skip at list as uint (List a) -> List a =
   let (lhs, rhs) = split_at at list
    in rhs
 
-pub fn toVec list as (List a) -> Vec a =
+pub fn toVec list as List a -> Vec a =
   match list
   | List:Slice { Slice a | source, ptr, len } -> { Vec a | ptr, len }
   | _ ->
@@ -254,7 +254,7 @@ when a can ToString
 impl ToString for [a]
   fn show list as [a] -> string =
     "[" <> show_ list
-  where
+   where
     fn show_ list as [a] -> string =
       match list
       | [] -> "]"

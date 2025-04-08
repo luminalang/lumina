@@ -21,7 +21,7 @@ pub fn empty as Vec a = { Vec a | ptr = ptr:null, len = 0 }
 pub fn singleton v as a -> Vec a =
   { ptr = ptr:box v, len = 1 }
 
-pub fn to_slice { ptr, len } as (Vec a) -> Slice a =
+pub fn to_slice { ptr, len } as Vec a -> Slice a =
   { Slice a | ptr, len, source = ptr }
 
 pub fn get i vec as uint (Vec a) -> Maybe a =
@@ -67,7 +67,7 @@ pub fn map f vec as (fn a -> b) (Vec a) -> Vec b =
     (0, vec.len)
     #(\i -> unsafe_get i vec . f)
 
-pub fn clone vec as (Vec a) -> Vec a =
+pub fn clone vec as Vec a -> Vec a =
   from_range
     (0, vec.len)
     #(\i -> unsafe_get i vec)

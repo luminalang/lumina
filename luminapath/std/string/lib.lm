@@ -26,7 +26,8 @@ impl Stringable for string
      in ({ inner = x }, { inner = y })
 
   fn split_first_or_null str as string -> (u8, string) =
-    match str.inner . split
+    match str.inner
+    . split
     | Nothing -> (0, str)
     | Just (x, xs) -> (x, { inner = xs })
 
@@ -48,13 +49,13 @@ pub fn break f str as (fn u8 -> bool) string -> (string, string) =
 pub fn skip n { inner } as uint string -> string =
   inner . list:skip n . fromBytes
 
-pub fn fromByteVec vec as (Vec u8) -> string =
+pub fn fromByteVec vec as Vec u8 -> string =
   { string | inner = vec . to_slice . to_list }
 
-pub fn fromByteSlice slice as (Slice u8) -> string =
+pub fn fromByteSlice slice as Slice u8 -> string =
   { string | inner = List:Slice slice }
 
-pub fn fromBytes inner as (List u8) -> string =
+pub fn fromBytes inner as List u8 -> string =
   { string | inner }
 
 pub type string { inner List u8 }
@@ -65,7 +66,8 @@ pub fn take n str as uint string -> string =
   { string | inner = std:list:take n str.inner }
 
 pub fn joinWith sep strings as string [string] -> string =
-  match strings . map #show
+  match strings
+  . map #show
   | [] -> ""
   | [x : xs] -> xs . fold #(\s elem -> s <> sep <> elem) x
 
@@ -82,11 +84,10 @@ pub fn to_c_str str as string -> *u8 =
           do vec:unsafe_set i v vec
            then i + 1
       )
-      0
-     then // TODO: just use a `list_to_vec` method
-
-do vec:unsafe_set vec.len 0 vec
- then vec.ptr
+      0 then
+    // TODO: just use a `list_to_vec` method
+    do vec:unsafe_set vec.len 0 vec
+     then vec.ptr
 
 pub trait ToString
   fn show as self -> string

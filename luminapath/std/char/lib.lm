@@ -11,3 +11,4 @@ pub fn to_digit c as u8 -> uint =
   (c as uint) - ('0' as uint)
 
 pub fn from_digit c as uint -> u8 = ((c as u8) + '0')
+

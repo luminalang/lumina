@@ -1,3 +1,4 @@
+use std:gc
 pub use std:math [Num [..], Compare [..], Ordering]
 pub use std:math:u8
 pub use std:math:u16
@@ -15,12 +16,10 @@ use std:string [Stringable]
 pub use std:nothing [nothing]
 use std:ptr
 use std:list:vec [Vec]
-use std:gc
 use std:env [process_arguments]
 use std:array
 use std:unwind
 pub use std:tyinfo [Type]
-
 // we need these so that their implementations are always included
 use std:tuple
 use std:bool
@@ -51,3 +50,4 @@ pub fn not b as bool -> bool =
   if b
     then false
     else true
+

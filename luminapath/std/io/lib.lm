@@ -50,3 +50,4 @@ pub fn crash text as string -> a =
   do println text then
   do libc:exit 1
    then builtin:unreachable(self as a)
+

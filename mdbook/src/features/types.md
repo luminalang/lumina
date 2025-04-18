@@ -40,6 +40,7 @@ trait Compare
 trait ToString
 ```
 <sup><sub>&nbsp;&nbsp;&nbsp;&nbsp; `string` is incomplete and not yet validated as utf-8</sub></sup>
+<sup><sub>&nbsp;&nbsp;&nbsp;&nbsp; `list` is definitely not efficient at its current state
 
 ## Record types
 
@@ -73,12 +74,12 @@ Records can also be constructed by changing some fields of an existing record.
 But remember! Lumina is an immutable language, so this creates a new record while keeping the previous record the same. 
 
 ```lm
-fn rename user new as User, string -> User =
+fn rename user new as User string -> User =
   { user ~ name = new }
 
 // Is equivalent to: 
 
-fn rename user new as User, string -> User =
+fn rename user new as User string -> User =
   { User | name = new, age = user.age }
 ```
 <sup><sub>&nbsp;&nbsp;&nbsp;&nbsp; Function returning a copy of a user with its name substituted</sub></sup>

@@ -1,8 +1,11 @@
 # Pattern Matching & Conditionals
 
-<sup>*TODO: Explain the purpose of patterns, their distinction from expressions, and how pattern matching is a core tool of functional programming.*</sup>
-
 **Pattern Matching with `match`**
+
+Lumina provides pattern matching via the `match` keyword. A `match` expression takes one expression as input and then a set of branches which checks for a pattern to run a specified expression. 
+A pattern is in some ways the inverse of an expression. Expressions construct and create data, while patterns destruct data. Destructing data with a pattern will allow you to check for whether the data looks a particular way, while also binding specific bits of data to new identifiers. 
+
+Pattern matching is a core component of Lumina and will be the primary part of most functions. 
 
 ```lm
 // Matching integers

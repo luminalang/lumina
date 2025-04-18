@@ -9,7 +9,7 @@ This lets you create functions whose behavior is more generalised as a portion o
 Among types such as `int` or `(float, float)`, functions-as-values also have types in the form of closures. 
 
 ```lm
-fn(int, int -> int)
+(fn int int -> int)
 ```
 <sup><sub>&nbsp;&nbsp;&nbsp;&nbsp; The type of a closure which expects two `int` parameters and returns an `int`</sub></sup>
 
@@ -56,7 +56,7 @@ fn add x y as int int -> int = x + y
 #(+ 5)
 
 // turn a literal value into a closure
-// (fn -> int), can also be written as fn(int)
+// (fn -> int)
 #5
 ```
 With this in mind, we can rewrite the previous example as:

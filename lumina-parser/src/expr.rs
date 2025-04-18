@@ -196,7 +196,8 @@ impl IndentTracker {
     }
 
     fn finish_match(&mut self) {
-        debug_assert!(self.matches.pop().is_some());
+        let ok = self.matches.pop().is_some();
+        debug_assert!(ok);
     }
 }
 
@@ -678,23 +679,19 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                     }
                     IndentOwnership::InvalidSameLine => {
                         self.err_invalidly_placed_vertical_bar();
-                        // self.indent_tracker.finish_match();
                         return None;
                     }
                     IndentOwnership::InvalidSameDiff(conflict) => {
                         // TODO: we probably still want to run the exprs for errors. But then just
                         // discard the results.
                         self.parser.err_bad_bar_indent(span, conflict);
-                        // self.indent_tracker.finish_match();
                         return None;
                     }
                     IndentOwnership::Other => {
-                        // self.indent_tracker.finish_match();
                         break;
                     }
                 },
                 _ => {
-                    // self.indent_tracker.finish_match();
                     break;
                 }
             }

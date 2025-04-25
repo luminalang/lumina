@@ -49,6 +49,9 @@ impl Listable a for List a
       split left
       . map #(\(v, leftright) -> (v, leftright ++ right))
 
+pub fn is_empty list as List a -> bool =
+  len list == 0
+
 pub fn ++ left right as (List a) (List a) -> [a] =
   match left
   | Nil -> right

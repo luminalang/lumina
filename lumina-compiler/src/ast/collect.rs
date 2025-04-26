@@ -7,6 +7,7 @@ use super::{
 };
 use crate::prelude::*;
 use crate::Target;
+use lumina_key::TypeKind;
 use lumina_parser as parser;
 use lumina_parser::{func, r#use, ty, val, when, Error as ParseError, Parser};
 use lumina_parser::{AnnotatedPath, Expr};
@@ -669,7 +670,13 @@ impl<'s> Collector<'s> {
                     panic!("module import parameter syntax has been deprecated in favor of project-wide type parameters");
                 }
 
-                self.resolve_exposed_entities(module, dst, vis, import.exposing);
+                match import.exposing {
+                    r#use::Exposing::None => {}
+                    r#use::Exposing::All(_) => self.lookups.import_public_items(module, dst, vis),
+                    r#use::Exposing::Set(set) => {
+                        self.resolve_exposed_entities(module, dst, vis, set)
+                    }
+                }
             }
             Ok(_) => panic!("ET: this is not a module, but something else"),
             Err(err) => self

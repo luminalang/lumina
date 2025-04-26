@@ -2,7 +2,7 @@ use super::Sources;
 use crate::impl_map_arrow_fmt;
 use itertools::Itertools;
 use lumina_key as key;
-use lumina_key::{Map, M};
+use lumina_key::{Map, TypeKind, M};
 use lumina_parser::Type;
 use lumina_util::Tr;
 use lumina_util::{Highlighting, Span};
@@ -57,6 +57,38 @@ impl<'s> Lookups<'s> {
         libs.insert("ext", HashMap::new());
 
         Lookups { libs, modules }
+    }
+
+    pub fn import_public_items(&mut self, from: key::Module, dst: key::Module, v: Visibility) {
+        let items = &self.modules[dst];
+        let aliases = items.aliases.clone();
+        let funcs = items.funcs.clone();
+        let types = items.types.clone();
+        let child_modules = items.child_modules.clone();
+
+        for (name, ty) in aliases {
+            if self.is_valid_reachability(from, ty.visibility) {
+                self.declare_alias(from, v, name, ty.key.clone());
+            }
+        }
+
+        for (name, func) in funcs {
+            if self.is_valid_reachability(from, func.visibility) {
+                self.declare(from, v, name, func.module, func.key);
+            }
+        }
+
+        for (name, ty) in types {
+            if self.is_valid_reachability(from, ty.visibility) {
+                self.declare(from, v, name, ty.module, ty.key);
+            }
+        }
+
+        for (name, module) in child_modules {
+            if self.is_valid_reachability(from, module.visibility) {
+                self.declare_module_link(from, v, name.clone(), module.key);
+            }
+        }
     }
 
     pub fn find_lib(&self, root: &str, name: &str) -> Option<key::Module> {

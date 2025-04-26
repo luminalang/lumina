@@ -8,8 +8,15 @@ pub struct Declaration<'a> {
     pub path: Tr<Identifier<'a>>,
     pub module_forall_annotation: ForallAnnotation<'a>,
     pub assign_to: Option<Tr<&'a str>>,
-    pub exposing: Vec<Tr<Exposed<'a>>>,
+    pub exposing: Exposing<'a>,
     pub public: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum Exposing<'a> {
+    All(Span),
+    None,
+    Set(Vec<Tr<Exposed<'a>>>),
 }
 
 #[derive(Clone, Debug)]
@@ -46,30 +53,16 @@ impl<'a> Parser<'a> {
 
         let (t, span) = self.lexer.peek();
         let (exposing, assign_to_path) = match t {
-            T::OpenList => {
-                self.progress();
-                (self.exposing(span)?, None)
-            }
             T::Path => {
                 self.progress();
                 let path = Identifier::parse(self.take(span)).unwrap();
                 let assign_to_path = Some(path.tr(span));
 
-                let exposing = match self.lexer.peek() {
-                    (T::OpenList, span) => {
-                        self.progress();
-                        self.exposing(span)?
-                    }
-                    _ => vec![],
-                };
-
+                let exposing = self.exposing()?;
                 (exposing, assign_to_path)
             }
 
-            // TODO: we should be new-line sensitive so we can provide better errors here.
-            //
-            // Right now we're just handing the responsibility to the top-level parser
-            _ => (vec![], None),
+            _ => (self.exposing()?, None),
         };
 
         let assign_to = assign_to_path.and_then(|path| match path.as_name() {
@@ -84,12 +77,29 @@ impl<'a> Parser<'a> {
         Some(Declaration { path, module_forall_annotation, assign_to, exposing, public })
     }
 
-    fn exposing(&mut self, start: Span) -> Option<Vec<Tr<Exposed<'a>>>> {
-        self.shared_list(start, Parser::exposed, None)
+    fn exposing(&mut self) -> Option<Exposing<'a>> {
+        match self.lexer.peek() {
+            (T::OpenList, span) => {
+                self.progress();
+
+                if let (T::DotDot, span) = self.lexer.peek() {
+                    self.progress();
+                    self.expect(T::CloseList)?;
+                    Some(Exposing::All(span))
+                } else {
+                    self.exposed_items(span).map(Exposing::Set)
+                }
+            }
+            _ => Some(Exposing::None),
+        }
+    }
+
+    fn exposed_items(&mut self, start: Span) -> Option<Vec<Tr<Exposed<'a>>>> {
+        self.shared_list(start, Parser::exposed_item, None)
             .map(|(elems, _, _)| elems)
     }
 
-    fn exposed(&mut self) -> Option<Tr<Exposed<'a>>> {
+    fn exposed_item(&mut self) -> Option<Tr<Exposed<'a>>> {
         let Tr { value: name, span } = self.expect_name("member")?;
 
         let members = match self.lexer.peek() {
@@ -160,8 +170,18 @@ impl<'a> fmt::Display for Declaration<'a> {
             } else {
                 "".into()
             },
-            self.exposing.iter().format(", ")
+            self.exposing
         )
+    }
+}
+
+impl<'a> fmt::Display for Exposing<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Exposing::All(_) => "..".fmt(f),
+            Exposing::None => Ok(()),
+            Exposing::Set(items) => items.iter().format(", ").fmt(f),
+        }
     }
 }
 

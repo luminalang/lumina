@@ -222,6 +222,9 @@ pub fn toVec list as List a -> Vec a =
         0
        then vec
 
+pub fn fix list as List a -> List a =
+  toVec list . to_slice . List:Slice
+
 pub fn split_at at list as uint (List a) -> (List a, List a) =
   if at == 0 then
     (Nil, list)

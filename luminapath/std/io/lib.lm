@@ -3,26 +3,38 @@ use std:list [List [Slice]]
 use std:list:vec [Vec]
 
 @[platform "linux"]
+pub fn stderr as i32 = 2
+
+@[platform "linux"]
 pub fn stdout as i32 = 1
 
 @[platform "linux"]
 pub fn stdin as i32 = 0
 
-// PROBLEM: We need to check param vs ret more deeply because the params can be short-hand return and if they are we use the same header
-//
-// No wait, that's what the `->` is meant to disambiguate
+@[platform "linux"]
+when s can ToString
+pub fn eprint str as s -> () =
+  print_into (show str) stderr
+
+@[platform "linux"]
+when s can ToString
+pub fn eprintln str as s -> () =
+  print_into ("\n" <> str) stderr
+
 @[platform "linux"]
 when s can ToString
 pub fn print str as s -> () =
-  let { ptr, len } = show str . toByteVec in
-    do libc:write stdout ptr (len as int)
-     then ()
+  print_into (show str) stdout
 
 @[platform "linux"]
 when s can ToString
 pub fn println str as s -> () =
-  let { ptr, len } = (str <> "\n") . toByteVec in
-    do libc:write stdout ptr (len as int)
+  print_into ("\n" <> str) stdout
+
+@[platform "linux"]
+fn print_into str fd as string i32 -> () = 
+  let { ptr, len } = show str . toByteVec in
+    do libc:write fd ptr (len as int)
      then ()
 
 @[platform "linux"]

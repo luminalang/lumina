@@ -31,6 +31,8 @@ impl Stringable for string
     | Nothing -> (0, str)
     | Just (x, xs) -> (x, { inner = xs })
 
+
+
   fn equals lhs rhs as string string -> bool =
     lhs == rhs
 
@@ -38,10 +40,7 @@ impl Stringable for string
     if len == 0 then
       { string | inner = List:Nil }
     else
-      {
-        string
-        | inner = List:Slice { Slice u8 | ptr, len, source = ptr }
-      }
+      { string | inner = List:Slice { Slice u8 | ptr, len, source = ptr } }
 
 pub fn break f str as (fn u8 -> bool) string -> (string, string) =
   Stringable:split_while str #f

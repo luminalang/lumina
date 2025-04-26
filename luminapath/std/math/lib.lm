@@ -31,7 +31,7 @@ pub trait Num
 pub trait Negate
   fn neg as self -> self
 
-type Ordering = Less | Equal | Greater
+pub type Ordering = Less | Equal | Greater
 
 impl ToString for Ordering
   fn show ord as self -> string =

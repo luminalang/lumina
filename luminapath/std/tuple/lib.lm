@@ -1,5 +1,8 @@
 use std:string [<++>]
 
+impl ToString for ()
+  fn show _ as () -> string = "()"
+
 // TODO: using `<>` instead of `<++>` here causes bools to display as ints. 
 // That does not make any sense, and must be some sort of problem with our trait solver? 
 when

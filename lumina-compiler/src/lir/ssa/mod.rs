@@ -1,7 +1,7 @@
 use super::{
     mono::MonoFormatter, Function, MonoFunc, MonoType, MonoTypeKey, TRAP_UNREACHABLE, UNIT,
 };
-use crate::{MAYBE_JUST, MAYBE_NONE};
+use crate::{lir::ty_fmt, MAYBE_JUST, MAYBE_NONE};
 use derive_more::{Add, AddAssign, From};
 use derive_new::new;
 use itertools::Itertools;
@@ -110,7 +110,9 @@ impl SSA {
         let mut binds = 0;
 
         loop {
-            let v = iter.next().expect("no tail for block");
+            let Some(v) = iter.next() else {
+                panic!("no tail for block");
+            };
 
             match &self.ventries[v] {
                 Entry::BlockParam(..) => {

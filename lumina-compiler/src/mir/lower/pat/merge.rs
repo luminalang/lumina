@@ -275,9 +275,12 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                     }
                 };
                 self.depth += 1;
+
                 Some(check)
             })
             .collect::<Vec<_>>();
+
+        self.depth -= 1;
 
         if matches!(checks.as_slice(), [StrCheck::TakeExcess]) {
             self.next(wildcard_next)
@@ -381,7 +384,7 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
         panic!("variant {var} was not initialised from type");
     }
 
-    fn merge_any(self, span: Span, tree: &mut DecTree<Tail>) -> IsReachable {
+    fn merge_any(mut self, span: Span, tree: &mut DecTree<Tail>) -> IsReachable {
         match tree {
             DecTree::Wildcard { next, .. } => self.next(next),
             DecTree::Record { fields, next, .. } => {
@@ -412,7 +415,9 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
                 let full = range::Constraints::from(*intsize);
                 self.merge_int(next, full.min, full.max)
             }
-            DecTree::String { wildcard_next, .. } => self.next(wildcard_next),
+            DecTree::String { wildcard_next, next } => {
+                self.fork().merge_any_into_branches(span, next, |_, _| 0) | self.next(wildcard_next)
+            }
             DecTree::Bools(next) => self.merge_any_into_branches(span, next, |_, _| 0),
             DecTree::Opaque { next, .. } => self.next(next),
             DecTree::End(_) => self.merge_any_into_tail(span, tree),

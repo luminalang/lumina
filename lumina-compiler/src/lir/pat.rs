@@ -1,6 +1,7 @@
 use super::*;
 use crate::LISTABLE_SPLIT;
-use lumina_typesystem::{Container, GenericMapper, IntSize, Transformer};
+use fmt::Pointer;
+use lumina_typesystem::{Container, GenericMapper, IntSize, Transformer, Ty};
 use mir::pat::{DecTree, Range, StrCheck, StrChecks, TreeTail};
 use ssa::{Block, Value};
 use std::collections::VecDeque;
@@ -108,7 +109,11 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
     fn tail(&mut self, tail: &TreeTail<key::DecisionTreeTail>) {
         match tail {
             TreeTail::Poison => {}
-            TreeTail::Unreached(_) => {}
+            TreeTail::Unreached(_) => {
+                warn!("unsure what we're meant to lower unreached tail into. Is this unreachable?");
+                let next_ty = MonoType::unit();
+                self.ssa().unreachable(next_ty);
+            }
             TreeTail::Reached(table, _excess, tail) => {
                 let branch_expr_block = match &mut self.expressions[*tail] {
                     Some(existing) => existing,
@@ -430,6 +435,9 @@ impl<'f, 'v, 'a> PatLower<'f, 'v, 'a> {
             match check {
                 StrCheck::Literal(key) => {
                     let (str, slen_arg, _) = self.f.string_from_ro(*key);
+
+                    // TODO: isn't it a bit weird to bind against the const string pointer instead
+                    // of the LHS?
                     self.map.push(str);
 
                     let eq = if is_last {

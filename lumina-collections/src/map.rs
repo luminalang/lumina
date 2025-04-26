@@ -125,6 +125,9 @@ impl<K: MapKey, V> Map<K, V> {
     pub fn values_mut(&mut self) -> std::slice::IterMut<'_, V> {
         self.inner.iter_mut()
     }
+    pub fn into_values(self) -> std::vec::IntoIter<V> {
+        self.inner.into_iter()
+    }
 
     pub fn iter(&self) -> impl Iterator<Item = (K, &V)> {
         let keys = self.keys();
@@ -133,6 +136,12 @@ impl<K: MapKey, V> Map<K, V> {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (K, &mut V)> {
         let keys = self.keys();
         keys.zip(self.inner.iter_mut())
+    }
+}
+
+impl<K: MapKey, T: Clone> Map<K, T> {
+    pub fn cast_key<U: MapKey>(&self) -> Map<U, T> {
+        self.values().cloned().collect()
     }
 }
 

@@ -828,7 +828,7 @@ impl<'t, 'a, 's> FuncLower<'t, 'a, 's> {
         if var.is_none() {
             self.ast
                 .sources
-                .emit_member_not_found(sum.0, span, "type", tname, vname);
+                .emit_member_not_found(self.module, span, "type", tname, vname);
         }
         var
     }

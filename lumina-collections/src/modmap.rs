@@ -31,6 +31,12 @@ impl<K, V> MMap<K, V> {
     }
 }
 
+impl<K, V> From<Map<Module, Map<K, V>>> for MMap<K, V> {
+    fn from(modules: Map<Module, Map<K, V>>) -> Self {
+        Self { modules }
+    }
+}
+
 impl<K: MapKey, V> MMap<K, V> {
     pub fn add_module(&mut self, cap: usize) -> Module {
         self.modules.push(Map::with_capacity(cap))

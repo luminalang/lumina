@@ -18,6 +18,7 @@ mod expr;
 mod func;
 pub use func::FunctionStatus;
 use func::InstInfo;
+use lumina_collections::ReadOnlyTable;
 use lumina_typesystem::{ImplIndex, Type};
 mod builtins;
 mod patc;
@@ -34,7 +35,8 @@ type SelfPositions = Map<key::Method, key::Param>;
 
 pub struct MIR {
     pub funcs: MMap<key::Func, FunctionStatus>,
-    pub read_only_table: MMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
+    pub read_only_table: Map<key::Module, ReadOnlyTable<key::ReadOnly>>,
+    pub read_only_table_types: MMap<key::ReadOnly, Type>,
 
     // Certain parts of the HIR will be kept for the next pass
     pub methods: MMap<key::Trait, Map<key::Method, key::Func>>,
@@ -72,8 +74,6 @@ impl MIR {
     }
 }
 
-pub struct ReadOnlyBytes(pub Box<[u8]>);
-
 pub fn run<'a, 'h, 's>(
     pinfo: ProjectInfo,
     target: Target,
@@ -83,7 +83,12 @@ pub fn run<'a, 'h, 's>(
     iquery: &mut ImplIndex,
 ) -> (MIR, bool) {
     let mut funcs = hir.funcs.secondary_with(|_, _| FunctionStatus::Pending);
-    let mut rotable = hir.sources.modules().collect();
+    let mut rotable = hir
+        .sources
+        .modules()
+        .map(|_| ReadOnlyTable::new())
+        .collect();
+    let mut rotable_types = hir.sources.modules().collect();
 
     let fields = hir.lookups.to_field_lookup();
 
@@ -108,6 +113,7 @@ pub fn run<'a, 'h, 's>(
             &iquery,
             &mut funcs,
             &mut rotable,
+            &mut rotable_types,
             func,
         );
     }
@@ -140,6 +146,7 @@ pub fn run<'a, 'h, 's>(
         MIR {
             funcs,
             read_only_table: rotable,
+            read_only_table_types: rotable_types,
 
             module_names: hir
                 .sources
@@ -182,7 +189,8 @@ pub struct Verify<'a, 's> {
     items: LangItems,
 
     funcs: &'a mut MMap<key::Func, FunctionStatus>,
-    read_only_table: &'a mut MMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
+    read_only_table: &'a mut Map<key::Module, ReadOnlyTable<key::ReadOnly>>,
+    read_only_table_types: &'a mut MMap<key::ReadOnly, Type>,
 
     target: Target,
 
@@ -543,14 +551,5 @@ impl<'a, 's> ImplComparison<'a, 's> {
 
     fn cmpis(&mut self, span: Span, got: &[IType], exp: &[IType]) -> bool {
         got.iter().zip(exp).all(|(g, e)| self.cmpi(span, g, e))
-    }
-}
-
-impl fmt::Display for ReadOnlyBytes {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match std::str::from_utf8(&self.0) {
-            Ok(str) => write!(f, "{str}"),
-            Err(_) => write!(f, "{:?}", &self.0),
-        }
     }
 }

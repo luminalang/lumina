@@ -80,6 +80,18 @@ pub struct StrChecks {
     pub checks: Vec<StrCheck>,
 }
 
+impl StrChecks {
+    fn equals(&self, other: &[StrCheck]) -> bool {
+        self.checks.len() == other.len()
+            && self.checks.iter().zip(other).all(|(l, r)| match (l, r) {
+                (StrCheck::Literal(l), StrCheck::Literal(r)) => l == r,
+                (StrCheck::TakeByte, StrCheck::TakeByte) => true,
+                (StrCheck::TakeExcess, StrCheck::TakeExcess) => true,
+                _ => false,
+            })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum StrCheck {
     Literal(M<key::ReadOnly>),

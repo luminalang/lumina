@@ -3,7 +3,7 @@
 
 use crate::lir::{
     ssa::rewrite::{
-        for_entry_mut, for_value_mut, for_values_mut, insert_buf, offset_predecessors, Rewrite,
+        for_entry_mut, for_v_mut, for_value_mut, insert_buf, offset_predecessors, Rewrite,
     },
     Block, BlockJump, Entry, Function, MonoFunc, MonoType, Value, LIR, SSA, V,
 };
@@ -313,7 +313,7 @@ fn full_func_inline(func: &mut SSA, ofunc: &SSA, atv: V, params: Vec<Value>) -> 
                 info!("injecting additional call instruction");
                 to_bump.push(mfunc);
 
-                for_values_mut(&mut params, &mut |v| ioffset(&injected, atv, v).value());
+                for_v_mut(&mut params, &mut |v| ioffset(&injected, atv, v).value());
                 func.blocks[conblock].predecessors += 1;
 
                 let call = Entry::CallStatic(mfunc, params);

@@ -154,7 +154,7 @@ pub(super) fn for_value_mut<F: Fn(V) -> Value>(v: &mut Value, f: &mut F) {
     }
 }
 
-pub(super) fn for_values_mut<F: Fn(V) -> Value>(values: &mut Vec<Value>, f: &mut F) {
+pub(super) fn for_v_mut<F: Fn(V) -> Value>(values: &mut Vec<Value>, f: &mut F) {
     values.iter_mut().for_each(|v| for_value_mut(v, f))
 }
 
@@ -168,17 +168,17 @@ where
         | Entry::Variant(_, params)
         | Entry::Construct(params)
         | Entry::CallExtern(_, params)
-        | Entry::JmpFunc(_, params) => for_values_mut(params, on_v),
+        | Entry::JmpFunc(_, params) => for_v_mut(params, on_v),
         Entry::JmpBlock(BlockJump { params, id }) => {
             *id = on_b(*id);
-            for_values_mut(params, on_v);
+            for_v_mut(params, on_v);
         }
         Entry::Select { value, on_true, on_false } => {
             on_true.id = on_b(on_true.id);
             on_false.id = on_b(on_false.id);
             for_value_mut(value, on_v);
-            for_values_mut(&mut on_true.params, on_v);
-            for_values_mut(&mut on_false.params, on_v);
+            for_v_mut(&mut on_true.params, on_v);
+            for_v_mut(&mut on_false.params, on_v);
         }
         Entry::JmpTable(v, blocks) => {
             for_value_mut(v, on_v);
@@ -186,7 +186,7 @@ where
         }
         Entry::CallValue(v, params) => {
             for_value_mut(v, on_v);
-            for_values_mut(params, on_v);
+            for_v_mut(params, on_v);
         }
         Entry::BinOp(_, [lhs, rhs])
         | Entry::WritePtr { ptr: lhs, value: rhs }
@@ -219,6 +219,20 @@ where
         | Entry::FloatToInt(v, _) => for_value_mut(v, on_v),
         Entry::Alloc | Entry::Alloca | Entry::Trap(_) | Entry::RefStaticVal(_) => {}
         Entry::BlockParam(block, _) => *block = on_b(*block),
+    }
+}
+
+pub(super) fn for_string_ro(entry: &Entry, mut f: impl FnMut(M<key::ReadOnly>)) {
+    match entry {
+        Entry::CallStatic(_, params)
+        | Entry::Variant(_, params)
+        | Entry::Construct(params)
+        | Entry::CallExtern(_, params)
+        | Entry::JmpFunc(_, params) => params.iter().for_each(|p| match p {
+            Value::ReadOnly(key) => f(*key),
+            _ => {}
+        }),
+        _ => {}
     }
 }
 

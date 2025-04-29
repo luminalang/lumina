@@ -68,17 +68,29 @@ pub fn run(target: Target, dwarf: BinDebugInfo, lir: lir::Output) -> Vec<u8> {
         id
     });
 
-    let rotable = lir.read_only_table.map(|ro, (bytes, _ty)| {
-        let name = ro.to_string();
-        let thread_local = false;
-        let id = objmodule
-            .declare_data(&name, Linkage::Export, false, thread_local)
-            .unwrap();
-        let mut data = cranelift_module::DataDescription::new();
-        data.init = cranelift_module::Init::Bytes { contents: bytes.0.clone() };
-        objmodule.define_data(id, &data).unwrap();
-        id
-    });
+    let rotable = MMap::from(
+        lir.read_only_table
+            .iter()
+            .map(|(module, table)| {
+                table
+                    .iter()
+                    .map(|(ro, bytes)| {
+                        let name = format!("{module}:{ro}");
+                        let thread_local = false;
+                        let id = objmodule
+                            .declare_data(&name, Linkage::Export, false, thread_local)
+                            .unwrap();
+                        let mut data = cranelift_module::DataDescription::new();
+                        data.init = cranelift_module::Init::Bytes {
+                            contents: bytes.to_vec().into_boxed_slice(),
+                        };
+                        objmodule.define_data(id, &data).unwrap();
+                        id
+                    })
+                    .collect()
+            })
+            .collect::<Map<_, _>>(),
+    );
 
     let mut flayouts = PrimaryMap::with_capacity(lir.functions.len() + lir.extern_funcs.len());
 

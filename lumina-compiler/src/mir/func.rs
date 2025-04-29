@@ -1,9 +1,10 @@
-use super::{builtins, lower, tyfmt::TyFmtState, Current, LangItems, ReadOnlyBytes, Verify};
+use super::{builtins, lower, tyfmt::TyFmtState, Current, LangItems, Verify};
 use crate::prelude::*;
 use crate::{ProjectInfo, Target};
 use ast::NFunc;
 use either::Either;
 use hir::HIR;
+use lumina_collections::ReadOnlyTable;
 use lumina_typesystem::{
     Compatibility, Constraint, ConstraintError, Container, DirectRecursion, Finalizer, Forall,
     Generic, GenericKind, GenericMapper, IType, ImplIndex, Inference, Static, TEnv, Transformer,
@@ -68,7 +69,8 @@ impl<'a, 's> Verify<'a, 's> {
         tenvs: &mut MMap<key::Func, TEnv<'s>>,
         iquery: &ImplIndex,
         funcs: &'a mut MMap<key::Func, FunctionStatus>,
-        rotable: &'a mut MMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
+        rotable: &'a mut Map<key::Module, ReadOnlyTable<key::ReadOnly>>,
+        rotable_types: &'a mut MMap<key::ReadOnly, Type>,
         func: M<key::Func>,
     ) {
         match &funcs[func] {
@@ -117,7 +119,17 @@ impl<'a, 's> Verify<'a, 's> {
 
                 let langs = LangItems::new(fdef.list, pinfo);
                 let mut lower = Verify::new(
-                    &hir, iquery, tenvs, langs, funcs, rotable, target, current, fields, pforall,
+                    &hir,
+                    iquery,
+                    tenvs,
+                    langs,
+                    funcs,
+                    rotable,
+                    rotable_types,
+                    target,
+                    current,
+                    fields,
+                    pforall,
                     fdef,
                 );
 
@@ -240,6 +252,7 @@ impl<'a, 's> Verify<'a, 's> {
         let mut finalization = lower::Lower::new(
             &self.tenvs[fkey],
             &mut self.read_only_table,
+            &mut self.read_only_table_types,
             &mut self.current,
             self.items,
             &self.hir.fnames,

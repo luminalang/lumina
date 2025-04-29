@@ -1,9 +1,10 @@
 use super::func::InstInfo;
 use super::tyfmt::TyFmtState;
-use super::{Current, LangItems, ReadOnlyBytes};
+use super::{Current, LangItems};
 use crate::prelude::*;
 use crate::Target;
 use ast::NFunc;
+use lumina_collections::ReadOnlyTable;
 use std::ops::Not;
 
 mod expr;
@@ -73,7 +74,8 @@ pub enum Callable {
 pub struct Lower<'a, 's> {
     env: &'a TEnv<'s>,
 
-    read_only_table: &'a mut MMap<key::ReadOnly, (ReadOnlyBytes, Type)>,
+    read_only_table: &'a mut Map<key::Module, ReadOnlyTable<key::ReadOnly>>,
+    read_only_table_types: &'a mut MMap<key::ReadOnly, Type>,
 
     pub current: &'a mut Current,
 
@@ -139,16 +141,19 @@ impl<'a, 's> Lower<'a, 's> {
     }
 
     fn str_to_ro(&mut self, str: &'s str) -> M<key::ReadOnly> {
+        let module = self.current.fkey.0;
         let str = escape(str);
 
         // We set the type to `u8` because when this data is accessed
         // with ReadOnly, it's treated by-reference so it'll become `*u8`
         let ty = Type::u8();
 
-        self.read_only_table.push(
-            self.current.fkey.0,
-            (mir::ReadOnlyBytes(str.into_boxed_slice()), ty),
-        )
+        let key = self.read_only_table[module].push_bytes(str);
+        if key == self.read_only_table_types[module].next_key() {
+            self.read_only_table_types[module].push_as(key, ty);
+        }
+
+        key.inside(module)
     }
 
     pub fn patterns_and_expr(

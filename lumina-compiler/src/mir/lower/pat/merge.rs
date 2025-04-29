@@ -283,13 +283,21 @@ impl<'h, 's, Tail: Display + Clone + PartialEq, M: Merge<'s, Tail>> Merger<'h, '
         self.depth -= 1;
 
         if matches!(checks.as_slice(), [StrCheck::TakeExcess]) {
-            self.next(wildcard_next)
-        } else {
-            let mut branch_next = wildcard_next.clone();
-            self.next(&mut branch_next);
-            next.branches.push((StrChecks { checks }, branch_next));
-            true
+            return self.next(wildcard_next);
         }
+
+        if let Some((_, next)) = next
+            .branches
+            .iter_mut()
+            .find(|(prev, _)| prev.equals(&checks))
+        {
+            return self.next(next);
+        }
+
+        let mut branch_next = wildcard_next.clone();
+        self.next(&mut branch_next);
+        next.branches.push((StrChecks { checks }, branch_next));
+        true
     }
 
     fn extractor_by_typing(

@@ -316,7 +316,7 @@ impl<'a, 's> Lower<'a, 's> {
             hir::Literal::String(str) => {
                 let ro_key = self.str_to_ro(*str);
 
-                let len = self.read_only_table[ro_key].0 .0.len();
+                let len = self.read_only_table[ro_key.0].get(ro_key.1).len();
 
                 let stringable = self.items.pinfo.stringable;
                 let func = NFunc::Method(*stringable, STRINGABLE_FROM_RAW_PARTS);
@@ -516,7 +516,8 @@ impl<'a, 's> Lower<'a, 's> {
                     .push(FinError::UnreachablePattern(pat.span));
             }
 
-            let expr = blower.lowered_tail.unwrap();
+            let expr = blower.lowered_tail.take().unwrap_or(Expr::Poison);
+
             tails.push_as(tailkey, expr);
         }
 

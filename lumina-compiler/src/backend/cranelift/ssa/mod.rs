@@ -367,7 +367,7 @@ impl<'c, 'a, 'f> Translator<'c, 'a, 'f> {
                 let dataid = self.ctx.rotable[ronly];
                 let ptr = self.ins().dataid_as_pointer(dataid);
 
-                let ty = self.ctx.lir.read_only_table[ronly].1.clone();
+                let ty = self.ctx.lir.read_only_table_types[ronly].clone();
                 Layout::pointer(ty, ptr)
             }
             lir::Value::FuncPtr(mfunc) => {

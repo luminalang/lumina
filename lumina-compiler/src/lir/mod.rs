@@ -9,7 +9,7 @@ use crate::{debuginfo::Item, ProjectInfo, Target};
 use ast::attr::Repr;
 use derive_new::new;
 use either::Either;
-use lumina_collections::map_key_impl;
+use lumina_collections::{map_key_impl, ReadOnlyTable};
 use lumina_typesystem::{Generic, GenericKind, GenericMapper, ImplIndex, IntSize, Static, Type};
 use lumina_util::Highlighting;
 use std::fmt;
@@ -59,7 +59,8 @@ pub struct Output {
     pub val_initializers: HashMap<M<key::Val>, MonoFunc>,
     pub val_types: MMap<key::Val, MonoType>,
 
-    pub read_only_table: MMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
+    pub read_only_table: Map<key::Module, ReadOnlyTable<key::ReadOnly>>,
+    pub read_only_table_types: MMap<key::ReadOnly, MonoType>,
 
     pub types: Types,
 
@@ -87,7 +88,7 @@ struct LIR {
     #[new(default)]
     memo_closures: HashMap<(MonoFunc, Vec<MonoType>), MonoFunc>,
 
-    read_only_table: MMap<key::ReadOnly, (mir::ReadOnlyBytes, MonoType)>,
+    read_only_table_types: MMap<key::ReadOnly, MonoType>,
 
     target: Target,
 
@@ -275,15 +276,14 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
         monomorphization.apply(&typing.returns)
     });
 
-    // Move ReadOnly from MIR to LIR so that we can define more of them
-    // without borrowing the rest of MIR mutably. This isn't a great workaround.
-    let mut read_only_table = mir.read_only_table.secondary();
-    for module in mir.read_only_table.modules() {
-        let this = &mut mir.read_only_table[module];
-        for (key, (bytes, ty)) in std::mem::take(this).into_iter() {
+    let mut read_only_table_types: MMap<key::ReadOnly, MonoType> =
+        mir.read_only_table_types.secondary();
+    for module in mir.read_only_table.keys() {
+        let this = &mut mir.read_only_table_types[module];
+        for (key, ty) in std::mem::take(this).into_iter() {
             let mut monomorphization = to_morphization(&mir, &mut mono, &mut tmap);
             let mono_ty = monomorphization.apply(&ty);
-            read_only_table[module].push_as(key, (bytes, mono_ty));
+            read_only_table_types.push_as(key.inside(module), mono_ty);
         }
     }
 
@@ -292,7 +292,7 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
         "main function can not take parameters"
     );
 
-    let mut lir = LIR::new(extern_funcs, mono, read_only_table, target, vals);
+    let mut lir = LIR::new(extern_funcs, mono, read_only_table_types, target, vals);
 
     // fn alloc size as int -> *u8 =
     // fn dealloc ptr size as *u8, int -> () =
@@ -332,7 +332,8 @@ pub fn run<'s>(info: ProjectInfo, target: Target, iquery: &ImplIndex, mut mir: m
         extern_funcs: lir.extern_funcs,
         val_initializers: lir.val_initialisers,
         val_types: lir.vals,
-        read_only_table: lir.read_only_table,
+        read_only_table: mir.read_only_table,
+        read_only_table_types: lir.read_only_table_types,
         func_names: mir.func_names,
         module_names: mir.module_names,
         types: lir.mono.into_records(),
@@ -450,7 +451,7 @@ impl LIR {
 
     fn type_of_value(&self, mfkey: MonoFunc, value: ssa::Value) -> MonoType {
         match value {
-            ssa::Value::ReadOnly(ro) => MonoType::pointer(self.read_only_table[ro].1.clone()),
+            ssa::Value::ReadOnly(ro) => MonoType::pointer(self.read_only_table_types[ro].clone()),
             ssa::Value::V(v) => self.functions[mfkey].ssa.type_of(v).clone(),
             ssa::Value::Int(_, intsize) => MonoType::Int(intsize),
             ssa::Value::Float(_) => MonoType::Float,
@@ -558,7 +559,11 @@ impl<'a> FuncLower<'a> {
         info!(
             "resulting lir function for {}:\n{}",
             &func_slot.symbol,
-            self.lir.mono.fmt(&*func_slot).fns(&self.lir.functions)
+            self.lir
+                .mono
+                .fmt(&*func_slot)
+                .fns(&self.lir.functions)
+                .ros(&self.mir.read_only_table[origin.module()])
         );
     }
 
@@ -679,8 +684,8 @@ impl<'a> FuncLower<'a> {
     }
 
     fn string_from_ro(&mut self, ro: M<key::ReadOnly>) -> (Value, Value, usize) {
-        let bytes = &self.lir.read_only_table[ro].0;
-        let slen = bytes.0.len();
+        let bytes = self.mir.read_only_table[ro.0].get(ro.1);
+        let slen = bytes.len();
 
         let (slen_arg, _) = self.uint(slen as i128);
         let ptr = Value::ReadOnly(ro);
@@ -919,6 +924,7 @@ impl<'a> FuncLower<'a> {
             },
             _ => MonoFormatter {
                 types: &self.lir.mono.types,
+                ro: Some(&self.mir.read_only_table[self.current.origin.module()]),
                 v: ty,
                 funcs: Some(&self.lir.functions),
             }

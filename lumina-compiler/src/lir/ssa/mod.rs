@@ -11,6 +11,7 @@ use lumina_key as key;
 use lumina_typesystem::IntSize;
 use lumina_util::{Highlighting, ParamFmt};
 use owo_colors::OwoColorize;
+use rewrite::for_string_ro;
 use std::fmt;
 use tracing::{info, trace};
 
@@ -715,12 +716,33 @@ impl<'a, 't> fmt::Display for MonoFormatter<'a, &'t SSA> {
                     self.fork(entry).to_string().lines().format("\n  ")
                 )?;
             } else {
+                let mut hints = String::new();
+
+                let mut add_hint = |str: &str| {
+                    if hints.len() == 0 {
+                        hints.push_str(" // ");
+                    } else {
+                        hints.push_str(", ");
+                    }
+                    hints.push_str(str);
+                };
+
+                if let Some(ro_table) = self.ro {
+                    for_string_ro(entry, |ro| {
+                        let bytes = &ro_table.get(ro.1);
+                        if let Ok(str) = std::str::from_utf8(bytes) {
+                            add_hint(str);
+                        }
+                    });
+                }
+
                 writeln!(
                     f,
-                    "  {v} {} {} : {}",
+                    "  {v} {} {} : {}{}",
                     '='.symbol(),
                     self.fork(entry),
-                    self.fork(&self.v.vtypes[v])
+                    self.fork(&self.v.vtypes[v]),
+                    hints
                 )?;
             }
         }

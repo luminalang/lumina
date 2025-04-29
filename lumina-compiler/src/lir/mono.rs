@@ -2,7 +2,7 @@ use super::{Function, Item, MonoFunc, MonoTyping, UNIT};
 use crate::prelude::*;
 use ast::attr::Repr;
 use derive_more::{Deref, DerefMut};
-use lumina_collections::map_key_impl;
+use lumina_collections::{map_key_impl, ReadOnlyTable};
 use lumina_key as key;
 use lumina_typesystem::{
     ConstValue, Container, Forall, Generic, GenericKind, GenericMapper, IntSize, Static,
@@ -111,6 +111,7 @@ impl MonoTypeData {
 pub struct MonoFormatter<'a, T> {
     pub types: &'a Map<MonoTypeKey, MonoTypeData>,
     pub funcs: Option<&'a Map<MonoFunc, Function>>,
+    pub ro: Option<&'a ReadOnlyTable<key::ReadOnly>>,
     pub v: T,
 }
 
@@ -120,8 +121,13 @@ impl<'a, T> MonoFormatter<'a, T> {
         self
     }
 
+    pub fn ros(mut self, ro: &'a ReadOnlyTable<key::ReadOnly>) -> Self {
+        self.ro = Some(ro);
+        self
+    }
+
     pub fn fork<U>(&self, other: U) -> MonoFormatter<'_, U> {
-        MonoFormatter { types: self.types, funcs: self.funcs, v: other }
+        MonoFormatter { types: self.types, funcs: self.funcs, ro: self.ro, v: other }
     }
 }
 
@@ -216,7 +222,7 @@ impl<'a, 't, T: fmt::Display> fmt::Display for MonoFormatter<'a, (T, &'t [MonoTy
 }
 
 pub fn fmt<'a, T>(types: &'a Map<MonoTypeKey, MonoTypeData>, v: T) -> MonoFormatter<'_, T> {
-    MonoFormatter { v, types, funcs: None }
+    MonoFormatter { v, types, ro: None, funcs: None }
 }
 
 impl MonomorphisedTypes {
@@ -237,7 +243,7 @@ impl MonomorphisedTypes {
     }
 
     pub fn fmt<T>(&self, v: T) -> MonoFormatter<'_, T> {
-        MonoFormatter { v, types: &self.types.records, funcs: None }
+        MonoFormatter { v, types: &self.types.records, ro: None, funcs: None }
     }
 
     pub fn get_or_make_tuple(&mut self, elems: Vec<MonoType>) -> MonoTypeKey {

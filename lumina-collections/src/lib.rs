@@ -4,6 +4,9 @@ mod tests;
 mod map;
 pub use map::{KeysIter, Map, MapKey};
 
+mod ro;
+pub use ro::ReadOnlyTable;
+
 mod modmap;
 pub use modmap::{MMap, Module, M};
 

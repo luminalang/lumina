@@ -1,7 +1,6 @@
 use super::*;
 use crate::LISTABLE_SPLIT;
-use fmt::Pointer;
-use lumina_typesystem::{Container, GenericMapper, IntSize, Transformer, Ty};
+use lumina_typesystem::{Container, GenericMapper, IntSize, Transformer};
 use mir::pat::{DecTree, Range, StrCheck, StrChecks, TreeTail};
 use ssa::{Block, Value};
 use std::collections::VecDeque;

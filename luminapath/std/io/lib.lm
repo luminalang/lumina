@@ -19,7 +19,7 @@ pub fn eprint str as s -> () =
 @[platform "linux"]
 when s can ToString
 pub fn eprintln str as s -> () =
-  print_into ("\n" <> str) stderr
+  print_into (str <> "\n") stderr
 
 @[platform "linux"]
 when s can ToString
@@ -29,7 +29,7 @@ pub fn print str as s -> () =
 @[platform "linux"]
 when s can ToString
 pub fn println str as s -> () =
-  print_into ("\n" <> str) stdout
+  print_into (str <> "\n") stdout
 
 @[platform "linux"]
 fn print_into str fd as string i32 -> () = 

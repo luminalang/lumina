@@ -1,4 +1,4 @@
-![Example source code for the Lumina programming language.](misc/lumina-example.png)
+![Example of the Lumina programming language and compiler.](misc/lumina-example.png)
 
 ## The Lumina Programming Language
 

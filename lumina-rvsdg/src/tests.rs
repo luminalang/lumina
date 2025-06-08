@@ -1,70 +1,78 @@
 use super::*;
 
 #[test]
-fn example() {
-    let int = || Value::Meta(Test::Int);
+fn testing() {
+    let mut unit = Node::create_translation_unit();
+    let region = &mut unit.downcast_mut::<nodes::TranslationUnit>().kind.region;
 
-    Node::<Test>::omega(|region| {
-        // val x = 1 + 2
-        let constant = region.delta(&[], int(), |region| {
-            let one = region.int(int(), 1);
-            let two = region.int(int(), 2);
-            let add = region.add(int());
+    let main = region.add_lambda_node("main");
+    region.connect_to_new_result(Origin::output(main, 0));
 
-            region.connect(Origin::output(one, 0), User::input(add, 0));
-            region.connect(Origin::output(two, 0), User::input(add, 1));
+    let recenv = {
+        let recenv = region.add_recenv_node();
+        let mut recenvref = region.get_mut::<nodes::RecEnv>(recenv);
 
-            region.connect(Origin::output(add, 0), User::result(0));
-        });
+        let fa_node_id = recenvref.add_lambda_node("fa");
+        let fb_node_id = recenvref.add_lambda_node("fb");
 
-        // fn f0 v = f1 (v + 1)
-        // fn f1 v = f0 (v - 1)
-        let funs = region.phi(
-            [
-                RegionSignature::from(vec![int()], vec![int()]),
-                RegionSignature::from(vec![int()], vec![int()]),
-            ],
-            |i, lambdas, region| {
-                let one = Node::int(int(), 1);
-                let one = region.nodes.push(one);
+        let fa_x = recenvref.add_parameter_to_lambda(fa_node_id, Meta::int("x"));
+        let fb_y = recenvref.add_parameter_to_lambda(fb_node_id, Meta::int("y"));
 
-                let operation = match i {
-                    0 => Node::add(int()),
-                    _ => Node::sub(int()),
-                };
-                let operation = region.nodes.push(operation);
+        {
+            let faref = recenvref.get_mut(fa_node_id);
+            let faregion = &mut faref.kind.region;
 
-                region.connect(Origin::output(one, 0), User::input(operation, 0));
-                region.connect(Origin::arg(0), User::input(operation, 1));
+            let plus = {
+                let one = faregion.add_simple_node(nodes::Placeholder("1"));
+                let plus = faregion.add_simple_node(nodes::Placeholder("+"));
+                faregion.connect(Origin::output(one, 0), User::input(plus, 0));
+                faregion.connect(Origin::Argument(fa_x), User::input(plus, 1));
+                plus
+            };
 
-                // Call the other function
-                let apply = region.apply(lambdas[0], &[Origin::output(operation, 0)]);
+            let apply = faregion.add_simple_node(nodes::Apply::new());
 
-                region.connect(Origin::output(apply, 0), User::result(0));
-            },
-        );
+            // TODO: What's the pretty way to do this
+            faregion.connect(Origin::arg(2), User::input(apply, 0));
+            faregion.connect(Origin::output(plus, 0), User::input(apply, 1));
+        }
 
-        // fn main = f0 x
-        let main = region.lambda(
-            true,
-            &[Origin::output(funs, 0), Origin::output(constant, 0)],
-            &[],
-            [int()],
-            |region, _| {
-                let f0 = Origin::arg(0);
-                let constant = Origin::arg(1);
-                let apply = region.apply(f0, &[constant]);
-                region.connect(Origin::output(apply, 0), User::result(0))
-            },
-        );
+        {
+            let fbref = recenvref.get_mut(fb_node_id);
+            let fbregion = &mut fbref.kind.region;
 
-        region.connect(Origin::output(main, 0), User::result(0));
-    })
-    .verify();
-}
+            let plus = {
+                let one = fbregion.add_simple_node(nodes::Placeholder("1"));
+                let plus = fbregion.add_simple_node(nodes::Placeholder("-"));
+                fbregion.connect(Origin::output(one, 0), User::input(plus, 0));
+                fbregion.connect(Origin::Argument(fb_y), User::input(plus, 1));
+                plus
+            };
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Test {
-    Int,
-    Unit,
+            let apply = fbregion.add_simple_node(nodes::Apply::new());
+
+            // TODO: What's the pretty way to do this
+            fbregion.connect(Origin::arg(2), User::input(apply, 0));
+            fbregion.connect(Origin::output(plus, 0), User::input(apply, 1));
+        }
+
+        recenv
+    };
+
+    // Connect `fa` to `main`
+    region.connect(Origin::output(recenv, 0), User::input(main, 0));
+    {
+        let mainref = region.get_mut::<nodes::Lambda>(main);
+        let mainregion = &mut mainref.kind.region;
+
+        let five = mainregion.add_simple_node(nodes::Placeholder("5"));
+        let apply = mainregion.add_simple_node(nodes::Apply::new());
+
+        mainregion.connect(Origin::output(recenv, 0), User::input(apply, 0));
+        mainregion.connect(Origin::output(five, 0), User::input(apply, 1));
+    }
+
+    // let main = unitref.define_function_item(true, "main");
+
+    todo!();
 }

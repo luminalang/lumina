@@ -1,16 +1,39 @@
 use derive_more::TryInto;
 use derive_new::new;
 use lumina_collections::{map_key_impl, Map, MapKey, M};
-use std::any::Any;
+use std::ops::{Index, IndexMut};
+use std::{any::Any, marker::PhantomData};
+use tracing::trace;
 
 #[cfg(test)]
 mod tests;
 
 mod nodes;
 
+mod xml;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct NodeId(u32);
 map_key_impl!(NodeId(u32), "node");
+
+pub struct KNodeId<T> {
+    pub id: NodeId,
+    _data: PhantomData<T>,
+}
+
+impl<T> Clone for KNodeId<T> {
+    fn clone(&self) -> Self {
+        KNodeId::new(self.id)
+    }
+}
+
+impl<T> Copy for KNodeId<T> {}
+
+impl<T> KNodeId<T> {
+    fn new(id: NodeId) -> Self {
+        Self { id, _data: PhantomData }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Argument(pub u32);
@@ -20,7 +43,7 @@ map_key_impl!(Argument(u32), "a");
 pub struct Result(pub u32);
 map_key_impl!(Result(u32), "r");
 
-#[derive(Clone, Copy, Debug, new)]
+#[derive(Clone, Copy, Debug, new, PartialEq)]
 pub struct Meta {
     name: &'static str,
     type_: &'static str,
@@ -40,7 +63,8 @@ impl Meta {
     }
 }
 
-struct Region {
+#[derive(Debug)]
+pub struct Region {
     arguments: Map<Argument, Meta>,
     results: Map<Result, Meta>,
     nodes: Map<NodeId, Node>,
@@ -70,7 +94,7 @@ impl Origin {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Copy)]
 pub enum User {
     Input(NodeId, Input),
     Result(Result),
@@ -86,12 +110,11 @@ impl User {
     }
 }
 
-pub trait NodeKind: std::any::Any {
+pub trait NodeKind: std::any::Any + std::fmt::Debug {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    // fn on_new_input(node: NodeRefMut<Self>, v: &Meta)
-    // where
-    //     Self: Sized;
+    fn node_type(&self) -> &str;
+    fn to_xml<'a>(&'a self, xml: &mut xml::XmlCtx<'a>);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -102,19 +125,21 @@ map_key_impl!(Input(u32), "i");
 pub struct Output(u32);
 map_key_impl!(Output(u32), "o");
 
-#[derive(new)]
+#[derive(new, Debug)]
 pub struct Node {
     inputs: Map<Input, Meta>,
     outputs: Map<Output, Meta>,
     kind: Box<dyn NodeKind>,
+    name: String,
 }
 
 impl Node {
-    pub fn create_translation_unit() -> Node {
+    pub fn create_translation_unit(name: &str) -> Node {
         Node {
             inputs: Map::new(),
             outputs: Map::new(),
             kind: Box::new(nodes::TranslationUnit::new()),
+            name: name.to_string(),
         }
     }
 
@@ -133,20 +158,6 @@ impl Node {
             kind: self.kind.as_any_mut().downcast_mut().unwrap(),
         }
     }
-
-    // TODO: I'm not sure this makes sense since requests for dependencies go upwards not downwards
-    //
-    // If we store the entire translation unit in a Context and then have all methods on that
-    // context, we could request from anywhere and have it propegate all the way up.
-    //
-    // Although; considering it's *acyclic* i feel like we shouldn't *need* that.
-    //
-    // We probably should pass a magic request thing in the ctx.
-    // pub fn add_input<Kind: NodeKind>(&mut self, v: Meta) -> Input {
-    //     let noderef = self.downcast_mut::<Kind>();
-    //     NodeKind::on_new_input(noderef, &v);
-    //     self.inputs.push(v)
-    // }
 }
 
 impl Region {
@@ -171,38 +182,85 @@ impl Region {
         Argument(at as u32)
     }
 
-    pub fn get_mut<Kind: NodeKind>(&mut self, id: NodeId) -> NodeRefMut<'_, Kind> {
-        self.nodes[id].downcast_mut()
+    pub fn add_output<Kind: NodeKind>(&mut self, node: KNodeId<Kind>, m: Meta) -> Origin {
+        let output = self.get_mut(node).outputs.push(m);
+        Origin::Output(node.id, output)
+    }
+    pub fn add_input<Kind: NodeKind>(&mut self, node: KNodeId<Kind>, m: Meta) -> User {
+        let input = self.get_mut(node).inputs.push(m);
+        User::Input(node.id, input)
+    }
+    pub fn add_argument(&mut self, m: Meta) -> Origin {
+        let arg = self.arguments.push(m);
+        Origin::Argument(arg)
+    }
+    pub fn add_result(&mut self, m: Meta) -> User {
+        let result = self.results.push(m);
+        User::Result(result)
     }
 
-    pub fn add_simple_node<Kind: NodeKind>(&mut self, kind: Kind) -> NodeId {
-        let node = Node::new(Map::new(), Map::new(), Box::new(kind));
-        self.nodes.push(node)
+    pub fn get<Kind: NodeKind>(&self, id: KNodeId<Kind>) -> NodeRef<'_, Kind> {
+        self.nodes[id.id].downcast()
     }
 
-    pub fn add_do_while_node(&mut self) -> NodeId {
+    pub fn get_mut<Kind: NodeKind>(&mut self, id: KNodeId<Kind>) -> NodeRefMut<'_, Kind> {
+        self.nodes[id.id].downcast_mut()
+    }
+
+    pub fn add_apply_node(&mut self) -> KNodeId<nodes::Apply> {
+        let kind = nodes::Apply {};
+        let node = Node::new(Map::new(), Map::new(), Box::new(kind), "apply".into());
+        KNodeId::new(self.nodes.push(node))
+    }
+
+    pub fn add_const_node(&mut self, n: usize) -> KNodeId<nodes::Constant> {
+        let kind = nodes::Constant(n);
+        let node = Node::new(Map::new(), Map::new(), Box::new(kind), n.to_string());
+        KNodeId::new(self.nodes.push(node))
+    }
+
+    pub fn add_builtin_node(&mut self, builtin: &'static str) -> KNodeId<nodes::Builtin> {
+        let kind = nodes::Builtin(builtin);
+        let node = Node::new(Map::new(), Map::new(), Box::new(kind), builtin.to_string());
+        KNodeId::new(self.nodes.push(node))
+    }
+
+    pub fn add_do_while_node(&mut self) -> KNodeId<nodes::DoWhile> {
         let pred = Meta::predicate();
         let kind = nodes::DoWhile::new(pred);
-        let node = Node::new(Map::new(), [pred].into(), Box::new(kind));
-        self.nodes.push(node)
+        let node = Node::new(Map::new(), [pred].into(), Box::new(kind), "do while".into());
+        KNodeId::new(self.nodes.push(node))
     }
 
-    pub fn add_recenv_node(&mut self) -> NodeId {
+    pub fn add_recenv_node(&mut self) -> KNodeId<nodes::RecEnv> {
         let kind = nodes::RecEnv::new();
-        let node = Node::new(Map::new(), Map::new(), Box::new(kind));
-        self.nodes.push(node)
+        let node = Node::new(Map::new(), Map::new(), Box::new(kind), "rec env".into());
+        KNodeId::new(self.nodes.push(node))
     }
 
-    pub fn add_lambda_node(&mut self, name: &'static str) -> NodeId {
+    pub fn add_lambda_node(
+        &mut self,
+        name: &'static str,
+        meta: Meta,
+    ) -> (KNodeId<nodes::Lambda>, Origin) {
         let kind = nodes::Lambda::new(name);
-        let node = Node::new(Map::new(), Map::new(), Box::new(kind));
-        self.nodes.push(node)
+        let node = Node::new(Map::new(), [meta].into(), Box::new(kind), name.to_string());
+        let node_id = self.nodes.push(node);
+        (KNodeId::new(node_id), Origin::output(node_id, 0))
     }
 
     fn get_origin_meta(&self, origin: Origin) -> Meta {
+        trace!("getting metadata for {origin:?}");
         match origin {
             Origin::Output(node_id, output) => self.nodes[node_id].outputs[output].clone(),
             Origin::Argument(argument) => self.arguments[argument].clone(),
+        }
+    }
+
+    fn get_user_meta(&self, user: User) -> Meta {
+        match user {
+            User::Input(node_id, input) => self.nodes[node_id].inputs[input],
+            User::Result(result) => self.results[result],
         }
     }
 
@@ -214,24 +272,18 @@ impl Region {
     }
 
     pub fn connect(&mut self, origin: Origin, user: User) {
-        todo!("we want connect to also *declare* the points no?");
-
-        // hm... do we? if we do then will that actually properly type check them?
-        //
-        // yes. I suppose it's the `apply` node that'll actually type check things.
-        // let's try it.
-        //
-        // Perhaps; The input/output shouldn't be metadata but rather the connected stuff directly?
-        //
-        // Hm. But they *can* end up unconnected. So I don't think that's a good idea.
-
-        match user {
-            User::Input(node_id, input) => {
-                todo!("");
-            }
-            User::Result(_) => todo!(),
-        }
+        assert_eq!(
+            self.get_origin_meta(origin).type_,
+            self.get_user_meta(user).type_
+        );
         self.edges.push(Edge { origin, user });
+    }
+
+    pub fn closure_output(&self, node: KNodeId<nodes::Lambda>) -> (Origin, Meta) {
+        // Lambda nodes always only have one output (the closure)
+        let outputs = &self.get(node).outputs;
+        assert_eq!(outputs.len(), 1);
+        (Origin::output(node.id, 0), outputs[Output(0)])
     }
 }
 
@@ -240,14 +292,6 @@ pub struct NodeRefMut<'a, Kind> {
     outputs: &'a mut Map<Output, Meta>,
     kind: &'a mut Kind,
 }
-
-// impl<'a, Kind> NodeRefMut<'a, Kind> {
-//     pub fn add_input(self, v: Meta) -> Input {
-//         NodeKind::on_new_input(self, &v);
-//         // self.kind.on_new_input(&v);
-//         self.inputs.push(v)
-//     }
-// }
 
 pub struct NodeRef<'a, Kind> {
     inputs: &'a Map<Input, Meta>,

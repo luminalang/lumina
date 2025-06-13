@@ -1,6 +1,6 @@
 use crate::{xml::XmlCtx, NodeKind};
 
-impl NodeKind for Apply {
+impl NodeKind for Constant {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -9,7 +9,7 @@ impl NodeKind for Apply {
         self
     }
 
-    fn to_xml<'a>(&'a self, xml: &mut crate::xml::XmlCtx<'a>) {}
+    fn to_xml<'a>(&'a self, xml: &mut XmlCtx<'a>) {}
 
     fn node_type(&self) -> &str {
         "simple"
@@ -17,10 +17,4 @@ impl NodeKind for Apply {
 }
 
 #[derive(Debug)]
-pub struct Apply {}
-
-impl Apply {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+pub struct Constant(pub usize);

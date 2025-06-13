@@ -1,4 +1,4 @@
-use crate::{Map, Meta, NodeKind, Region};
+use crate::{xml::XmlCtx, Map, Meta, NodeKind, Region};
 
 impl NodeKind for DoWhile {
     fn as_any(&self) -> &dyn std::any::Any {
@@ -9,13 +9,16 @@ impl NodeKind for DoWhile {
         self
     }
 
-    // fn on_new_input(node: NodeRefMut<Self>, input: &Meta) {
-    //     node.outputs.push(input.clone());
-    //     node.kind.region.arguments.push(input.clone());
-    //     node.kind.region.results.push(input.clone());
-    // }
+    fn to_xml<'a>(&'a self, xml: &mut XmlCtx<'a>) {
+        xml.write_region("Do While", &self.region)
+    }
+
+    fn node_type(&self) -> &str {
+        "theta"
+    }
 }
 
+#[derive(Debug)]
 pub struct DoWhile {
     region: Region,
 }

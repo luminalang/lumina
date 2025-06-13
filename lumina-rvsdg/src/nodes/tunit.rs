@@ -1,4 +1,4 @@
-use crate::{nodes, Map, Meta, Node, NodeId, NodeKind, NodeRefMut, Region};
+use crate::{nodes, xml::XmlCtx, Map, Meta, Node, NodeId, NodeKind, NodeRefMut, Region};
 
 impl NodeKind for TranslationUnit {
     fn as_any(&self) -> &dyn std::any::Any {
@@ -8,16 +8,25 @@ impl NodeKind for TranslationUnit {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
+
+    fn to_xml<'a>(&'a self, xml: &mut XmlCtx<'a>) {
+        xml.write_region("Translation Unit Region", &self.region)
+    }
+
+    fn node_type(&self) -> &str {
+        "omega"
+    }
 }
 
 // TODO: could be nice to have Node<Lambda> instead
+#[derive(Debug)]
 pub struct TranslationUnit {
     pub region: Region,
 }
 
 impl TranslationUnit {
     pub fn new() -> Self {
-        todo!();
+        Self { region: Region::new() }
     }
 }
 

@@ -1,9 +1,0 @@
-[package]
-name = "lumina-rvsdg"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-lumina-collections = { path = "../lumina-collections" }
-derive-new = "0.7"
-derive_more = {version = "*", features = ["full"]}

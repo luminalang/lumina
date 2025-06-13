@@ -1,6 +1,6 @@
 use crate::{xml::XmlCtx, NodeKind};
 
-impl NodeKind for Builtin {
+impl NodeKind for Placeholder {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -17,4 +17,4 @@ impl NodeKind for Builtin {
 }
 
 #[derive(Debug)]
-pub struct Builtin(pub &'static str);
+pub struct Placeholder(pub &'static str);

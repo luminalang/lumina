@@ -1,4 +1,4 @@
-use crate::{xml::XmlCtx, NodeKind};
+use crate::{xml::XmlCtx, Meta, NodeKind};
 
 impl NodeKind for Apply {
     fn as_any(&self) -> &dyn std::any::Any {

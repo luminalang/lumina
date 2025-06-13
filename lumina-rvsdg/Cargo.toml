@@ -5,5 +5,8 @@ edition = "2021"
 
 [dependencies]
 lumina-collections = { path = "../lumina-collections" }
+lumina-util = { path = "../lumina-util" }
 derive-new = "0.7"
 derive_more = {version = "*", features = ["full"]}
+tracing = "*"
+xmlwriter = "*"

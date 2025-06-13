@@ -43,6 +43,14 @@ map_key_impl!(Argument(u32), "a");
 pub struct Result(pub u32);
 map_key_impl!(Result(u32), "r");
 
+// TODO: PERHAPS: We shouldn't have any sort of meta at all inside the RVSDG.
+//
+// Instead; the user can have their own lookups/hashmaps that map the region arguments to types.
+//
+// Then; the RVSDG could simply expose some method that traverses an origin until the upmost argument.
+//
+// Hm. I suppose we want an arena-allocation of regions/nodes and that way we can more easily
+// attach information?
 #[derive(Clone, Copy, Debug, new, PartialEq)]
 pub struct Meta {
     name: &'static str,
@@ -52,10 +60,6 @@ pub struct Meta {
 impl Meta {
     pub fn int(name: &'static str) -> Self {
         Self { name, type_: "int" }
-    }
-
-    pub fn predicate() -> Self {
-        Meta { name: "predicate", type_: "bool" }
     }
 
     pub fn closure(name: &'static str) -> Self {
@@ -207,35 +211,39 @@ impl Region {
         self.nodes[id.id].downcast_mut()
     }
 
-    pub fn add_apply_node(&mut self) -> KNodeId<nodes::Apply> {
+    pub fn add_apply_node(&mut self, ret: Meta) -> (KNodeId<nodes::Apply>, Origin) {
         let kind = nodes::Apply {};
-        let node = Node::new(Map::new(), Map::new(), Box::new(kind), "apply".into());
-        KNodeId::new(self.nodes.push(node))
+        let node = Node::new(Map::new(), [ret].into(), Box::new(kind), "apply".into());
+        let node_id = self.nodes.push(node);
+        (KNodeId::new(node_id), Origin::output(node_id, 0))
     }
 
-    pub fn add_const_node(&mut self, n: usize) -> KNodeId<nodes::Constant> {
+    pub fn add_const_node(&mut self, n: usize, meta: Meta) -> (KNodeId<nodes::Constant>, Origin) {
         let kind = nodes::Constant(n);
-        let node = Node::new(Map::new(), Map::new(), Box::new(kind), n.to_string());
-        KNodeId::new(self.nodes.push(node))
+        let node = Node::new(Map::new(), [meta], Box::new(kind), n.to_string());
+        let node_id = self.nodes.push(node);
+        (KNodeId::new(node_id), Origin::output(node_id, 0))
     }
 
-    pub fn add_builtin_node(&mut self, builtin: &'static str) -> KNodeId<nodes::Builtin> {
-        let kind = nodes::Builtin(builtin);
+    pub fn add_placeholder_node(&mut self, builtin: &'static str) -> KNodeId<nodes::Placeholder> {
+        let kind = nodes::Placeholder(builtin);
         let node = Node::new(Map::new(), Map::new(), Box::new(kind), builtin.to_string());
-        KNodeId::new(self.nodes.push(node))
+        let node_id = self.nodes.push(node);
+        KNodeId::new(node_id)
     }
 
-    pub fn add_do_while_node(&mut self) -> KNodeId<nodes::DoWhile> {
-        let pred = Meta::predicate();
+    pub fn add_do_while_node(&mut self, pred: Meta) -> (KNodeId<nodes::DoWhile>, Origin) {
         let kind = nodes::DoWhile::new(pred);
         let node = Node::new(Map::new(), [pred].into(), Box::new(kind), "do while".into());
-        KNodeId::new(self.nodes.push(node))
+        let node_id = self.nodes.push(node);
+        (KNodeId::new(node_id), Origin::output(node_id, 0))
     }
 
     pub fn add_recenv_node(&mut self) -> KNodeId<nodes::RecEnv> {
         let kind = nodes::RecEnv::new();
         let node = Node::new(Map::new(), Map::new(), Box::new(kind), "rec env".into());
-        KNodeId::new(self.nodes.push(node))
+        let node_id = self.nodes.push(node);
+        KNodeId::new(node_id)
     }
 
     pub fn add_lambda_node(

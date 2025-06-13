@@ -60,8 +60,7 @@ impl<'a> NodeRefMut<'a, RecEnv> {
             );
         }
 
-        let node_id = region.add_lambda_node(name);
-        region.add_output(node_id, meta);
+        let (node_id, _) = region.add_lambda_node(name, meta);
 
         self.kind.lambdas.push((lambda_argument, meta));
 

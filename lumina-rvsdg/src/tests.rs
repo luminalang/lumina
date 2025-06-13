@@ -8,13 +8,13 @@ fn phi() {
     let mut unit = Node::create_translation_unit("testing");
     let region = &mut unit.downcast_mut::<nodes::TranslationUnit>().kind.region;
 
-    let main = region.add_lambda_node("main");
+    let (main, _main_output) = region.add_lambda_node("main", Meta::closure("main"));
 
     let mr = &mut region.get_mut(main).kind.region;
 
     let phi = mr.add_recenv_node();
-    let fa = mr.add_output(phi, Meta::closure("fa"));
-    let fb = mr.add_output(phi, Meta::closure("fb"));
+    let _fa = mr.add_output(phi, Meta::closure("fa"));
+    let _fb = mr.add_output(phi, Meta::closure("fb"));
 
     let mut phiref = mr.get_mut(phi);
 
@@ -55,7 +55,7 @@ fn phi_nodes_not_using_each_other() {
     let mut unit = Node::create_translation_unit("testing");
     let region = &mut unit.downcast_mut::<nodes::TranslationUnit>().kind.region;
 
-    let main = region.add_lambda_node("main");
+    let (main, _main_output) = region.add_lambda_node("main", Meta::closure("main"));
 
     let mr = &mut region.get_mut(main).kind.region;
 
@@ -92,10 +92,10 @@ fn phi_nodes_indirect_recursion() {
 
     let mut unit = Node::create_translation_unit("testing");
     let unit_region = &mut unit.downcast_mut::<nodes::TranslationUnit>().kind.region;
+    let main_export = unit_region.add_result(Meta::closure("main"));
 
-    let main = unit_region.add_lambda_node("main");
-    let main_output = unit_region.add_output(main, Meta::closure("main"));
-    unit_region.connect(main_output);
+    let (main, main_output) = unit_region.add_lambda_node("main", Meta::closure("main"));
+    unit_region.connect(main_output, main_export);
 
     let mr = &mut unit_region.get_mut(main).kind.region;
 
@@ -174,7 +174,7 @@ fn num_node(r: &mut Region, n: usize) -> Origin {
 fn const_application(r: &mut Region, x: usize, y: Origin, op: &'static str) -> Origin {
     let num_output = num_node(r, x);
 
-    let action = r.add_builtin_node(op);
+    let action = r.add_placeholder_node(op);
     let x_arg = r.add_input(action, Meta::int("x"));
     let y_arg = r.add_input(action, Meta::int("y"));
     let final_ = r.add_output(action, Meta::int("action result"));
@@ -191,15 +191,17 @@ fn simpler() {
 
     let mut unit = Node::create_translation_unit("testing");
     let region = &mut unit.downcast_mut::<nodes::TranslationUnit>().kind.region;
+    let main_export = region.add_result(Meta::closure("main"));
 
-    let main = region.add_lambda_node("main");
+    let (main, main_output) = region.add_lambda_node("main", Meta::closure("main"));
+    region.connect(main_output, main_export);
 
     let mr = &mut region.get_mut(main).kind.region;
     let result = mr.add_result(Meta::int("out"));
 
-    let one = mr.add_const_node(1);
-    let two = mr.add_const_node(2);
-    let plus = mr.add_builtin_node("+");
+    let (one, one_out) = mr.add_const_node(1, Meta::int("one"));
+    let (two, two_out) = mr.add_const_node(2, Meta::int("two"));
+    let plus = mr.add_placeholder_node("+");
 
     let one_out = mr.add_output(one, Meta::int("one"));
     let two_out = mr.add_output(two, Meta::int("two"));

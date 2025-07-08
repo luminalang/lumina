@@ -11,6 +11,7 @@ lumina-util = { path = "../lumina-util" }
 lumina-parser = { path = "../lumina-parser" }
 lumina-typesystem = { path = "../lumina-typesystem" }
 lumina-collections = { path = "../lumina-collections" }
+rvsdg = { path = "../../rvsdg" }
 target-lexicon = "0.12.*"
 lumina-key = { path = "../lumina-key" }
 derive-new = "0.7"
@@ -23,13 +24,15 @@ take_mut = "*"
 derive_more = { version = "1.0.*", features = ["from", "display", "index", "index_mut", "deref", "deref_mut", "add", "add_assign"] }
 insta = "*"
 tracing = "0.1.41"
-cranelift = "0.114.*"
-cranelift-entity = "0.114.*"
-cranelift-codegen = "0.114.*"
-cranelift-module = "0.114.*"
-cranelift-object = "0.114.*"
-cranelift-native = "0.114.*"
+cranelift = "0.120.*"
+cranelift-codegen = "0.120.*"
+cranelift-module = "0.120.*"
+cranelift-object = "0.120.*"
+cranelift-native = "0.120.*"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-tree = "0.4.0"
 gimli = "*"
 object = "*"
+num_cpus = "*"
+crossbeam = "*"
+rand = "*"

@@ -1,6 +1,7 @@
 use super::cli;
 use lumina_tokentree;
 
+use lumina_compiler::env;
 use lumina_util::Highlighting;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -8,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub fn run(env: cli::Environment, settings: cli::FormatFlags) -> ExitCode {
+pub fn run(env: env::Environment, settings: cli::FormatFlags) -> ExitCode {
     match settings.file.as_deref() {
         None => {
             let folder = settings

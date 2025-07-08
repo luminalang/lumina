@@ -1,0 +1,8 @@
+use std:io
+
+fn main =
+  1 + myFunc
+        2
+        3
+
+fn myFunc a b = "hello"

@@ -153,7 +153,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn declaration(&mut self) -> Option<(Span, Declaration<'a>)> {
+    pub fn item(&mut self) -> Option<(Span, Declaration<'a>)> {
         let ((kw, span), ind) = self.lexer.peek_with_indent();
         trace!("attempting to get next declaration at {kw:?}");
 
@@ -164,11 +164,11 @@ impl<'a> Parser<'a> {
         let opt = select! { self, "a top-level declaration";
             T::OpenAttribute => {
                 self.attribute(span)
-                    .and_then(|attribute| self.declaration().map(|decl| self.apply_attributes(attribute, decl)))
+                    .and_then(|attribute| self.item().map(|decl| self.apply_attributes(attribute, decl)))
             },
             T::Pub => {
                 let pub_expr = vec![Expr::name("pub".tr(span))];
-                self.declaration().map(|(span, decl)|
+                self.item().map(|(span, decl)|
                     match decl {
                         Declaration::Use(mut r#use) => {
                             r#use.public = true;
@@ -194,10 +194,10 @@ impl<'a> Parser<'a> {
             T::When => {
                 let Some(when) = self.when() else {
                     self.recover_next_toplevel();
-                    return self.declaration();
+                    return self.item();
                 };
 
-                match self.declaration() {
+                match self.item() {
                     Some((_, Declaration::Function(mut decl))) => {
                         decl.header.when.generics.extend(when.generics);
                         Some(Declaration::Function(decl))
@@ -231,7 +231,7 @@ impl<'a> Parser<'a> {
             }),
             (kw, span) if kw.is_header() => {
                 self.err_bad_default(span, kw);
-                self.declaration().map(|(_, decl)| decl)
+                self.item().map(|(_, decl)| decl)
             }
             other => {
                 self.err_unexpected_token(other, "the start of an implementation");

@@ -1,51 +1,89 @@
-pub mod ast;
+use config::ProjectConfig;
+use lumina_util::Identifier;
+use prelude::*;
+use std::{
+    ffi::OsStr,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+pub mod env;
+
+mod lower;
+
+mod files;
+use files::Files;
+
 pub mod backend;
-mod debuginfo;
-pub mod hir;
-pub mod lir;
-pub mod mir;
 mod prelude;
-pub mod target;
+
+mod target;
 pub use target::Target;
 
-mod fmt;
+pub mod config;
 
-use derive_new::new;
-use key::M;
-use lumina_key as key;
+pub mod key;
 
-pub const LISTABLE_CONS: key::Method = key::Method(0);
-pub const LISTABLE_NEW: key::Method = key::Method(1);
-pub const LISTABLE_WITH_CAPACITY: key::Method = key::Method(2);
-pub const LISTABLE_SPLIT: key::Method = key::Method(3);
+mod deptree;
 
-pub const STRINGABLE_FROM_RAW_PARTS: key::Method = key::Method(4);
+pub fn testing(target: Target, project: PathBuf, env: env::Environment) {
+    let (dep_tree, errors) = deptree::Collector::root(env.ext_directory.clone(), &project);
 
-pub const LIST_CONCAT: key::Variant = key::Variant(1);
-pub const LIST_SINGLETON: key::Variant = key::Variant(2);
-pub const LIST_NIL: key::Variant = key::Variant(3);
+    for err in errors {
+        let err = lumina_util::Error::error("project error").with_text(format!("{err:?}"));
+        eprintln!("{err}");
+    }
 
-pub const MAYBE_JUST: key::Variant = key::Variant(0);
-pub const MAYBE_NONE: key::Variant = key::Variant(1);
+    info!("{dep_tree:#?}");
 
-pub const CLOSURE_CALL: key::Method = key::Method(0);
-pub const CLOSURE_CAPTURES: key::Param = key::Param(0);
-
-pub const SIZE_OF: key::Method = key::Method(0);
-
-pub const TRAIT_OBJECT_DATA_FIELD: key::Field = key::Field(0);
-pub const VTABLE_FIELD: key::Field = key::Field(1);
-
-#[derive(new, Clone, Copy)]
-pub struct ProjectInfo {
-    main: M<key::Func>,
-    sys_init: M<key::Func>,
-    closure: M<key::Trait>,
-    allocator: (M<key::Func>, M<key::Func>),
-    reflect_type: M<key::Trait>,
-    listable: M<key::Trait>,
-    global_list_default: M<key::TypeKind>,
-    stringable: M<key::Trait>,
-    string: M<key::Record>,
-    maybe: M<key::Sum>,
+    let root = dep_tree.root;
+    lower::project(dep_tree, root);
 }
+
+pub struct Projects<'src> {
+    projects: PrimaryMap<key::Project, Project<'src>>,
+}
+
+pub struct Project<'src> {
+    rvsdg: rvsdg::TranslationUnitContext,
+    external_dependencies: SecondaryMap<rvsdg::id::Input, ExternalDependency>,
+    _a: &'src (),
+    // files: PrimaryMap<key::File, File<'src>>,
+}
+
+#[derive(Clone)]
+enum ExternalDependency {
+    Function,
+    // ...
+}
+
+// pub struct File<'src> {
+//     items: HashMap<&'src str, Item<'src>>,
+//     file_glob_imports: HashMap<&'src str, key::File>,
+//
+//     // Mapping of field -> record
+//     fields: HashMap<&'src str, &'src str>,
+//
+//     // Mapping of variant -> sum
+//     variants: HashMap<&'src str, &'src str>,
+// }
+//
+// pub struct Item<'src> {
+//     attr: Attributes,
+//     name: &'src str,
+//     kind: ItemKind<'src>,
+// }
+//
+// struct Attributes {}
+//
+// // TODO: But since re-exports still exist, we can't store Module under ItemKind.
+//
+// pub enum ItemKind<'src> {
+//     Module(key::File),
+//     Function(&'src ()),
+//     Record,
+//     Sum,
+//     Trait,
+// }
+//
+// impl<'src> Item<'src> {}

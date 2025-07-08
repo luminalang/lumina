@@ -4,6 +4,7 @@ mod build;
 pub use build::{build_project, run_built_binary};
 pub mod cli;
 pub mod formatter;
+use lumina_compiler::env;
 use lumina_util::test_logger;
 use std::path::PathBuf;
 
@@ -12,9 +13,11 @@ pub fn run(path: &str) -> std::process::Output {
 
     let manifest = env!("CARGO_MANIFEST_DIR");
 
-    let environment = crate::cli::Environment {
+    let environment = env::Environment {
         current_directory: PathBuf::from(format!("{manifest}/../{path}")),
         lumina_directory: PathBuf::from(format!("{manifest}/../luminapath")),
+        std_directory: PathBuf::from(format!("{manifest}/../luminapath/std")),
+        ext_directory: PathBuf::from(format!("{manifest}/../luminapath/ext")),
     };
 
     let buildflags = crate::cli::BuildFlags {

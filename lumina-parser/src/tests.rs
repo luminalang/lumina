@@ -80,7 +80,7 @@ macro_rules! expr {
 macro_rules! declaration {
     ($name:ident, $src:literal) => {
         test!($name, $src, |parser: &mut Parser<'static>| parser
-            .declaration()
+            .item()
             .map(|(_, decl)| decl));
     };
 }

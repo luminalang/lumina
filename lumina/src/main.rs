@@ -33,7 +33,8 @@ fn main() -> ExitCode {
     let cli = cli::Cli::parse_from(std::env::args().take_while(|arg| arg != "--"));
 
     info!("initialising lumina environment");
-    let env = cli::Environment::parse();
+    let env = cli::environment_from_sys_vars();
+    info!("using environment: {env:#?}");
 
     let run_output = matches!(&cli.command, cli::Commands::Run(..));
 

@@ -1,6 +1,4 @@
-pub mod cranelift;
-
-use super::{ast, target::LinuxPlatform, target::Platform, Target};
+use super::{config::ProjectConfig, target::LinuxPlatform, target::Platform, Target};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Write;
@@ -10,7 +8,7 @@ use std::process::ExitCode;
 use tracing::info;
 
 pub fn link_native_binary(
-    config: ast::ProjectConfig,
+    config: ProjectConfig,
     target: Target,
     output: &Path,
     projectpath: PathBuf,

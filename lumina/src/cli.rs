@@ -1,5 +1,6 @@
 use clap::{command, Args, Parser, Subcommand};
 use directories::BaseDirs;
+use lumina_compiler::env::Environment;
 use std::fs;
 use std::path::PathBuf as FilePathBuf;
 
@@ -103,28 +104,30 @@ pub struct FormatFlags {
     pub overwrite: bool,
 }
 
-#[derive(Debug)]
-pub struct Environment {
-    pub current_directory: FilePathBuf,
-    pub lumina_directory: FilePathBuf,
-}
+pub fn environment_from_sys_vars() -> Environment {
+    let dirs = BaseDirs::new().expect("Could not access home directory");
 
-impl Environment {
-    pub fn parse() -> Self {
-        let dirs = BaseDirs::new().expect("Could not access home directory");
+    let lumina_directory = std::env::var("LUMINAPATH")
+        .map(|str| FilePathBuf::from(str))
+        .unwrap_or_else(|_| {
+            let mut local = dirs.data_local_dir().to_owned();
+            local.push("lumina");
+            fs::create_dir_all(&local).expect("could not create default LUMINAPATH directory");
+            local
+        });
 
-        let lumina_directory = std::env::var("LUMINAPATH")
-            .map(|str| FilePathBuf::from(str))
-            .unwrap_or_else(|_| {
-                let mut local = dirs.data_local_dir().to_owned();
-                local.push("lumina");
-                fs::create_dir_all(&local).expect("could not create default LUMINAPATH directory");
-                local
-            });
+    let std_directory = std::env::var("LUMINASTD")
+        .map(|str| FilePathBuf::from(str))
+        .unwrap_or_else(|_| lumina_directory.join("std"));
 
-        Environment {
-            current_directory: std::env::current_dir().unwrap(),
-            lumina_directory,
-        }
+    let ext_directory = std::env::var("LUMINAEXT")
+        .map(|str| FilePathBuf::from(str))
+        .unwrap_or_else(|_| lumina_directory.join("ext"));
+
+    Environment {
+        current_directory: std::env::current_dir().unwrap(),
+        lumina_directory,
+        std_directory,
+        ext_directory,
     }
 }

@@ -79,22 +79,19 @@ pub enum ListLength<'a> {
 pub type Fields<'a, T> = Vec<Field<'a, T>>;
 
 #[derive(Clone, Debug)]
-pub enum Field<'a, T> {
-    Punned(Vec<Tr<&'a str>>),
-    Value(Tr<T>),
-    Assigned {
-        field_path: Vec<Tr<&'a str>>,
-        bind: Option<Tr<&'a str>>,
-        value: Tr<T>,
-    },
+pub struct Field<'a, T> {
+    pub field_names: Vec<Tr<&'a str>>,
+    pub bind: Option<Tr<&'a str>>,
+    pub value: Option<Tr<T>>,
 }
 
 impl<'a, T: std::fmt::Debug> Field<'a, T> {
     pub fn name(&self) -> Tr<&'a str> {
-        match self {
-            Field::Value(a) => panic!("not a record: {:?}", a),
-            Field::Punned(field_path) | Field::Assigned { field_path, .. } => field_path[0],
-        }
+        self.field_names[0]
+    }
+
+    pub fn punned(field_names: Vec<Tr<&'a str>>) -> Self {
+        Self { field_names, bind: None, value: None }
     }
 }
 
@@ -243,10 +240,9 @@ impl<'a> Parser<'a> {
     }
 
     fn field<T: CurlyValue<'a>>(&mut self) -> Option<Field<'a, T>> {
-        match self.lexer.peek() {
-            (Token::Path, span) => {
-                self.progress();
-                let mut field_path: Vec<Tr<&'a str>> = vec![self.taken(span)];
+        select! {self, "record field name", span;
+            Token::Path => {
+                let mut field_names: Vec<Tr<&'a str>> = vec![self.taken(span)];
 
                 loop {
                     match self.lexer.peek() {
@@ -264,7 +260,7 @@ impl<'a> Parser<'a> {
                                         );
                                         continue;
                                     }
-                                    field_path.push(name);
+                                    field_names.push(name);
                                 }
                                 _ => break,
                             }
@@ -282,14 +278,13 @@ impl<'a> Parser<'a> {
                         Some(bind)
                     },
                     Token::Equal => self.consume(|_| None),
-                    Token::Comma => return Some(Field::Punned(field_path)),
-                    Token::CloseCurly => return Some(Field::Punned(field_path)),
+                    Token::Comma => return Some(Field::punned(field_names)),
+                    Token::CloseCurly => return Some(Field::punned(field_names)),
                     _ => return None,
                 };
 
-                T::parse(self).map(|value| Field::Assigned { field_path, bind, value })
-            }
-            _ => T::parse(self).map(Field::Value),
+                T::parse(self).map(|value| Field { field_names, bind, value: Some(value) })
+            },
         }
     }
 
@@ -426,22 +421,22 @@ impl<'a> Parser<'a> {
 
 impl<'a, T: fmt::Display> fmt::Display for Field<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Field::Punned(field_path) => field_path.iter().format(".").fmt(f),
-            Field::Value(value) => value.fmt(f),
-            Field::Assigned { field_path, bind, value } => write!(
-                f,
-                "{}{} {} {}",
-                field_path.iter().format("."),
-                if let Some(name) = bind {
-                    format!(" {} {}", "@".symbol(), name)
-                } else {
-                    format!("")
-                },
-                '='.symbol(),
-                value
-            ),
+        write!(
+            f,
+            "{}{}",
+            self.field_names.iter().format("."),
+            if let Some(name) = self.bind {
+                format!(" {} {}", "@".symbol(), name)
+            } else {
+                format!("")
+            },
+        )?;
+
+        if let Some(v) = &self.value {
+            write!(f, " {} {}", '='.symbol(), v)?;
         }
+
+        Ok(())
     }
 }
 

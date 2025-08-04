@@ -93,25 +93,22 @@ impl ProjectConfig {
                 parser::Expr::Record { fields, .. } => {
                     let mut dep = Dependency { name: String::new(), version: String::new() };
 
-                    fields.into_iter().try_for_each(|field| match field {
-                        parser::Field::Assigned { field_path, bind: None, value: v } => {
-                            match field_path.as_slice() {
-                                &[value] => match *value {
-                                    "name" => {
-                                        dep.name = name(v)?;
-                                        Ok(())
-                                    }
-                                    "version" => {
-                                        dep.version = name(v)?;
-                                        Ok(())
-                                    }
-                                    _ => Err(Error::InvalidDep(value.span)),
-                                },
-                                &[_, Tr { span, .. }, ..] => Err(Error::InvalidDep(span)),
-                                &[] => Err(Error::InvalidDep(expr.span)),
-                            }
+                    fields.into_iter().try_for_each(|field| {
+                        match field.field_names.as_slice() {
+                            &[value] => match *value {
+                                "name" => {
+                                    dep.name = just(value.span, field.value, name)?;
+                                    Ok(())
+                                }
+                                "version" => {
+                                    dep.version = just(value.span, field.value, name)?;
+                                    Ok(())
+                                }
+                                _ => Err(Error::InvalidDep(value.span)),
+                            },
+                            &[_, Tr { span, .. }, ..] => Err(Error::InvalidDep(span)),
+                            &[] => Err(Error::InvalidDep(expr.span)),
                         }
-                        _ => Err(Error::InvalidDep(expr.span)),
                     })?;
 
                     self.dependencies.push(dep);
@@ -138,7 +135,17 @@ fn ty_in_str_literal(expr: Tr<parser::Expr>) -> Result<parser::Type<'static>, Er
     }
 }
 
-fn name(expr: Tr<parser::Expr>) -> Result<String, Error> {
+fn just<'s, T, F>(span: Span, expr: Option<Tr<parser::Expr<'s>>>, f: F) -> Result<T, Error>
+where
+    F: FnOnce(Tr<parser::Expr<'s>>) -> Result<T, Error>,
+{
+    match expr {
+        Some(expr) => f(expr),
+        None => Err(Error::Expected(span, "field value")),
+    }
+}
+
+fn name<'s>(expr: Tr<parser::Expr<'s>>) -> Result<String, Error> {
     match expr.value {
         parser::Expr::Lit(parser::Literal::String(str)) => Ok(str.to_string()),
         _ => Err(Error::Expected(expr.span, "string")),

@@ -1,0 +1,7 @@
+val name = "large-dependency"
+val version = "1.0"
+val authors = []
+
+val dependencies = [
+  { name = "small-dependency" }
+]

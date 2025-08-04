@@ -12,9 +12,11 @@ use std::sync::RwLockReadGuard;
 use std::sync::{Arc, RwLock};
 use std::{collections::HashMap, fs::ReadDir};
 
-mod func;
-mod item;
+mod builder;
+// mod func;
+// mod item;
 mod nodes;
+mod resolver;
 
 // NOTE: Since we know there's no cycles; we *can* cache even type checks.
 
@@ -175,11 +177,50 @@ fn compile(
     // I think we shouldn't take this shortcut and instead right as well do an Item = Rvsdg | Cranelift
     // incrementality thing. That way we're not setting ourselves up for failures in the future.
 
-    let mut builder = item::ProjectBuilder::new(node, deps);
+    let mut builder = builder::NodeBuilder::new(node);
     builder.include_project(node);
     let rvsdg = builder.finish();
+
+    // Let's refactor this a bit.
+    //
+    // We can move the items to mod.rs. Then the actual passes to builder.rs and resolver.rs
+    //
+    // let mut resolver = item::Resolver::
 
     println!(" {} {}", "Completed".keyword(), &node.config.name);
 
     LoweredProject { rvsdg }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AbsoluteIdent(String);
+
+/// Public exports reachable from other translation units
+enum Export {
+    Item(rvsdg::id::Result),
+    // I think we might be able to just use Result instead and pass it through.
+    //
+    // Although that is a bit strange,
+    //
+    // ReExport(config::Dependency, AbsoluteIdent),
+    Poison,
+}
+
+enum Item {
+    Declaration(rvsdg::id::AnyNode),
+    // Import(rvsdg::id::Result),
+
+    // We can do this and then just fill them in later
+    // External(rvsdg::id::Argument), // we probably want this later. // ALTHOUGH: if it's used from other modules then that argument will not even be valid.
+    // Unresolved(Tr<Identifier<'s>>),
+    // UseAlias(Identifier<'s>),
+    Poison,
+    // TODO: if we're holding the dependencies during lower then does that mean we can resolve this
+    // in a better way?
+    //
+    // We should be able to resolve what kind of item it is (the Type) instead of just raw
+    // identifier.
+    //
+    // This one doesn't even really make sense
+    // UseGlob(config::Dependency, Identifier<'s>),
 }

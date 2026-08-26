@@ -1,6 +1,8 @@
 use std::fmt;
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct IntSize {
     pub signed: bool,
     bits: u8,
@@ -12,6 +14,10 @@ impl IntSize {
         IntSize { signed, bits }
     }
 
+    pub fn unsigned(self) -> Self {
+        Self::new(false, self.bits)
+    }
+
     pub fn bytes(self) -> u8 {
         self.bits / 8
     }
@@ -21,16 +27,12 @@ impl IntSize {
     }
 
     pub fn max_value(self) -> u64 {
-        let max = (1 as u64)
+        let max = 1_u64
             .checked_shl(self.bits() as u32)
             .map(|n| n - 1)
             .unwrap_or(u64::MAX);
 
-        if self.signed {
-            max / 2
-        } else {
-            max
-        }
+        if self.signed { max / 2 } else { max }
     }
 
     pub fn min_value(&self) -> i64 {

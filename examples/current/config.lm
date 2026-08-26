@@ -2,4 +2,6 @@ val name = "current"
 val version = "1.0"
 val authors = []
 
-val dependencies = []
+val dependencies = [
+  { name = "std", path = path:project <> "/std" },
+]

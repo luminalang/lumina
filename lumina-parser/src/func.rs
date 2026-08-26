@@ -11,6 +11,23 @@ pub struct Declaration<'a> {
     pub attributes: Vec<Tr<Expr<'a>>>,
 }
 
+impl<'a> Declaration<'a> {
+    pub fn when_bindings(
+        &self,
+    ) -> (
+        &when::Constraints<'a>,
+        Option<impl Iterator<Item = &when::Constraints<'a>> + Clone>,
+    ) {
+        (&self.header.when, self.iter_lambda_when())
+    }
+
+    pub fn iter_lambda_when(&self) -> Option<impl Iterator<Item = &when::Constraints<'a>> + Clone> {
+        self.body
+            .as_ref()
+            .map(|body| body.where_binds.iter().map(|bind| &bind.header.when))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Header<'a> {
     pub when: when::Constraints<'a>,
@@ -46,11 +63,12 @@ impl<'a> Parser<'a> {
                 let ident = if str == ":" {
                     Identifier::from_raw(":")
                 } else {
-                    Identifier::identifier(str)
+                    Identifier::new(str)
                 };
                 (ident, span)
             },
         };
+
         let name = identifier.as_name().unwrap_or_else(|| {
             self.err_expected_but_got(span, "a name", "a path");
             identifier.split_last().1
@@ -269,7 +287,7 @@ impl<'a> fmt::Display for Header<'a> {
             "{fn_} {}{}{annotation}",
             self.name.path(),
             if self.params.is_empty() {
-                format!("")
+                String::new()
             } else {
                 format!(" {}", self.params.iter().format(" "))
             },

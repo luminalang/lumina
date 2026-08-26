@@ -1,0 +1,1275 @@
+use super::{Parameter, TypeDef, TypeSig};
+use crate::{
+    errors, key,
+    project::symbols::{self, Namespace},
+    Context, InterResolved, TranslationUnit,
+};
+use itertools::Itertools;
+use lumina_parser::{self as parser};
+use tracing::info;
+// use lumina_typesystem_new as ts;
+use lumina_key::{EntityList, Map, SecondaryMap};
+use lumina_typesystem::{
+    self as ts, Annotation, Application, ArrayLen, ForallEnv, GenericTag, IntSize, KnownType,
+    KnownTypeFormatter, Prim, ResolverError, TaggedGeneric, Var,
+};
+use lumina_util::{Identifier, Span, Spanned, Tr};
+use owo_colors::OwoColorize;
+use std::{collections::HashMap, fmt};
+use tracing::trace;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct TypeKey {
+    pub origin: symbols::Origin,
+    pub key: key::Type,
+}
+pub type Type = KnownType<TypeKey>;
+pub type Env = lumina_typesystem::Environment<TypeKey>;
+
+impl fmt::Display for TypeKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}·{}", self.origin, self.key)
+    }
+}
+
+pub struct TypeContext<'a, 's, Env> {
+    pub fenv: ForallEnv<TypeKey>,
+    pub scope: GenericTag,
+    declare_generics: bool,
+    default_int_size: IntSize,
+    pub project: key::Project,
+    pub file: key::File,
+    pub env: Env,
+    pub ctx: Context<TranslationUnit>,
+
+    // HACK: Our syntax for types is partially ambigious. `List a` could either be `[List, a]` or `[List a]`
+    //
+    // So in those cases where the former is allowed, we wait for name resolution to decide what to
+    // do with the next types.
+    pending: Option<&'a [parser::ty::Type<'s>]>,
+}
+
+pub struct StaticEnv {
+    pub self_: Option<Type>,
+    pub invalid_inference_reason_given: &'static str,
+}
+
+impl StaticEnv {
+    pub fn new(invalid_inference_reason_given: &'static str) -> Self {
+        Self { self_: None, invalid_inference_reason_given }
+    }
+
+    pub fn with_self(mut self, self_: Type) -> Self {
+        self.self_ = Some(self_);
+        self
+    }
+}
+
+pub struct InferenceEnv {
+    env: Env,
+    pub spans: SecondaryMap<Var, Span>,
+}
+
+impl InferenceEnv {
+    pub fn new() -> Self {
+        Self {
+            env: Env::new(),
+            spans: SecondaryMap::with_default(Span::null()),
+        }
+    }
+}
+
+impl<'a, 's, Env> TypeContext<'a, 's, Env> {
+    pub fn new(
+        ctx: Context<TranslationUnit>,
+        project: key::Project,
+        file: key::File,
+        env: Env,
+        tag: GenericTag,
+    ) -> Self {
+        Self {
+            project,
+            file,
+            ctx,
+            fenv: ForallEnv::new(),
+            scope: tag,
+            declare_generics: false,
+            default_int_size: IntSize::new(true, 64),
+            env,
+            pending: None,
+        }
+    }
+
+    pub fn cast<NEnv>(self, env: NEnv) -> (Env, TypeContext<'a, 's, NEnv>) {
+        (
+            self.env,
+            TypeContext {
+                ctx: self.ctx.clone(),
+                file: self.file,
+                project: self.project,
+                fenv: self.fenv,
+                scope: self.scope,
+                declare_generics: self.declare_generics,
+                default_int_size: self.default_int_size,
+                env,
+                pending: self.pending.clone(),
+            },
+        )
+    }
+
+    pub fn lambda(&self) -> Option<key::Lambda> {
+        match self.scope {
+            GenericTag::Lambda(lambda) => Some(lambda),
+            GenericTag::Trait | GenericTag::Impl | GenericTag::Type | GenericTag::Func => None,
+        }
+    }
+
+    pub fn declare_generic(&mut self, name: &str) -> TaggedGeneric {
+        ts::declare(&mut self.fenv, self.scope, name)
+    }
+
+    pub fn declare_forall_from_constraints<'ss>(
+        &mut self,
+        tag: GenericTag,
+        cons: &parser::when::Constraints<'ss>,
+    ) {
+        self.declare_forall(tag, cons.generics.iter().map(|(_, name, _)| *name))
+    }
+
+    pub fn declare_forall<'ss, I>(&mut self, tag: GenericTag, cons: I)
+    where
+        I: Iterator<Item = &'ss str>,
+    {
+        let previous = std::mem::replace(&mut self.scope, tag);
+        for name in cons {
+            self.declare_generic(name);
+        }
+        self.scope = previous;
+    }
+
+    pub fn try_generic<'ss>(&mut self, name: &'ss str) -> Option<TaggedGeneric> {
+        if let GenericTag::Lambda(lambda) = self.scope {
+            if let Some(key) = self.fenv[&self.scope].find(name) {
+                return Some(TaggedGeneric::new(GenericTag::Lambda(lambda), key));
+            }
+        }
+
+        [GenericTag::Func, GenericTag::Type, GenericTag::Impl]
+            .iter()
+            .find_map(|scope| {
+                self.fenv
+                    .get(scope)
+                    .and_then(|forall| forall.find(name).map(|key| TaggedGeneric::new(*scope, key)))
+            })
+    }
+
+    fn try_prim(&mut self, name: &str) -> Option<Prim> {
+        match name {
+            "bool" => Some(Prim::Bool),
+            "int" => Some(Prim::Int(self.default_int_size)),
+            "uint" => Some(Prim::Int(self.default_int_size.unsigned())),
+            "float" => Some(Prim::Float),
+            name if name.starts_with('u') => name[1..]
+                .parse::<u8>()
+                .ok()
+                .map(|n| Prim::Int(IntSize::new(false, n))),
+            name if name.starts_with('i') => name[1..]
+                .parse::<u8>()
+                .ok()
+                .map(|n| Prim::Int(IntSize::new(true, n))),
+            _ => None,
+        }
+    }
+}
+
+impl<'a, 's, 'ss, Env> TypeContext<'a, 's, Env>
+where
+    Self: ResolvingTypeContext<'ss>,
+{
+    fn defined(
+        &mut self,
+        span: Span,
+        ident: &Identifier<'ss>,
+        params: <Self as TypeLower<'ss>>::Tys,
+    ) -> Option<<Self as TypeLower<'ss>>::Ty> {
+        let segments = ident.as_slice();
+
+        let ns = Namespace::Types;
+        match self
+            .ctx
+            .find(self.project, None, self.file, ns, segments, true)
+        {
+            InterResolved::Item(module, symbols::Item::Type(key)) => {
+                let item = TypeKey { key, origin: module };
+                Some(self.type_from_key(span, item, params))
+            }
+
+            InterResolved::NotFound { .. } => {
+                if segments.len() == 1 && segments[0].len() == 1 {
+                    if let Some(ty) = self.implicitly_declare_generic(span, Some(segments[0])) {
+                        return Some(ty);
+                    }
+                }
+
+                errors::err("invalid type")
+                    .line(span, format!("type `{ident}` not found"))
+                    .emit();
+
+                None
+            }
+            InterResolved::Poison => None,
+            _ => {
+                errors::err("invalid type")
+                    .line(span, format!("`type {ident}` not found"))
+                    .text("NOTE: There is another non-type item with that name")
+                    .emit();
+
+                None
+            }
+        }
+    }
+}
+
+pub trait ResolvingTypeContext<'s>: TypeLower<'s> {
+    fn type_from_key(&mut self, span: Span, key: TypeKey, params: Self::Tys) -> Self::Ty;
+    fn implicitly_declare_generic(&mut self, span: Span, name: Option<&'s str>)
+        -> Option<Self::Ty>;
+}
+
+impl<'a, 's, 'ss> ResolvingTypeContext<'s> for TypeContext<'a, 'ss, InferenceEnv> {
+    fn type_from_key(&mut self, span: Span, key: TypeKey, params: Self::Tys) -> Self::Ty {
+        self.define(span, |env| env.defined(key, params))
+    }
+
+    fn implicitly_declare_generic(
+        &mut self,
+        span: Span,
+        name: Option<&'s str>,
+    ) -> Option<Self::Ty> {
+        let generic = match name {
+            Some(name) => ts::declare(&mut self.fenv, self.scope, name),
+            None => ts::implicitly_declare(&mut self.fenv, self.scope),
+        };
+
+        let var = self.define(span, |env| env.generic(generic));
+
+        Some(var)
+    }
+}
+
+impl<'a, 's, 'ss> ResolvingTypeContext<'s> for TypeContext<'a, 'ss, StaticEnv> {
+    fn type_from_key(&mut self, _: Span, key: TypeKey, params: Vec<Self::Ty>) -> Self::Ty {
+        KnownType::Defined(key, params.into_iter().collect())
+    }
+
+    fn implicitly_declare_generic(&mut self, _: Span, name: Option<&'s str>) -> Option<Self::Ty> {
+        if self.scope == GenericTag::Type {
+            return None;
+        }
+
+        let generic = match name {
+            Some(name) => ts::declare(&mut self.fenv, self.scope, name),
+            None => ts::implicitly_declare(&mut self.fenv, self.scope),
+        };
+
+        Some(KnownType::Generic(generic))
+    }
+}
+
+impl<'s, 'a, 'ss, Env> TypeContext<'a, 'ss, Env>
+where
+    Self: TypeLower<'s>,
+{
+    fn listlike<T>(
+        &mut self,
+        span: Span,
+        inner: &[Tr<parser::Type<'s>>],
+        len: parser::ListLength,
+        array: impl FnOnce(&mut Self, ArrayLen, <Self as TypeLower<'s>>::Ty) -> T,
+        dynamic: impl FnOnce(&mut Self, <Self as TypeLower<'s>>::Ty) -> T,
+    ) -> Option<T> {
+        if inner.len() != 1 {
+            errors::err("invalid type").line(span, "").emit();
+            None
+        } else {
+            let inner = self.ty(inner[0].as_ref());
+
+            match len {
+                parser::ListLength::Name(name) => {
+                    let Some(generic) = self.try_generic(*name) else {
+                        errors::err("invalid type")
+                            .line(name.span, format!("no generic named `{name}`"))
+                            .emit();
+
+                        return None;
+                    };
+
+                    let ty = array(self, ArrayLen::Generic(generic), inner);
+                    Some(ty)
+                }
+                parser::ListLength::Exact(len) => {
+                    let ty = array(self, ArrayLen::Int(*len as i64), inner);
+                    Some(ty)
+                }
+                parser::ListLength::None => {
+                    let ty = dynamic(self, inner);
+                    Some(ty)
+                }
+            }
+        }
+    }
+}
+
+pub trait TypeLower<'s> {
+    type Ty;
+    type Tys;
+
+    fn ty(&mut self, ty: Tr<&parser::Type<'s>>) -> Self::Ty;
+    fn tys(&mut self, ty: &[Tr<parser::Type<'s>>]) -> (usize, Self::Tys);
+
+    fn typing<T>(
+        &mut self,
+        typing: &parser::func::Typing<'s>,
+        fin: impl Fn(Self::Ty, Span) -> T,
+    ) -> (Map<Parameter, T>, T) {
+        (
+            typing
+                .ptypes
+                .iter()
+                .map(|t| fin(self.ty(t.as_ref()), t.span))
+                .collect(),
+            fin(self.ty(typing.returns.as_ref()), typing.returns.span),
+        )
+    }
+
+    fn mandatory_typing<T>(
+        &mut self,
+        header: &parser::func::Header<'s>,
+        err_reason: &'static str,
+        fin: impl Fn(Self::Ty, Span) -> T,
+    ) -> Option<(Map<Parameter, T>, T)> {
+        match header.typing.as_ref() {
+            None => {
+                errors::err("inference error")
+                    .line(header.name.span, err_reason)
+                    .emit();
+
+                None
+            }
+            Some(typing) => {
+                let typing = self.typing(typing, fin);
+
+                Some(typing)
+            }
+        }
+    }
+}
+
+pub struct Instantiation<'a, 'e, 's, 'aa, 'ss> {
+    explicit: ExplAnnotations<'e, 's>,
+    anot: ts::Annotation<Var>,
+    pub tctx: &'a mut TypeContext<'aa, 'ss, InferenceEnv>,
+}
+
+#[derive(Default)]
+struct ExplAnnotations<'a, 's> {
+    item: Option<&'a parser::ty::ForallAnnotation<'s>>,
+    block: Option<&'a parser::ty::ForallAnnotation<'s>>,
+}
+
+impl<'a, 's> ExplAnnotations<'a, 's> {
+    fn get(&self, tag: GenericTag) -> Option<&'a parser::ty::ForallAnnotation<'s>> {
+        match tag {
+            GenericTag::Impl => self.block,
+            _ => self.item,
+        }
+    }
+}
+
+impl<'a, 'e, 's, 'aa, 'ss> Instantiation<'a, 'e, 's, 'aa, 'ss> {
+    pub fn finish(self) -> ts::Annotation<Var> {
+        self.anot
+    }
+
+    pub fn resolve(
+        &mut self,
+        item_index: usize,
+        anots: &'e [(usize, parser::ty::ForallAnnotation<'s>)],
+    ) {
+        let block_index = item_index.checked_sub(1);
+
+        for (i, anot) in anots {
+            if *i == item_index {
+                self.explicit.item = Some(anot);
+            } else if Some(*i) == block_index {
+                self.explicit.block = Some(anot);
+            } else {
+                let span = Span::from_elems(&anot.assignments, |(name, value)| {
+                    name.span.extend(value.span)
+                });
+
+                errors::err("unexpected type annotation")
+                    .line(span, "only items can be type annotated")
+                    .emit();
+            }
+        }
+    }
+
+    fn get_or_spawn(&mut self, span: Span, tag: GenericTag, name: &str) -> Var {
+        self.explicit
+            .get(tag)
+            .and_then(|anot| {
+                anot.assignments
+                    .iter()
+                    .find_map(|(n, ty)| (**n == name).then(|| self.tctx.ty(ty.as_ref())))
+            })
+            .unwrap_or_else(|| self.tctx.define(span, |env| env.unknown()))
+    }
+
+    pub fn unify(&mut self, span: Span, tag: GenericTag, forall: &Map<key::Generic, String>) {
+        if tag == GenericTag::Type {
+            let self_ = self.get_or_spawn(span, tag, "self");
+            self.anot.self_ = Some(self_);
+        }
+
+        for (generic, name) in forall {
+            let var = self.get_or_spawn(span, tag, name);
+            assert_eq!(generic, self.anot.push(tag, var, self.tctx.var_pool_mut()));
+        }
+
+        if let Some(anot) = self.explicit.get(tag) {
+            let unknowns = anot
+                .assignments
+                .iter()
+                .filter_map(|(name, _)| forall.iter().all(|(_, n)| n != **name).then_some(*name))
+                .collect::<Vec<_>>();
+
+            if !unknowns.is_empty() {
+                let mut err = errors::err("invalid type annotation").line(
+                    unknowns[0].span,
+                    format!(
+                        "generic(s) {} not found",
+                        lumina_util::list_names_gramatically_correct(unknowns.iter())
+                    ),
+                );
+                if !forall.is_empty() {
+                    err = err.text(format!(
+                        "these generics are defined for this item: {}",
+                        lumina_util::list_names_gramatically_correct(forall.values())
+                    ));
+                }
+                err.emit();
+            }
+        }
+    }
+}
+
+impl<'a, 's> TypeContext<'a, 's, InferenceEnv> {
+    pub fn define(&mut self, span: Span, f: impl FnOnce(&mut Env) -> Var) -> Var {
+        let var = f(&mut self.env.env);
+        self.env.spans[var] = span;
+        var
+    }
+
+    pub fn inst<'this, 'e, 'aa, 'ss>(&'this mut self) -> Instantiation<'this, 'e, 's, 'aa, 'ss> {
+        Instantiation {
+            anot: ts::Annotation::new(),
+            tctx: self,
+            explicit: ExplAnnotations::default(),
+        }
+    }
+
+    pub fn inst_sig<T: ts::InstableType<TypeKey>>(
+        &mut self,
+        anot: &ts::Annotation<Var>,
+        in_: symbols::Origin,
+        span: Span,
+        params: impl IntoIterator<Item = T>,
+        ret: T,
+    ) -> (EntityList<Var>, Var) {
+        let params = self.instantiate_types(in_, anot, params);
+        let ret = self.instantiate(in_, anot, ret);
+        self.env.spans[ret] = span;
+        (params, ret)
+    }
+
+    pub fn instantiate<T: ts::InstableType<TypeKey>>(
+        &mut self,
+        in_: symbols::Origin,
+        anot: &ts::Annotation<Var>,
+        ty: T,
+    ) -> Var {
+        self.env.env.instantiate(anot, ty, &mut |ident| {
+            self.ctx.inst_type_key(self.project, in_, *ident)
+        })
+    }
+
+    pub fn instantiate_types<T: ts::InstableType<TypeKey>>(
+        &mut self,
+        in_: symbols::Origin,
+        anot: &ts::Annotation<Var>,
+        ty: impl IntoIterator<Item = T>,
+    ) -> EntityList<Var> {
+        self.env.env.instantiate_types(anot, ty, &mut |ident| {
+            self.ctx.inst_type_key(self.project, in_, *ident)
+        })
+    }
+
+    pub fn var_pool_mut(&mut self) -> &mut key::ListPool<Var> {
+        &mut self.env.env.var_pool
+    }
+
+    pub fn var_pool(&mut self) -> &mut key::ListPool<Var> {
+        &mut self.env.env.var_pool
+    }
+
+    pub fn types_from_iter<I, T>(
+        &mut self,
+        iter: I,
+        mut f: impl FnMut(&mut Self, T) -> Var,
+    ) -> EntityList<Var>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let mut list = EntityList::new();
+        for value in iter.into_iter() {
+            let var = f(self, value);
+            list.push(var, &mut self.env.env.var_pool);
+        }
+        list
+    }
+
+    // We do not want to risk the user accidentally defining type variables without going through
+    // `define`.
+    pub fn raw_env<T>(&mut self, f: impl FnOnce(&mut Env) -> T) -> T {
+        f(&mut self.env.env)
+    }
+
+    pub fn apply(&mut self, span: Span, var: Var) -> Application {
+        let cappl = self.env.env.apply(var);
+        let ret = self.env.env.get_return_type(cappl);
+        self.env.spans[ret] = span;
+        cappl
+    }
+
+    pub fn list_sameas(&mut self, span: Span) -> (ts::SameasUnification, Var, Var) {
+        let (sameas, list, inner) = self.env.env.list_sameas();
+        self.env.spans[list] = span;
+        self.env.spans[inner] = span;
+        (sameas, list, inner)
+    }
+    pub fn expr_sameas(&mut self, span: Span, init: Option<Var>) -> (ts::SameasUnification, Var) {
+        let (sameas, inner) = self.env.env.expr_sameas(init);
+        self.env.spans[inner] = span;
+        (sameas, inner)
+    }
+
+    pub fn apply_params(&mut self, span: Span, f: Var, given: EntityList<Var>) -> Var {
+        let appl = self.apply(span, f);
+
+        self.env.env.for_vars_mut(given, |env, ty| {
+            env.apply_next_parameter(appl, ty);
+        });
+
+        self.env.env.get_return_type(appl)
+    }
+
+    pub fn fail_unexpected_annotations<'ss>(
+        &mut self,
+        valid: &[usize],
+        anot: &[(usize, parser::ty::ForallAnnotation<'ss>)],
+    ) {
+        for (i, anot) in anot {
+            if !valid.contains(i) && !anot.assignments.is_empty() {
+                let span = Span::from_elems(&anot.assignments, |(name, _)| name.span);
+
+                errors::err("invalid type annotation")
+                    .line(span, "cannot type annotate a module")
+                    .emit();
+            }
+        }
+    }
+
+    pub fn reverse_forall_into_type_environment(&mut self) -> Annotation<Var> {
+        let mut annotation = ts::Annotation::new();
+        for (tag, forall) in self.fenv.iter() {
+            for generic in forall.names.keys() {
+                // TODO: We don't use the right spans here. Is that okay?
+                let ty = self.env.env.generic(TaggedGeneric::new(*tag, generic));
+                assert_eq!(
+                    generic,
+                    annotation.push(*tag, ty, &mut self.env.env.var_pool)
+                );
+            }
+        }
+        annotation
+    }
+
+    fn err_unknown_generic_annot(&mut self, kind: &str, names: Vec<Tr<&str>>) {
+        let err = errors::err("invalid type annotation");
+        match names.as_slice() {
+            [name] => err.line(
+                name.span,
+                format!("`{name}` is not a generic for this {kind}"),
+            ),
+            names => err.line(
+                Span::from_elems(names, |n| n.span),
+                format!(
+                    "{} are not generics for this {kind}",
+                    lumina_util::list_names_gramatically_correct(names.iter())
+                ),
+            ),
+        }
+        .text(format!(
+            "available generics are: {}",
+            lumina_util::list_names_gramatically_correct(names.iter())
+        ))
+        .emit();
+    }
+
+    fn err_generic_already_annotated(&mut self, [first, second]: [Tr<&str>; 2]) {
+        errors::err("invalid type annotation")
+            .line(
+                second.span,
+                format!("generic `{first}` is already set in this annotation"),
+            )
+            .emit();
+    }
+
+    pub fn optional_typing(
+        &mut self,
+        header: &'a parser::func::Header<'s>,
+    ) -> (Map<Parameter, Tr<Var>>, Tr<Var>) {
+        match header.typing.as_ref() {
+            Some(typing) => self.typing(typing, |ty, span| ty.tr(span)),
+            None => {
+                let mut var = |span| {
+                    let v = self.define(span, |env| env.unknown());
+                    v.tr(span)
+                };
+                (
+                    header.params.iter().map(|pat| var(pat.span)).collect(),
+                    var(header.name.span),
+                )
+            }
+        }
+    }
+
+    pub fn as_static<F, T>(&mut self, f: F, invalid_inference_reason_given: &'static str) -> T
+    where
+        F: FnOnce(&mut TypeContext<StaticEnv>) -> T,
+    {
+        let mut v = None;
+        take_mut::take(self, |this| {
+            let old = this.env;
+            let mut new = TypeContext {
+                project: this.project,
+                file: this.file,
+                pending: this.pending.clone(),
+                ctx: this.ctx.clone(),
+                fenv: this.fenv,
+                scope: this.scope,
+                declare_generics: this.declare_generics,
+                default_int_size: this.default_int_size,
+                env: StaticEnv { self_: None, invalid_inference_reason_given },
+            };
+
+            v = Some(f(&mut new));
+
+            new.cast(old).1
+        });
+
+        v.unwrap()
+    }
+
+    pub fn type_check_and_finalize(
+        &mut self,
+        impl_check: Option<Application>,
+    ) -> (
+        Map<Var, Type>,
+        Vec<(ts::Error<TypeKey>, ForallEnv<TypeKey>)>,
+    ) {
+        let resolver = TypeCheckPassHandler {
+            ctx: self.ctx.clone(),
+            fenv: &mut self.fenv,
+            spans: &self.env.spans,
+            project: self.project,
+            file: self.file,
+        };
+
+        let (listables, default_listable) = self.ctx.collect_listables(self.project);
+
+        let mut inference = ts::InferenceUnifier::new(
+            &mut self.env.env,
+            resolver,
+            self.default_int_size,
+            listables,
+            default_listable,
+        );
+        inference.infer();
+
+        let vars = ts::Finalizer::new(&mut self.env.env).finalize_all();
+        let errors = ts::Checker::new(&vars, &self.env.env).type_check();
+
+        info!(
+            "Finalized Static Types\n  {}",
+            vars.iter()
+                .map(|(var, type_)| format!("{var} => {type_}"))
+                .format("\n  ")
+        );
+
+        // For implementations, we want to collect type errors against the expected trait method
+        // signature. That way we can better present the errors as a single "bad implementation" error.
+        let mut impl_method_error_buffer = vec![];
+
+        for err in errors {
+            let ident_formatter = |ident: &TypeKey| {
+                let unstable_key = self.ctx.resolve_origin(self.project, ident.origin);
+                self.ctx.in_project(unstable_key, |unit| {
+                    match unit.header.type_signatures.get(ident.key) {
+                        Some(sig) => sig.name.to_string(),
+                        None => format!("{}·{unstable_key}·{}", ident.origin, ident.key),
+                    }
+                })
+            };
+            let generic_formatter =
+                |generic: TaggedGeneric| self.fenv[&generic.tag].names[generic.key].clone();
+            let fmt = KnownTypeFormatter::new(&ident_formatter, &generic_formatter, &());
+
+            match err {
+                ts::Error::NonFunctionApplication(cappl, _) if impl_check == Some(cappl) => {
+                    impl_method_error_buffer.push((err, self.fenv.clone()))
+                }
+
+                ts::Error::NonFunctionApplication(appl, type_) => {
+                    let ret = self.env.env.get_return_type(appl);
+
+                    errors::err("type mismatch")
+                        .line(
+                            self.env.spans[ret],
+                            format!(
+                                "cannot give parameters to non-function `{}`",
+                                fmt.fork(&type_)
+                            ),
+                        )
+                        .emit();
+                }
+                ts::Error::Mismatch { expected, given, message, var } => {
+                    errors::err("type mismatch")
+                        .line(self.env.spans[var], message)
+                        .text(format!("{}      {}", "got".purple(), fmt.fork(&given)))
+                        .text(format!("{} {}", "expected".purple(), fmt.fork(&expected)))
+                        .emit();
+                }
+                ts::Error::FunctionWrongParameterCount { expected, given, appl } => {
+                    let ret = self.env.env.get_return_type(appl);
+
+                    errors::err("type mismatch")
+                        .line(self.env.spans[ret], "wrong number of parameters")
+                        .text(format!("{}      {}", "got".purple(), given))
+                        .text(format!("{} {}", "expected".purple(), expected))
+                        .emit();
+                }
+                ts::Error::DoesNotHaveFields(var, record, fields) => {
+                    errors::err("type mismatch")
+                        .line(
+                            self.env.spans[var],
+                            format!(
+                                "`{}` does not have fields {}",
+                                fmt.fork(&record),
+                                fields.iter().format(", ")
+                            ),
+                        )
+                        .emit();
+                }
+                ts::Error::NoListType(var) => {
+                    errors::err("inference error")
+                        .line(self.env.spans[var], "no list lang item available")
+                        .emit();
+                }
+                ts::Error::UnresolvedFunction { func, dominant } => {
+                    let dominant = fmt.fork(&vars[dominant]);
+                    errors::err("function not found")
+                        .line(
+                            self.env.spans[func],
+                            format!("function not in scope and isn't defined for {dominant}"),
+                        )
+                        .emit();
+                }
+            }
+        }
+
+        (vars, impl_method_error_buffer)
+    }
+}
+
+struct TypeCheckPassHandler<'a> {
+    ctx: Context<TranslationUnit>,
+    fenv: &'a mut ts::ForallEnv<TypeKey>,
+    spans: &'a SecondaryMap<ts::Var, Span>,
+    project: key::Project,
+    file: key::File,
+}
+
+impl<'a> ts::Resolver<TypeKey> for TypeCheckPassHandler<'a> {
+    type ResolvedMetadata = symbols::Origin;
+
+    fn implicitly_declare_generic(&mut self, tag: GenericTag) -> TaggedGeneric {
+        ts::implicitly_declare(self.fenv, tag)
+    }
+
+    fn type_of_field(
+        &self,
+        ident: &TypeKey,
+        field: key::Field,
+    ) -> Result<(symbols::Origin, KnownType<TypeKey>), ResolverError<TypeKey>> {
+        self.ctx.in_origin(self.project, ident.origin, |unit| {
+            match &unit.header.typedefs[ident.key] {
+                TypeDef::Struct { ftypes, .. } => match ftypes.get(field) {
+                    Some(ty) => Ok((symbols::Origin::Intra, ty.clone())),
+                    None => Err(ResolverError::FieldNotFound(*ident, field)),
+                },
+                _ => Err(ResolverError::RecordNotFound(*ident)),
+            }
+        })
+    }
+
+    fn guess_by_fields<'b, I>(&self, var: ts::Var, fields: I) -> Option<TypeKey>
+    where
+        I: Iterator<Item = &'b str> + Clone,
+    {
+        let mut possibilities = HashMap::new();
+
+        for field in fields.clone() {
+            self.ctx.in_project(self.project, |unit| {
+                match unit
+                    .header
+                    .symbols
+                    .find(self.file, symbols::Namespace::Fields, &[field])
+                {
+                    symbols::Resolve::Item(symbols::WithOrigin {
+                        key: symbols::Item::Field(ty, _),
+                        origin,
+                        ..
+                    }) => {
+                        let tkey = TypeKey { origin, key: ty };
+                        *possibilities.entry(tkey).or_insert(0) += 1;
+                    }
+                    // we intentionally ignore invalid fields as type system will uncover those later
+                    _ => {}
+                }
+            });
+        }
+
+        let mut winner = None;
+        let mut tie = None;
+        for (&tkey, &count) in &possibilities {
+            match winner.as_mut() {
+                None => winner = Some((tkey, count)),
+                Some(winner) => {
+                    if winner.1 == count {
+                        tie = Some((tkey, count));
+                    } else if winner.1 < count {
+                        *winner = (tkey, count);
+                        tie = None;
+                    }
+                }
+            }
+        }
+
+        let span = self.spans[var];
+
+        if let Some(tie) = tie {
+            let winner = winner.unwrap();
+
+            let tied_name = self.ctx.name_of_type(self.project, tie.0);
+            let winner_name = self.ctx.name_of_type(self.project, winner.0);
+
+            errors::err("inference error")
+                .line(
+                    span,
+                    format!("fields could belong to either type {winner_name} or {tied_name}"),
+                )
+                .emit();
+
+            None
+        } else if let Some(winner) = winner {
+            Some(winner.0)
+        } else {
+            errors::err("inference error")
+                .line(
+                    span,
+                    format!(
+                        "no record with the field(s) {} in scope",
+                        fields.format(", ")
+                    ),
+                )
+                .emit();
+
+            None
+        }
+    }
+
+    fn get_field(&self, ident: &TypeKey, name: &str) -> Option<key::Field> {
+        let project = self.ctx.resolve_origin(self.project, ident.origin);
+        self.ctx
+            .in_project(project, |unit| match &unit.header.typedefs[ident.key] {
+                TypeDef::Struct { fnames, .. } => fnames
+                    .iter()
+                    .find_map(|(field, n)| (n == name).then_some(field)),
+                _ => None,
+            })
+    }
+
+    fn for_each_type_parameter<F>(&self, ident: &TypeKey, mut f: F)
+    where
+        F: FnMut(key::Generic),
+    {
+        self.ctx
+            .clone()
+            .in_origin(self.project, ident.origin, |unit| {
+                for (generic, _) in &unit.header.type_signatures[ident.key].generics {
+                    f(generic);
+                }
+            });
+    }
+
+    fn type_sensitive_call(
+        &mut self,
+        root: ts::KnownTypeRoot<TypeKey>,
+        name: &str,
+    ) -> Option<(
+        symbols::Origin,
+        Option<Map<key::Generic, String>>,
+        ts::Forall<TypeKey>,
+        Vec<KnownType<TypeKey>>,
+        KnownType<TypeKey>,
+    )> {
+        let (origin, root) = match root {
+            ts::KnownTypeRoot::Defined(tkey) => (tkey.origin, ts::KnownTypeRoot::Defined(tkey.key)),
+            _ => {
+                let std = self
+                    .ctx
+                    .in_project(self.project, |unit| unit.header.stdlib())?;
+
+                (symbols::Origin::Inter(std), root.map(|_| unreachable!()))
+            }
+        };
+
+        let (origin, func) = self.ctx.in_origin(self.project, origin, |unit| {
+            unit.header.symbols.dotcall_lookup(root, name)
+        })?;
+
+        self.ctx.in_origin(self.project, origin, |unit| {
+            let func = &unit.header.func(func);
+            let tforall = func
+                .method_of
+                .map(|(trait_, _)| unit.header.type_signatures[trait_].generics.clone());
+            Some((
+                origin,
+                tforall,
+                func.sig.forall.clone(),
+                func.sig.params.as_values_slice().to_vec(),
+                func.sig.ret.clone(),
+            ))
+        })
+    }
+
+    fn map_type_key(&self, in_: symbols::Origin, ident: &TypeKey) -> TypeKey {
+        self.ctx.inst_type_key(self.project, in_, *ident)
+    }
+}
+
+impl<'a, 's, 'ss> TypeLower<'s> for TypeContext<'a, 'ss, InferenceEnv> {
+    type Ty = Var;
+    type Tys = EntityList<Var>;
+
+    fn ty(&mut self, ty: Tr<&parser::Type<'s>>) -> Self::Ty {
+        trace!("lowering type {ty}");
+
+        let var = match *ty {
+            parser::Type::Defined(ident, params) => {
+                let path = ident.path.as_slice();
+                let (plen, params) = self.tys(params);
+
+                if let [name] = path {
+                    if let Some(prim) = self.try_prim(name) {
+                        check_param_count(*ty, plen.tr(ty.span), 0);
+                        trace!("defining prim");
+                        return self.define(ty.span, |env| env.prim(prim));
+                    }
+
+                    if let Some(generic) = self.try_generic(name) {
+                        check_param_count(*ty, plen.tr(ty.span), 0); // TODO: higher-kinded types
+                        return self.define(ty.span, |env| env.generic(generic));
+                    }
+
+                    if *name == "self" {
+                        check_param_count(*ty, plen.tr(ty.span), 0); // TODO: higher-kinded types
+                        return self.define(ty.span, |env| env.prim(Prim::Self_));
+                    }
+
+                    if *name == "_" {
+                        check_param_count(*ty, plen.tr(ty.span), 0);
+                        return self.define(ty.span, |env| env.unknown());
+                    }
+                }
+
+                match self.defined(ty.span, &ident.path, params) {
+                    Some(ty) => ty,
+                    None => self.define(ty.span, |env| env.error()),
+                }
+            }
+            parser::Type::Pointer(to) => {
+                let to = self.ty((**to).as_ref());
+                self.define(ty.span, |env| env.pointer(to))
+            }
+            parser::Type::FnPointer(ptypes, returns) => {
+                let (_, params) = self.tys(ptypes);
+                let ret = self.ty((**returns).as_ref());
+                self.define(ty.span, |env| {
+                    env.function(ts::CallableKind::FnPointer, params, ret)
+                })
+            }
+            parser::Type::Closure(ptypes, returns) => {
+                let (_, params) = self.tys(ptypes);
+                let ret = self.ty((**returns).as_ref());
+                self.define(ty.span, |env| {
+                    env.function(ts::CallableKind::Closure, params, ret)
+                })
+            }
+            parser::Type::Tuple(elems) => {
+                let (_, elems) = self.tys(elems);
+                self.define(ty.span, |env| env.tuple(elems))
+            }
+            parser::Type::Poison => self.define(ty.span, |env| env.error()),
+            parser::Type::List(elems, len) => self
+                .listlike(
+                    ty.span,
+                    elems,
+                    len.clone(),
+                    |this, len, of| this.define(ty.span, |env| env.array(len, of)),
+                    |this, of| this.define(ty.span, |env| env.list(of)),
+                )
+                .unwrap_or_else(|| self.define(ty.span, |env| env.error())),
+        };
+
+        var
+    }
+
+    fn tys(&mut self, tys: &[Tr<parser::Type<'s>>]) -> (usize, EntityList<Var>) {
+        let len = tys.len();
+        let list = self.types_from_iter(tys, |this, ty| this.ty(ty.as_ref()));
+        (len, list)
+    }
+}
+
+impl<'a, 's, 'ss> TypeLower<'s> for TypeContext<'a, 'ss, StaticEnv> {
+    type Ty = Type;
+    type Tys = Vec<Type>;
+
+    fn ty(&mut self, ty: Tr<&parser::Type<'s>>) -> Self::Ty {
+        trace!("lowering type {ty}");
+
+        match *ty {
+            parser::Type::Defined(ident, params) => {
+                let path = ident.path.as_slice();
+                let (plen, params) = self.tys(params);
+
+                if let [name] = path {
+                    if let Some(prim) = self.try_prim(name) {
+                        check_param_count(*ty, plen.tr(ty.span), 0);
+                        return KnownType::Prim(prim);
+                    }
+
+                    if let Some(generic) = self.try_generic(name) {
+                        check_param_count(*ty, plen.tr(ty.span), 0); // TODO: higher-kinded types
+                        return KnownType::Generic(generic);
+                    }
+
+                    if *name == "self" {
+                        check_param_count(*ty, plen.tr(ty.span), 0); // TODO: higher-kinded types
+                        return self.env.self_.clone().expect("ET: No `self` in item");
+                    }
+
+                    if *name == "_" {
+                        errors::err("invalid type")
+                            .line(
+                                ty.span,
+                                format!(
+                                    "inference is not allowed in {}",
+                                    self.env.invalid_inference_reason_given
+                                ),
+                            )
+                            .emit();
+
+                        return KnownType::Error;
+                    }
+                }
+
+                match self.defined(ty.span, &ident.path, params) {
+                    Some(ty) => ty,
+                    None => KnownType::Error,
+                }
+            }
+            parser::Type::Pointer(to) => {
+                let to = self.ty((**to).as_ref());
+                KnownType::Pointer(Box::new(to))
+            }
+            parser::Type::FnPointer(ptypes, returns) => {
+                let (_, params) = self.tys(ptypes);
+                let ret = self.ty((**returns).as_ref());
+                KnownType::Function {
+                    kind: ts::CallableKind::FnPointer,
+                    params,
+                    ret: Box::new(ret),
+                }
+            }
+            parser::Type::Closure(ptypes, returns) => {
+                let (_, params) = self.tys(ptypes);
+                let ret = self.ty((**returns).as_ref());
+                KnownType::Function { kind: ts::CallableKind::Closure, params, ret: Box::new(ret) }
+            }
+            parser::Type::Tuple(elems) => {
+                let (_, elems) = self.tys(elems);
+                KnownType::Tuple(elems)
+            }
+            parser::Type::Poison => KnownType::default_unit_type(),
+            parser::Type::List(elems, len) => self
+                .listlike(
+                    ty.span,
+                    elems,
+                    len.clone(),
+                    |_, len, of| KnownType::Array { const_: len, of: Box::new(of) },
+                    |_, of| KnownType::List(Box::new(of)),
+                )
+                .unwrap_or_else(|| KnownType::default_unit_type()),
+        }
+    }
+
+    fn tys(&mut self, ty: &[Tr<parser::Type<'s>>]) -> (usize, Self::Tys) {
+        let tys: Self::Tys = ty.iter().map(|ty| self.ty(ty.as_ref())).collect();
+        (tys.len(), tys)
+    }
+}
+
+impl<'a, 's> TypeContext<'a, 's, StaticEnv> {
+    pub fn member_of_trait(
+        ctx: Context<TranslationUnit>,
+        project: key::Project,
+        file: key::File,
+        trait_sig: &TypeSig,
+    ) -> TypeContext<StaticEnv> {
+        let tag = GenericTag::Type;
+        let self_ = KnownType::Prim(Prim::Self_);
+        let env = StaticEnv::new("method").with_self(self_);
+        let mut this = TypeContext::new(ctx.clone(), project, file, env, tag);
+
+        this.fenv.entry(GenericTag::Trait).or_default();
+
+        // Clone the generics declared from the trait type parameters.
+        this.declare_forall(
+            GenericTag::Trait,
+            trait_sig.generics.values().map(|name| name.as_str()),
+        );
+
+        this.fenv.entry(GenericTag::Func).or_default();
+        this.scope = GenericTag::Func;
+
+        this
+    }
+
+    pub fn add_constraints(&mut self, tag: GenericTag, con: &'a parser::when::Constraints<'s>) {
+        let previous = std::mem::replace(&mut self.scope, tag);
+        for (_, name, cons) in &con.generics {
+            for con in cons {
+                let ty = self.ty(con.as_ref());
+                self.declare_constraint(*name, ty);
+            }
+        }
+        self.scope = previous;
+    }
+
+    pub fn declare_constraint(&mut self, gname: &str, con: Type) {
+        let generic = self.try_generic(gname).unwrap();
+        let cons = self
+            .fenv
+            .get_mut(&generic.tag)
+            .unwrap()
+            .constraints
+            .get_mut(generic.key)
+            .unwrap();
+
+        match con {
+            KnownType::Defined(ident, params) => {
+                cons.push((ident, params.values().cloned().collect()));
+            }
+            KnownType::Error => {}
+            _ => panic!("ET: not a trait: {con}"),
+        }
+    }
+
+    pub fn include_when_constraints(
+        &mut self,
+        impl_: Option<&'a parser::when::Constraints<'s>>,
+        when: &'a parser::when::Constraints<'s>,
+    ) {
+        // Declare generics of impl block
+        if let Some(when) = impl_ {
+            self.fenv.entry(GenericTag::Impl).or_default();
+            self.declare_forall_from_constraints(GenericTag::Impl, when);
+        }
+
+        // Declare generics of function
+        self.fenv.entry(GenericTag::Func).or_default();
+        self.declare_forall_from_constraints(GenericTag::Func, when);
+
+        // Lower constraints of impl block
+        if let Some(when) = impl_ {
+            self.add_constraints(GenericTag::Impl, when);
+        }
+
+        // Lower constraints of function
+        self.add_constraints(GenericTag::Func, when);
+    }
+
+    pub fn include_lambda_when_constraints(
+        &mut self,
+        lambdas: Option<impl Iterator<Item = &'a parser::when::Constraints<'s>> + Clone>,
+    ) {
+        // Declare generics of where-bindings
+        if let Some(lambdas) = lambdas.clone() {
+            for (i, when) in lambdas.enumerate() {
+                let lambda = key::Lambda(i as u32);
+                self.fenv.entry(GenericTag::Lambda(lambda)).or_default();
+                self.declare_forall_from_constraints(GenericTag::Lambda(lambda), when);
+            }
+        }
+
+        // Lower constraints of lambdas
+        if let Some(lambdas) = lambdas {
+            for (i, when) in lambdas.enumerate() {
+                let lambda = key::Lambda(i as u32);
+                self.add_constraints(GenericTag::Lambda(lambda), when);
+            }
+        }
+    }
+}
+
+fn check_param_count(header: impl fmt::Display, got: Tr<usize>, exp: usize) -> bool {
+    let err = |span, msg| {
+        errors::err("invalid type").line(span, msg).emit();
+        false
+    };
+
+    if *got < exp {
+        err(
+            got.span,
+            format!("missing {} type parameters for `{header}`", exp - *got),
+        )
+    } else if *got > *got {
+        err(got.span, format!("excess parameter for `{header}`"))
+    } else {
+        true
+    }
+}

@@ -6,7 +6,7 @@ impl<'s> Parser<'s> {
         allow_missing: bool,
         span: Span,
     ) -> Entity<'s> {
-        for ctx in self.ctx.iter().rev() {
+        if let Some(ctx) = self.ctx.last() {
             match ctx {
                 Context::Header("fn" | "fnptr") => {
                     return self.next_then(|this| this.indent_block(span))
@@ -17,7 +17,7 @@ impl<'s> Parser<'s> {
                 Context::Operators(_)
                 | Context::InMatch(_)
                 | Context::Indent(_)
-                | Context::Header(_) => break,
+                | Context::Header(_) => {}
             }
         }
 
@@ -38,13 +38,13 @@ impl<'s> Parser<'s> {
 
         let finalize = |this: &mut Self, buf| {
             assert!(matches!(this.ctx.pop().unwrap(), Context::Indent(..)));
-            return Entity::IndentBlock(name.tr(span), buf);
+            Entity::IndentBlock(name.tr(span), buf)
         };
 
         loop {
             let token = self.lexer.peek();
 
-            if token.kind == TokenKind::EOF {
+            if token.kind == TokenKind::Eof {
                 return finalize(self, buf);
             }
 
@@ -57,9 +57,8 @@ impl<'s> Parser<'s> {
             // No need to handle `None` because we allow `where fn ...`
 
             let declaration = self.next(false);
-            match &declaration.kind {
-                Entity::EOF => todo!(),
-                _ => {}
+            if declaration.kind == Entity::EOF {
+                todo!()
             }
             buf.push(declaration);
         }

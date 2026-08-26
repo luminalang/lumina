@@ -1,34 +1,34 @@
 use owo_colors::OwoColorize;
 use std::fmt;
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
-#[derive(Clone)]
-pub struct ErrorHandler {
-    buffer: Arc<Mutex<Vec<Error>>>,
-    pub panicy: bool,
+pub fn list_names_gramatically_correct<T: fmt::Display>(
+    elems: impl ExactSizeIterator<Item = T>,
+) -> String {
+    let mut buf = String::new();
+    let len = ExactSizeIterator::len(&elems);
+
+    for (i, elem) in elems.enumerate() {
+        if i == 0 {
+            write!(buf, "{elem}")
+        } else if i == len - 1 {
+            write!(buf, " and {elem}")
+        } else {
+            write!(buf, ", {elem}")
+        }
+        .unwrap();
+    }
+
+    buf
 }
 
-impl ErrorHandler {
-    pub fn new() -> Self {
-        ErrorHandler { buffer: Arc::new(Mutex::new(vec![])), panicy: false }
-    }
-
-    pub fn panicy() -> Self {
-        ErrorHandler { buffer: Arc::new(Mutex::new(vec![])), panicy: true }
-    }
-
-    pub fn call(&self, err: Error) {
-        if self.panicy {
-            panic!("{err}");
-        } else {
-            eprintln!("{err}");
-        }
-        self.buffer.lock().unwrap().push(err);
-    }
-
-    pub fn has_failed(&self) -> bool {
-        !self.buffer.lock().unwrap().is_empty()
+pub fn gramatically_correct_numbered(n: usize) -> String {
+    match n {
+        1 => format!("1st"),
+        2 => format!("2nd"),
+        3 => format!("3rd"),
+        _ => format!("{n}th"),
     }
 }
 
@@ -41,7 +41,7 @@ pub struct Error {
 
 impl Error {
     #[must_use]
-    pub fn error(name: &'static str) -> Self {
+    pub fn err(name: &'static str) -> Self {
         Error { name, contexts: vec![], is_warning: false }
     }
 
@@ -76,9 +76,9 @@ impl Error {
                     hide_file: self.hide_file_name(&file),
                     file,
                     linenr,
-                    content: content.into(),
+                    content,
                     arrow: vec![arrow],
-                    message: message.into(),
+                    message,
                     is_warning: self.is_warning,
                     mode,
                 };
@@ -92,7 +92,7 @@ impl Error {
     fn hide_file_name(&self, file: &Path) -> bool {
         for ctx in self.contexts.iter().rev() {
             match ctx {
-                Context::Line(previous) => return &previous.file == file,
+                Context::Line(previous) => return previous.file == file,
                 Context::Text(_) => continue,
             }
         }
@@ -105,9 +105,9 @@ impl Error {
         self
     }
 
-    pub fn call(self, handler: &ErrorHandler) {
-        handler.call(self)
-    }
+    // pub fn call(self, handler: &ErrorHandler) {
+    //     handler.call(self)
+    // }
 }
 
 #[derive(Clone, Debug)]

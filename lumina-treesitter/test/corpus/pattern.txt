@@ -1,0 +1,113 @@
+================================================================================
+pattern: basic
+================================================================================
+
+fn a [a, ..a] (a, a, (a, [a])) = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (list_pattern
+      (identifier)
+      (spread_pattern (identifier)))
+    (tuple_pattern
+      (identifier)
+      (identifier)
+      (tuple_pattern
+        (identifier)
+        (list_pattern (identifier))))
+    (identifier)))
+
+================================================================================
+pattern: con simple
+================================================================================
+
+fn a A = a
+fn a (A a) = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration (identifier) (constructor_pattern (type_identifier)) (identifier))
+  (function_declaration
+    (identifier)
+    (constructor_pattern (type_identifier) (identifier))
+    (identifier)))
+
+================================================================================
+pattern: as
+================================================================================
+
+a (A a)@a (A a)@a = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (as_pattern
+      (constructor_pattern (type_identifier) (identifier))
+      (identifier))
+    (as_pattern
+      (constructor_pattern (type_identifier) (identifier))
+      (identifier))
+    (identifier)))
+
+================================================================================
+pattern: literal
+================================================================================
+
+fn a 1 2 = 3
+fn a "a" "a" = a
+fn a 'a' 'b' = a
+fn a 1.0 2.0 = 3.0
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration (identifier) (integer_pattern) (integer_pattern) (integer_literal))
+  (function_declaration (identifier) (string_pattern) (string_pattern) (identifier))
+  (function_declaration (identifier) (character_pattern) (character_pattern) (identifier))
+  (function_declaration (identifier) (float_pattern) (float_pattern) (float_literal)))
+
+================================================================================
+pattern: record
+================================================================================
+
+fn f { A | } = a
+fn f { A | x } = a
+fn f { A | x = 5 } = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (record_pattern (type_identifier))
+    (identifier))
+  (function_declaration
+    (identifier)
+    (record_pattern (type_identifier) (field_pattern (identifier)))
+    (identifier))
+  (function_declaration
+    (identifier)
+    (record_pattern
+      (type_identifier)
+      (field_pattern (identifier) (integer_literal)))
+    (identifier)))
+
+================================================================================
+pattern: operator
+================================================================================
+
+a (++) = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (operator_pattern (operator))
+    (identifier)))

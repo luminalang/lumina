@@ -8,10 +8,12 @@ pub enum Pattern<'a> {
     Name(Identifier<'a>, Vec<Tr<Self>>),
     // parameters since string patterns have multiple parts (and extractors)
     String(&'a str, Vec<Tr<Self>>),
+    CharWildcard(&'a str, Vec<Tr<Self>>),
     Char(&'a str, Vec<Tr<Self>>),
     Extractor(Box<Tr<Expr<'a>>>, Option<Tr<&'a str>>, Vec<Tr<Self>>),
     Fields(Box<CurlyInit<'a>>, Fields<'a, Self>),
     List(Vec<Tr<Self>>, ListLength<'a>),
+    ListDotDot(Box<Tr<Self>>),
     Tuple(Vec<Tr<Self>>),
     Int([Bound; 2]),
     Float(f64),
@@ -53,16 +55,18 @@ impl<'a> Parser<'a> {
 
     fn pattern_without_followup(&mut self, params: bool) -> Option<Tr<Pattern<'a>>> {
         select! { self, "pattern", span;
+            T::Dot => self.pat_char_wildcard(span, params),
             T::Int => self.pat_int(span),
             T::Float => self.pat_float(span),
-            T::DotDot => self.pat_partial_int(Bound::Excess, span ),
+            T::DotColonDot => self.pat_partial_int(Bound::Excess, span ),
             T::Path => self.pat_path(span, params),
             T::Square => self.pat_extractor(span, params),
             T::StringLiteral => self.pat_string(span, params),
             T::CharLiteral => self.pat_char(span, params),
             T::OpenParen => self.pat_paren(span),
             T::OpenCurly => self.pat_record(span),
-            T::OpenList => self.pat_list(span)
+            T::OpenList => self.pat_list(span),
+            T::DotDot => self.pat_list_dot_dot(span)
         }
     }
 
@@ -114,9 +118,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn pat_char_wildcard(&mut self, span: Span, params: bool) -> Option<Tr<Pattern<'a>>> {
+        let name = self.expect_name("wildcard for character")?;
+
+        let params = if params {
+            self.pat_params(true)?
+        } else {
+            vec![]
+        };
+
+        let pat = Pattern::CharWildcard(*name, params);
+        Some(pat.tr(span))
+    }
+
     fn pat_int(&mut self, span: Span) -> Option<Tr<Pattern<'a>>> {
         let left = self.int_to_bound(span);
-        if let Some(dspan) = self.next_is(|t| t == T::DotDot) {
+        if let Some(dspan) = self.next_is(|t| t == T::DotColonDot) {
             self.pat_partial_int(left, span.extend(dspan))
         } else {
             let p = Pattern::Int([left, left]);
@@ -216,6 +233,13 @@ impl<'a> Parser<'a> {
         Some(Pattern::List(elems, ender).tr(span.extend(end)))
     }
 
+    fn pat_list_dot_dot(&mut self, span: Span) -> Option<Tr<Pattern<'a>>> {
+        self.pattern(true).map(Box::new).map(|inner| {
+            let span = span.extend(inner.span);
+            Pattern::ListDotDot(inner).tr(span)
+        })
+    }
+
     pub fn pat_params(&mut self, mut string_pats: bool) -> Option<Vec<Tr<Pattern<'a>>>> {
         let mut patterns = vec![];
 
@@ -261,6 +285,7 @@ impl T {
         match self {
             T::Float
             | T::Int
+            | T::Dot
             | T::Path
             | T::OpenCurly
             | T::OpenParen
@@ -283,6 +308,10 @@ impl<'a> fmt::Display for Pattern<'a> {
         let cl = ']'.symbol();
 
         match self {
+            Pattern::CharWildcard(char, params) if params.is_empty() => write!(f, ".{char}"),
+            Pattern::CharWildcard(char, params) => {
+                write!(f, ".{char} {}", params.iter().format(" "))
+            }
             Pattern::Name(name, params) if params.is_empty() => name.fmt(f),
             Pattern::Name(name, params) => {
                 write!(f, "{op}{} {}{cp}", name, params.iter().format(" "))
@@ -304,6 +333,7 @@ impl<'a> fmt::Display for Pattern<'a> {
             Pattern::List(elems, length) => {
                 write!(f, "{ol}{}{length}{cl}", elems.iter().format(", "))
             }
+            Pattern::ListDotDot(elem) => write!(f, "..{elem}"),
             Pattern::Fields(init, fields) => {
                 write!(f, "{oc} {init}{} {cc}", fields.iter().format(", "))
             }

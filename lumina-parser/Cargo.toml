@@ -10,8 +10,8 @@ edition = "2021"
 lumina-util = { path = "../lumina-util/" }
 lumina-key = { path = "../lumina-key" }
 lumina-tokentree = { path = "../lumina-tokentree" }
-itertools = "0.10.*" 
+itertools = "0.14.0" 
 logos = { git = "https://github.com/simvux/logos" }
-insta = "1.39.*"
-smallvec = "*"
+insta = "1.43.2"
+smallvec = "1.15.1"
 tracing = "0.1.41"

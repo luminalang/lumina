@@ -23,5 +23,7 @@ impl Collection<DummyVM> for VMCollection {
         unimplemented!()
     }
 
-    fn spawn_gc_thread(_tls: VMThread, _ctx: GCThreadContext<DummyVM>) {}
+    fn spawn_gc_thread(_tls: VMThread, _ctx: GCThreadContext<DummyVM>) {
+        unimplemented!()
+    }
 }

@@ -30,6 +30,7 @@ pub enum Expr<'a> {
     CastAs(Box<Tr<Self>>, Tr<Type<'a>>),
 
     List(Vec<Tr<Self>>, ListLength<'a>),
+    ListDotDot(Box<Tr<Self>>),
     Tuple(Vec<Tr<Self>>),
     Record {
         init: Box<CurlyInit<'a>>,
@@ -242,6 +243,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             T::OpenParen => self.expr_parenthesis(span),
             T::OpenCurly => self.expr_record(span),
             T::OpenList => self.expr_list(span),
+            T::DotDot => self.expr_list_dot_dot(span),
             T::If => self.expr_if(span),
             T::Do => self.expr_do(span),
             T::Let => self.expr_let(span),
@@ -393,7 +395,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             (T::Dot, span) if !self.preceeded_by(span, " \t\n") => {
                 self.parser.progress();
                 let aspan = apath.span;
-                return self.expr_path_field_accessors(true, Expr::Call(apath, vec![]).tr(aspan));
+                self.expr_path_field_accessors(true, Expr::Call(apath, vec![]).tr(aspan))
             }
             _ => {
                 if params {
@@ -414,7 +416,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                 None => {
                     self.parser
                         .err_expected_but_got(span, "field name", "a path");
-                    return Some(Expr::Poison.tr(span));
+                    Some(Expr::Poison.tr(span))
                 }
                 Some(name) => {
                     self.parser.progress();
@@ -435,9 +437,9 @@ impl<'p, 'a> ExprParser<'p, 'a> {
                 self.parser
                     .err_expected_but_got(span, "field name", kind.describe());
 
-                return Some(Expr::Poison.tr(span));
+                Some(Expr::Poison.tr(span))
             }
-            _ => return Some(lhs),
+            _ => Some(lhs),
         }
     }
 
@@ -445,7 +447,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
         match self.parser.lexer.peek() {
             (T::Dot, span) if !self.preceeded_by(span, " \t\n") => {
                 self.parser.progress();
-                return self.expr_path_field_accessors(true, lhs);
+                self.expr_path_field_accessors(true, lhs)
             }
             _ => Some(lhs),
         }
@@ -489,7 +491,7 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             let value = elems.remove(0).value;
             Some(Expr::Group(Box::new(value)).tr(span.extend(end)))
         } else {
-            Some(Expr::Tuple(elems).tr(span.extend(span)))
+            Some(Expr::Tuple(elems).tr(span.extend(end)))
         }
     }
 
@@ -504,6 +506,13 @@ impl<'p, 'a> ExprParser<'p, 'a> {
             self.parser
                 .shared_list(span, Parser::expr, Some(Expr::Poison.tr(span)))?;
         Some(Expr::List(elems, ender).tr(span.extend(end)))
+    }
+
+    fn expr_list_dot_dot(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
+        self.expr().map(Box::new).map(|inner| {
+            let span = span.extend(inner.span);
+            Expr::ListDotDot(inner).tr(span)
+        })
     }
 
     fn expr_if(&mut self, span: Span) -> Option<Tr<Expr<'a>>> {
@@ -720,7 +729,7 @@ impl T {
             T::SquareExt,
             T::AnnotatedPath,
         ]
-        .contains(&self)
+        .contains(self)
     }
 }
 
@@ -811,7 +820,7 @@ impl<'a> fmt::Display for Expr<'a> {
                 if against.contains('\n') {
                     write!(f, "\n  {}\n", against.lines().format("\n  "))
                 } else {
-                    write!(f, " {}\n", against)
+                    writeln!(f, " {}", against)
                 }?;
 
                 write!(
@@ -846,6 +855,7 @@ impl<'a> fmt::Display for Expr<'a> {
             Expr::PassFptr(fkey) => write!(f, "{}{}", "#!".symbol(), fkey),
             Expr::Do(exprs) => write!(f, "{do_} {} {then_} {}", exprs[0], exprs[1]),
             Expr::List(elems, length) => write!(f, "{ol}{}{length}{cl}", elems.iter().format(", ")),
+            Expr::ListDotDot(elem) => write!(f, "..{elem}"),
             Expr::Tuple(elems) => write!(f, "{op}{}{cp}", elems.iter().format(", ")),
             Expr::CastAs(v, ty) => write!(f, "{op}{v} {} {ty}{cp}", "as".keyword()),
             Expr::Poison => "???".fmt(f),

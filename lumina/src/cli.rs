@@ -1,4 +1,4 @@
-use clap::{command, Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use directories::BaseDirs;
 use lumina_compiler::env::Environment;
 use std::fs;
@@ -30,6 +30,9 @@ pub enum Commands {
 
     /// Format a lumina project or source file
     Fmt(FormatFlags),
+
+    /// Generate project documentation
+    Docs(DocsFlags),
 }
 
 #[derive(Args, Debug)]
@@ -104,11 +107,25 @@ pub struct FormatFlags {
     pub overwrite: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct DocsFlags {
+    #[arg(short = 't', long)]
+    /// Target operating system
+    pub target: Option<String>,
+
+    #[arg(short = 'o', long)]
+    // Output destination. Must be either empty directory or new json file.
+    pub output: FilePathBuf,
+
+    /// Path to lumina project, defaults to current directory
+    pub project: Option<FilePathBuf>,
+}
+
 pub fn environment_from_sys_vars() -> Environment {
     let dirs = BaseDirs::new().expect("Could not access home directory");
 
     let lumina_directory = std::env::var("LUMINAPATH")
-        .map(|str| FilePathBuf::from(str))
+        .map(FilePathBuf::from)
         .unwrap_or_else(|_| {
             let mut local = dirs.data_local_dir().to_owned();
             local.push("lumina");
@@ -117,11 +134,11 @@ pub fn environment_from_sys_vars() -> Environment {
         });
 
     let std_directory = std::env::var("LUMINASTD")
-        .map(|str| FilePathBuf::from(str))
+        .map(FilePathBuf::from)
         .unwrap_or_else(|_| lumina_directory.join("std"));
 
     let ext_directory = std::env::var("LUMINAEXT")
-        .map(|str| FilePathBuf::from(str))
+        .map(FilePathBuf::from)
         .unwrap_or_else(|_| lumina_directory.join("ext"));
 
     Environment {

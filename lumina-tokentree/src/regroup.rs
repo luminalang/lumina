@@ -17,7 +17,7 @@ impl<'s> Entity<'s> {
                 }
                 _ => {
                     if i == parts.len() - 1 {
-                        f(lhs, &[part.clone()])
+                        f(lhs, std::slice::from_ref(part))
                     } else {
                         f(lhs, &[Meta::n(Entity::Missing, Span::null())]);
                         lhs = part.as_ref();

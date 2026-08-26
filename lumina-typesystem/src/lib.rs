@@ -1,453 +1,632 @@
-use derive_new::new;
-use itertools::Itertools;
-use key::{MMap, Map, M};
-use lumina_key as key;
-use lumina_util::{Highlighting, Ignored, Span, Spanned, Tr};
-use smallvec::SmallVec;
-use std::collections::HashMap;
-use std::fmt;
-use tracing::trace;
-
-mod transform;
-pub use transform::{
-    CircularInst, DirectRecursion, Downgrade, ForeignInst, GenericMapper, Transformer, Upgrade,
-};
-
-#[cfg(test)]
-mod tests;
-
-mod fin;
-pub use fin::Finalizer;
-
+mod checker;
+mod finalize;
+mod fmt;
+mod forall;
+mod getters;
+mod inference_passes;
+mod instantiate;
 mod intsize;
-pub use intsize::IntSize;
+mod key;
 
-mod generic;
-pub use generic::{
-    ConstGeneric, Constraint, Forall, Generic, GenericData, GenericKind, IMPLICT_GENERIC_NAMES,
+pub use checker::{Checker, Error, MismatchKind};
+pub use finalize::Finalizer;
+pub use fmt::KnownTypeFormatter;
+pub use forall::find_generic;
+pub use forall::{
+    ArrayLen, Constraints, Forall, ForallEnv, GenericTag, TaggedGeneric, add_constraint, declare,
+    implicitly_declare,
 };
+use inference_passes as inf;
+pub use inference_passes::{
+    InferenceUnifier, KnownTypeRoot, ReceiverLookupResult, Resolver, ResolverError,
+};
+pub use instantiate::{Annotation, InstableType};
+pub use intsize::IntSize;
+pub use key::{Application, SameasUnification, Var};
+use lumina_key::{EntityList, ListPool, Map, SecondaryMap};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-mod tenv;
-pub use tenv::{IntConstraint, TEnv, Var};
+/// The environment represents a single functions state as its in the process of being inferred and
+/// type checked.
+///
+/// Each type that may not be fully known is represented as a type variable.
+/// Type variables track information of what information about it is known, which functions its
+/// applied to, what it's assigned to, etc.
+pub struct Environment<Ident> {
+    variables: Map<key::Var, Variable<Ident>>,
 
-mod iquery;
-pub use iquery::{Compatibility, ConcreteType, ImplIndex};
-pub(crate) use iquery::{GetForall, GetImplData};
+    applications: Map<key::Application, inf::Application>,
+    assignments: Vec<inf::Assignment>,
+    returns_: Vec<inf::Return>,
+    same_as_unifications: Map<key::SameasUnification, inf::SameasUnification>,
 
-mod check;
-pub use check::ConstraintError;
+    failed_receiver_lookups: HashMap<key::Var, FailedReceiverLookup>,
 
-#[derive(new)]
-pub struct TypeSystem<'a, 's> {
-    env: &'a mut TEnv<'s>,
-    default_int_size: u8,
-    fnames: &'a MMap<key::Record, Map<key::Field, Tr<&'s str>>>,
-    ftypes: &'a MMap<key::Record, Map<key::Field, Tr<Type>>>,
-    records: &'a MMap<key::Record, (Tr<&'s str>, Forall<'s, Static>)>,
-    field_lookup: &'a HashMap<&'s str, Vec<M<key::Record>>>,
+    pub var_pool: ListPool<key::Var>,
+
+    current_source: VariableSource,
+
+    pub debug_strings: SecondaryMap<key::Var, String>,
 }
 
-impl<'a, 's> TypeSystem<'a, 's> {
-    fn find_record_by_fields(&self, rvar: Var) -> SmallVec<[M<key::Record>; 4]> {
-        let fields = &self.env.vars[rvar].fields;
+pub enum FailedReceiverLookup {
+    Unresolved(key::Var),
+    CircularInference,
+}
 
-        let mut possibilities = SmallVec::<[_; 4]>::new();
+pub struct Variable<Ident> {
+    info: VariableInfo<Ident>,
+    has_fields: Vec<inf::HasField>,
+    source: VariableSource,
 
-        for (name, _var, _) in fields {
-            let records = self
-                .field_lookup
-                .get(**name)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
+    constraints: Constraints<Ident>,
+    // `f` is ambigious during inference as it could either have the signature
+    // `(fn -> a)` or `a`.
+    //
+    // In this situation `Option<key::Var>` is set and an application is added.
+    //
+    // Before inference starts, all instances of `var` may then be substituted with this `key::Var`
+    // if the applications hint towards it being `a` instead of `(fn -> a)`. Otherwise; it's
+    // inferred as `(fn -> a)` and `key::Var` is moved to that `VariableInfo::Function`.
 
-            for &r in records {
-                match possibilities
-                    .iter_mut()
-                    .find_map(|(rec, count)| (*rec == r).then_some(count))
-                {
-                    Some(count) => *count += 1,
-                    None => possibilities.push((r, 1)),
-                }
-            }
-        }
+    // If this type variable is unknown but applicated, then we want all applications to have the
+    // same tvar as the return type instead of creating a new one in each `inf::Application`.
+    // application_return: Option<key::Var>,
+    // TODO: Can we iterate the `var_pool` to visit all vars?
+}
 
-        let Some(largest) = possibilities.iter().map(|(_, c)| *c).max() else {
-            return SmallVec::new();
-        };
-
-        possibilities
-            .into_iter()
-            .filter_map(|(record, c)| (c == largest).then_some(record))
-            .collect()
-    }
-
-    fn try_get_rvar(&mut self, rvar: Var) -> Option<(M<key::Record>, &[IType])> {
-        match self.env.vars[rvar].assignment.as_ref() {
-            Some(ty) => match &ty.value {
-                Ty::Container(Container::Defined(M(module, kind), _), _) => {
-                    if let key::TypeKind::Record(record) = kind {
-                        // Re-borrow to circumvent limitation of brwck
-                        let Ty::Container(_, params) =
-                            &self.env.vars[rvar].assignment.as_ref().unwrap().value
-                        else {
-                            unreachable!();
-                        };
-                        Some((record.inside(*module), params))
-                    } else {
-                        None
-                    }
-                }
-                Ty::Special(var) => return self.try_get_rvar(*var),
-                _ => panic!("I don't think we're ever gonna assign a non-record to the record"),
-            },
-            None => self.try_infer_record_by_fields(rvar),
-        }
-    }
-
-    fn try_infer_record_by_fields(&mut self, rvar: Var) -> Option<(M<key::Record>, &[IType])> {
-        let record = match self.find_record_by_fields(rvar).as_slice() {
-            [record] => *record,
-            _ => return None,
-        };
-
-        let span = self.env.vars[rvar].span;
-        let params = self.new_record_type_params(span, record);
-        self.assign_record_to_rvar(span, rvar, record, params);
-
-        let Ty::Container(Container::Defined(_, _), type_params) =
-            &self.env.vars[rvar].assignment.as_ref().unwrap().value
-        else {
-            unreachable!();
-        };
-
-        Some((record, type_params))
-    }
-
-    fn new_record_type_params(&mut self, span: Span, record: M<key::Record>) -> Vec<IType> {
-        (0..self.records[record].1.generics.len())
-            .map(|_| self.env.var(span))
-            .map(IType::Special)
-            .collect::<Vec<_>>()
-    }
-
-    /// Assign a record to the rvar and check all the previously used fields with the now known
-    /// concrete field types.
-    pub fn assign_record_to_rvar(
-        &mut self,
-        span: Span,
-        rvar: Var,
-        record: M<key::Record>,
-        type_params: Vec<IType>,
-    ) {
-        let ty = Ty::defined(record, type_params.clone());
-        trace!("{rvar} => {ty}");
-        self.env.vars[rvar].assignment = Some(ty.tr(span));
-
-        // Now that we know the type, we can go back and type check any of the fields we previously
-        // accepted as correct without knowing the real record type.
-        for i in 0..self.env.vars[rvar].fields.len() {
-            let (fname, var, mismatch) = self.env.vars[rvar].fields[i];
-            assert!(mismatch.is_none());
-
-            if let Some(ty) = self.inst_field(record, &type_params, *fname) {
-                // We can't use normal unify because then it'll use `field_of` as a shortcut
-                if let Some(previous) = self.env.vars[var].assignment.clone() {
-                    let ok = self.unify(previous.span, &*previous, &ty);
-                    if !ok {
-                        self.env.vars[rvar].fields[i].2 = Some(tenv::FieldMismatch);
-                        // Overwrite the incorrect var with the real type
-                        self.env.vars[var].assignment = Some(ty.tr(fname.span));
-                    }
-                } else {
-                    self.env.assign(var, ty.tr(fname.span));
-                }
-            }
-        }
-    }
-
-    pub fn inst_field<T: Clone>(
-        &self,
-        record: M<key::Record>,
-        params: &[Ty<T>],
-        fname: &str,
-    ) -> Option<Ty<T>> {
-        let field = self.fnames[record]
-            .iter()
-            .find_map(|(k, n)| (**n == fname).then_some(k))?;
-
-        let inst = GenericMapper::from_types(GenericKind::Entity, params.iter().cloned());
-
-        let fty = &self.ftypes[record][field];
-        Some((&inst).transform(fty))
-    }
-
-    // Retrieve a known field type if a record can/has been inferred
-    fn try_get_field(&mut self, fname: Tr<&'s str>, rvar: Var) -> Option<(M<key::Record>, IType)> {
-        let (record, type_params) = self.try_get_rvar(rvar)?;
-        let inst = GenericMapper::from_types(GenericKind::Entity, type_params.iter().cloned());
-
-        let field = self.fnames[record]
-            .iter()
-            .find_map(|(k, n)| (**n == *fname).then_some(k))?;
-
-        let fty = &self.ftypes[record][field];
-        Some((record, (&inst).transform(fty)))
-    }
-
-    fn try_get_field_if_is_field(&mut self, var: Var) -> Option<(M<key::Record>, IType)> {
-        self.env.vars[var]
-            .field_of
-            .and_then(|(fname, rvar)| self.try_get_field(fname, rvar))
+impl<Ident> Variable<Ident> {
+    fn new(source: VariableSource, info: VariableInfo<Ident>) -> Self {
+        Self { info, has_fields: vec![], constraints: vec![], source }
     }
 }
 
-/// A generalised and customizable `Type` type with visitor API's
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum Ty<T> {
-    // Types which contain other types
-    Container(Container, Vec<Self>),
-
-    Generic(Generic),
-    Int(IntSize),
-
-    Const(ConstValue),
-
-    // Types that are only equal to themselves
-    Simple(&'static str),
-
-    // Special variants that are often transformed.
-    Special(T),
-}
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum ConstValue {
-    Usize(u64),
-    Bool(bool),
-    Char(char),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Container {
-    FnPointer,
+#[derive(Clone, Deserialize, Serialize, Debug, Copy, PartialEq, Eq)]
+pub enum CallableKind {
     Closure,
-    Tuple,
-    Pointer,
-    Array,
-    Defined(M<key::TypeKind>, Ignored<Lang>),
+    FnPointer,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lang {
-    String,
-    List,
-    None,
-}
-
-impl<T> Ty<T> {
-    pub fn as_trait(self) -> Result<(M<key::Trait>, Vec<Self>), Self> {
-        match self {
-            Ty::Container(Container::Defined(M(module, key::TypeKind::Trait(key)), _), params) => {
-                Ok((key.inside(module), params))
-            }
-            other => Err(other),
-        }
-    }
-
-    pub fn tuple(elems: Vec<Self>) -> Self {
-        Self::Container(Container::Tuple, elems)
-    }
-
-    pub fn defined<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
-        let key = key.map(K::into);
-        Self::Container(Container::Defined(key, Ignored::new(Lang::None)), params)
-    }
-    pub fn list<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
-        let key = key.map(K::into);
-        Self::Container(Container::Defined(key, Ignored::new(Lang::List)), params)
-    }
-    pub fn array(size: u64, inner: Self) -> Self {
-        let size = Ty::Const(ConstValue::Usize(size));
-        Self::Container(Container::Array, vec![inner, size])
-    }
-    pub fn const_array(generic: Generic, inner: Self) -> Self {
-        let size = Ty::Generic(generic);
-        Self::Container(Container::Array, vec![inner, size])
-    }
-    pub fn string<K: Into<key::TypeKind>>(key: M<K>, params: Vec<Self>) -> Self {
-        let key = key.map(K::into);
-        Self::Container(Container::Defined(key, Ignored::new(Lang::String)), params)
-    }
-
-    pub fn fn_pointer(mut params: Vec<Self>, ret: Self) -> Self {
-        params.push(ret);
-        Self::Container(Container::FnPointer, params)
-    }
-    pub fn closure(mut params: Vec<Self>, ret: Self) -> Self {
-        params.push(ret);
-        Self::Container(Container::Closure, params)
-    }
-
-    pub fn pointer(ty: Self) -> Self {
-        let params = vec![ty];
-        Self::Container(Container::Pointer, params)
-    }
-
-    pub const fn u8() -> Self {
-        Self::int(false, 8)
-    }
-    pub fn u8_pointer() -> Self {
-        Self::pointer(Self::Int(IntSize::new(false, 8)))
-    }
-
-    pub const fn int(signed: bool, size: u8) -> Self {
-        Self::Int(IntSize::new(signed, size))
-    }
-
-    pub const fn f64() -> Self {
-        Self::Simple("f64")
-    }
-
-    pub const fn f32() -> Self {
-        Self::Simple("f32")
-    }
-
-    pub const fn poison() -> Self {
-        Self::Simple("poison")
-    }
-
-    pub const fn bool() -> Self {
-        Self::Simple("bool")
-    }
-
-    pub const fn self_() -> Self {
-        Self::Simple("self")
-    }
-}
-
-impl Ty<Inference> {
-    pub fn infer(var: Var) -> Self {
-        Self::Special(var)
-    }
-}
-
-pub type IType = Ty<Inference>;
-pub type Type = Ty<Static>;
-
-#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Static;
-
-impl fmt::Display for Static {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        "static".fmt(f)
-    }
-}
-
-pub type Inference = Var;
-
-impl Container {
-    pub fn fmt<T>(
-        &self,
-        elems: &[T],
-        format: impl Fn(&T) -> String,
-        f: &mut fmt::Formatter,
-    ) -> fmt::Result {
-        match self {
-            Container::FnPointer => Self::fmt_func("fnptr", elems, format, f),
-            Container::Closure => Self::fmt_func("fn", elems, format, f),
-            Container::Tuple => Self::fmt_tuple(elems, format, f),
-            Container::Pointer => write!(f, "*{}", format(&elems[0])),
-            Container::Array => write!(f, "[{}; {}]", format(&elems[0]), format(&elems[1])),
-            Container::Defined(_, Ignored { inner: Lang::String }) => write!(f, "string"),
-            Container::Defined(_, Ignored { inner: Lang::List }) => {
-                write!(f, "[{}]", elems.iter().map(format).format(", "))
-            }
-            Container::Defined(key, Ignored { inner: Lang::None }) => {
-                Self::fmt_defined(key, elems, format, f, true)
-            }
-        }
-    }
-
-    pub fn fmt_defined<T>(
-        header: impl fmt::Display,
-        params: &[T],
-        format: impl Fn(&T) -> String,
-        f: &mut fmt::Formatter,
-        paren: bool,
-    ) -> fmt::Result {
-        if params.is_empty() {
-            write!(f, "{header}")
-        } else {
-            let params = params.iter().format_with(" ", |p, f| f(&format(p)));
-            if paren {
-                write!(f, "({header} {})", params)
-            } else {
-                write!(f, "{header} {}", params)
-            }
-        }
-    }
-
-    pub fn fmt_tuple<T>(
-        elems: &[T],
-        format: impl Fn(&T) -> String,
-        f: &mut fmt::Formatter,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "({})",
-            elems.iter().format_with(", ", |elem, f| f(&format(elem)))
+impl CallableKind {
+    fn can_apply(&self, other: &CallableKind) -> bool {
+        matches!(
+            (self, other),
+            (CallableKind::FnPointer, _) | (CallableKind::Closure, CallableKind::Closure)
         )
     }
+}
 
-    pub fn fmt_func<T>(
-        h: &str,
-        elems: &[T],
-        format: impl Fn(&T) -> String,
-        f: &mut fmt::Formatter,
-    ) -> fmt::Result {
-        let open = '('.symbol();
-        let close = ')'.symbol();
-        if elems.len() == 1 {
-            write!(f, "{h}{open}{}{close}", format(&elems[0]))
-        } else {
-            let params = elems[..elems.len() - 1]
-                .iter()
-                .format_with(", ", |elem, f| f(&format(elem)));
-            let ret = format(elems.last().unwrap());
-            let arrow = "->".symbol();
-            if h == "" {
-                write!(f, "{params} {arrow} {ret}")
-            } else {
-                write!(f, "{h}{open}{params} {arrow} {ret}{close}",)
+#[derive(Clone, Deserialize, Serialize, Debug, Copy, PartialEq, Eq, Hash)]
+pub enum Prim {
+    Int(IntSize),
+    Bool,
+    Float,
+    Self_,
+}
+
+/// The incomplete information we may hold of this variables inferred type
+#[derive(Clone)]
+enum VariableInfo<Ident> {
+    /// Created from an invalid type/expression and intentionally ignored by checks.
+    Error,
+    Unknown,
+    Numeric,
+    Defined(Ident, EntityList<key::Var>),
+    Tuple(EntityList<key::Var>),
+    List(key::Var),
+    Array {
+        of: key::Var,
+        len: key::Var,
+    },
+    Const(ConstType),
+    Generic(TaggedGeneric),
+    Prim(Prim),
+    Pointer(key::Var),
+    TypeResolvedFunction(String),
+    Function {
+        kind: CallableKind,
+        params: Option<EntityList<key::Var>>,
+        ret: key::Var,
+    },
+    Applied {
+        func: key::Var,
+        appl: key::Application,
+    },
+    InferTo(key::Var),
+}
+
+#[derive(Clone, Serialize, PartialEq, Eq)]
+pub enum ConstType {
+    Int(i128),
+}
+
+/// Whether this variable was created in the functions type signature or elsewhere in its body.
+///
+/// The information is relevant for deciding how to default an uninferred type variable.
+#[derive(Clone, Copy, Debug)]
+enum VariableSource {
+    Expression,
+    Signature,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub enum KnownType<Ident> {
+    Error,
+    Defined(Ident, Map<key::Generic, Self>),
+    List(Box<Self>),
+    Array {
+        of: Box<Self>,
+        len: Box<Self>,
+    },
+    Const(ConstType),
+    Tuple(Vec<Self>),
+    Generic(TaggedGeneric),
+    Prim(Prim),
+    Pointer(Box<Self>),
+    Function {
+        kind: CallableKind,
+        params: Vec<Self>,
+        ret: Box<Self>,
+    },
+}
+
+impl<Ident> KnownType<Ident> {
+    pub fn record<const N: usize>(name: Ident, params: impl Into<Vec<Self>>) -> Self {
+        KnownType::Defined(name, params.into().into())
+    }
+
+    pub fn list(inner: Self) -> Self {
+        KnownType::List(Box::new(inner))
+    }
+
+    pub fn array(of: Self, len: Self) -> Self {
+        KnownType::Array { len: Box::new(len), of: Box::new(of) }
+    }
+
+    pub fn tuple<const N: usize>(elems: [Self; N]) -> Self {
+        KnownType::Tuple(elems.into())
+    }
+
+    pub fn generic(generic: TaggedGeneric) -> Self {
+        KnownType::Generic(generic)
+    }
+
+    pub fn function<const N: usize>(kind: CallableKind, params: [Self; N], ret: Self) -> Self {
+        KnownType::Function { kind, params: params.into(), ret: Box::new(ret) }
+    }
+
+    pub fn i(bits: u8) -> Self {
+        KnownType::Prim(Prim::Int(IntSize::new(true, bits)))
+    }
+
+    pub fn pointer(inner: Self) -> Self {
+        KnownType::Pointer(Box::new(inner))
+    }
+
+    pub fn default_unit_type() -> Self {
+        KnownType::Tuple(vec![])
+    }
+}
+
+impl<Ident: PartialEq> PartialEq for KnownType<Ident> {
+    fn eq(&self, other: &Self) -> bool {
+        if matches!(self, KnownType::Error) || matches!(other, KnownType::Error) {
+            return true;
+        }
+
+        match (self, other) {
+            (KnownType::Defined(a_name, a_params), KnownType::Defined(b_name, b_params)) => {
+                a_name == b_name && a_params == b_params
             }
+            (KnownType::List(a), KnownType::List(b)) => a == b,
+            (
+                KnownType::Array { of: a_of, len: a_len },
+                KnownType::Array { of: b_of, len: b_len },
+            ) => a_len == b_len && a_of == b_of,
+            (KnownType::Tuple(a), KnownType::Tuple(b)) => a == b,
+            (KnownType::Generic(a), KnownType::Generic(b)) => a == b,
+            (KnownType::Prim(a), KnownType::Prim(b)) => a == b,
+            (KnownType::Pointer(a), KnownType::Pointer(b)) => a == b,
+            (KnownType::Error, _) | (_, KnownType::Error) => true,
+            (KnownType::Const(a_const), KnownType::Const(b_const)) => a_const == b_const,
+            (
+                KnownType::Function { kind: a_kind, params: a_params, ret: a_ret },
+                KnownType::Function { kind: b_kind, params: b_params, ret: b_ret },
+            ) => a_kind == b_kind && a_params == b_params && a_ret == b_ret,
+            _ => false,
         }
     }
 }
 
-impl<T: fmt::Display> fmt::Display for Ty<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Ty::Container(cont, params) => cont.fmt(params, |t| t.to_string(), f),
-            Ty::Generic(generic) => write!(f, "{generic}"),
-            Ty::Const(const_) => write!(f, "{const_}"),
-            Ty::Int(size) => write!(f, "{size}"),
-            Ty::Simple(name) => name.fmt(f),
-            Ty::Special(special) => special.fmt(f),
+impl<Ident: Eq> Eq for KnownType<Ident> {}
+
+impl<Ident: std::fmt::Debug> Default for Environment<Ident> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Ident> Environment<Ident> {
+    // fn visit_vars_list<F>(&self, vars: key::EntityList<key::Var>, f: &mut F)
+    // where
+    //     F: FnMut(&Self, key::Var),
+    // {
+    //     let mut iter = key::EntityIter::from(vars);
+    //     while let Some(var) = iter.next(&self.var_pool) {
+    //         self.visit_vars(None, var, f);
+    //     }
+    // }
+
+    // fn visit_vars<F>(&self, mut root: Option<key::Var>, var: key::Var, f: &mut F)
+    // where
+    //     F: FnMut(&Self, key::Var),
+    // {
+    //     if root == Some(var) {
+    //         return;
+    //     } else if let None = root {
+    //         root = Some(var);
+    //     }
+
+    //     f(self, var);
+
+    //     for i in 0.. {
+    //         let Some(has_field) = self.variables[var].has_fields.get(i) else {
+    //             break;
+    //         };
+
+    //         self.visit_vars(root, has_field.field_type, f);
+    //     }
+
+    //     let (vars, var) = match &self.variables[var].info {
+    //         VariableInfo::Tuple(elems) | VariableInfo::Defined(_, elems) => (elems.clone(), None),
+    //         VariableInfo::Pointer(var)
+    //         | VariableInfo::Function { params: None, ret: var, .. }
+    //         | VariableInfo::List(var) => (key::EntityList::new(), Some(*var)),
+    //         VariableInfo::Const(_)
+    //         | VariableInfo::Numeric
+    //         | VariableInfo::Unknown
+    //         | VariableInfo::Error
+    //         | VariableInfo::TypeResolvedFunction(_)
+    //         | VariableInfo::Prim(_)
+    //         | VariableInfo::Generic(_) => (EntityList::new(), None),
+
+    //         &VariableInfo::Array { of, len } => {
+    //             self.visit_vars(root, of, f);
+    //             self.visit_vars(root, len, f);
+    //             return;
+    //         }
+    //         VariableInfo::Function { params: Some(params), ret, .. } => {
+    //             (params.clone(), Some(*ret))
+    //         }
+    //     };
+
+    //     if let Some(var) = var {
+    //         self.visit_vars(root, var, f);
+    //     }
+
+    //     let mut iter = key::EntityIter::from(vars);
+    //     while let Some(var) = iter.next(&self.var_pool) {
+    //         self.visit_vars(root, var, f);
+    //     }
+    // }
+}
+
+impl<Ident: std::fmt::Debug> Environment<Ident> {
+    pub fn new() -> Self {
+        Self {
+            variables: Map::new(),
+
+            same_as_unifications: Map::new(),
+            applications: Map::new(),
+            assignments: vec![],
+            returns_: vec![],
+
+            failed_receiver_lookups: HashMap::new(),
+
+            var_pool: ListPool::new(),
+
+            current_source: VariableSource::Signature,
+
+            debug_strings: SecondaryMap::new(),
         }
     }
-}
 
-impl<T: fmt::Display> fmt::Debug for Ty<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
+    pub fn poison(&mut self, var: key::Var) {
+        self.variables[var].info = VariableInfo::Error;
     }
-}
 
-impl fmt::Display for ConstValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ConstValue::Usize(n) => n.fmt(f),
-            ConstValue::Bool(b) => b.fmt(f),
-            ConstValue::Char(c) => c.fmt(f),
+    pub fn in_signature(&self) -> bool {
+        matches!(self.current_source, VariableSource::Signature)
+    }
+
+    pub fn push_constraint(
+        &mut self,
+        var: key::Var,
+        ident: Ident,
+        params: Map<key::Generic, KnownType<Ident>>,
+    ) {
+        self.variables[var].constraints.push((ident, params));
+    }
+
+    pub fn push_constraints(&mut self, var: key::Var, cons: Constraints<Ident>) {
+        self.variables[var].constraints.extend(cons);
+    }
+
+    /// Marks the end of the function signatures.
+    ///
+    /// Type variables declared past this point will not be able to implicitly declare generics.
+    pub fn leave_signature_enter_expression(&mut self) {
+        self.current_source = VariableSource::Expression;
+    }
+    pub fn enter_signature(&mut self) {
+        self.current_source = VariableSource::Signature;
+    }
+
+    pub fn i(&mut self, bits: u8) -> key::Var {
+        self.prim(Prim::Int(IntSize::new(true, bits)))
+    }
+    pub fn u(&mut self, bits: u8) -> key::Var {
+        self.prim(Prim::Int(IntSize::new(false, bits)))
+    }
+
+    pub fn const_int(&mut self, n: i128) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::Const(ConstType::Int(n)),
+        ))
+    }
+
+    pub fn int(&mut self, size: IntSize) -> key::Var {
+        self.prim(Prim::Int(size))
+    }
+
+    pub fn prim(&mut self, prim: Prim) -> key::Var {
+        self.variables
+            .push(Variable::new(self.current_source, VariableInfo::Prim(prim)))
+    }
+
+    pub fn unknown(&mut self) -> key::Var {
+        self.variables
+            .push(Variable::new(self.current_source, VariableInfo::Unknown))
+    }
+
+    pub fn error(&mut self) -> key::Var {
+        self.variables
+            .push(Variable::new(self.current_source, VariableInfo::Error))
+    }
+
+    pub fn numeric(&mut self) -> key::Var {
+        self.variables
+            .push(Variable::new(self.current_source, VariableInfo::Numeric))
+    }
+
+    pub fn defined(&mut self, name: Ident, params: EntityList<key::Var>) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::Defined(name, params),
+        ))
+    }
+
+    pub fn tuple(&mut self, elements: EntityList<key::Var>) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::Tuple(elements),
+        ))
+    }
+
+    /// Initialize a list where all members will inferred/checked to be the same type.
+    pub fn list_sameas(&mut self) -> (key::SameasUnification, key::Var, key::Var) {
+        let elem = self.unknown();
+        let var = self.list(elem);
+        let key = self.same_as_unifications.push(inf::SameasUnification {
+            main: inf::SameasMain::List { elem, list: var },
+            members: EntityList::new(),
+        });
+        (key, var, elem)
+    }
+
+    /// Initialize a branching expression where all members will infer/check to be the type of the
+    /// expression.
+    pub fn expr_sameas(&mut self, init: Option<Var>) -> (key::SameasUnification, key::Var) {
+        let var = init.unwrap_or_else(|| self.unknown());
+        let key = self.same_as_unifications.push(inf::SameasUnification {
+            main: inf::SameasMain::JoinExpression(var),
+            members: EntityList::new(),
+        });
+        (key, var)
+    }
+
+    pub fn add_sameas_member(&mut self, sameas: key::SameasUnification, var: key::Var) {
+        self.same_as_unifications[sameas]
+            .members
+            .push(var, &mut self.var_pool);
+    }
+
+    pub fn add_field(&mut self, var: key::Var, field: impl Into<String>) -> key::Var {
+        let field_type = self.unknown();
+        self.variables[var]
+            .has_fields
+            .push(inf::HasField { name: field.into(), field_type });
+        field_type
+    }
+
+    pub fn list(&mut self, element_type: key::Var) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::List(element_type),
+        ))
+    }
+
+    pub fn array(&mut self, of: key::Var, len: key::Var) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::Array { of, len },
+        ))
+    }
+
+    pub fn generic(&mut self, generic_key: TaggedGeneric) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::Generic(generic_key),
+        ))
+    }
+
+    pub fn function(
+        &mut self,
+        kind: CallableKind,
+        params: EntityList<key::Var>,
+        ret: key::Var,
+    ) -> key::Var {
+        // TODO: We can't do the same thing for type_resolved_function. Is that a problem?
+
+        let params = Some(params);
+
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::Function { kind, params, ret },
+        ))
+    }
+
+    pub fn unknown_function(&mut self, kind: CallableKind, ret: key::Var) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::Function { kind, params: None, ret },
+        ))
+    }
+
+    pub fn type_resolved_function(&mut self, name: impl Into<String>) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::TypeResolvedFunction(name.into()),
+        ))
+    }
+
+    pub fn pointer(&mut self, inner: key::Var) -> key::Var {
+        self.variables.push(Variable::new(
+            self.current_source,
+            VariableInfo::Pointer(inner),
+        ))
+    }
+
+    /// Initialize function application.
+    pub fn apply(&mut self, func: key::Var) -> key::Application {
+        // Initialize a return type for the type variable if its not known.
+        let ret = match &self.variables[func].info {
+            VariableInfo::Function { ret, .. } => *ret,
+            _ => self.variables.push(Variable::new(
+                self.current_source,
+                VariableInfo::Applied { func, appl: self.applications.next_key() },
+            )),
+        };
+
+        self.applications
+            .push(inf::Application { func, parameters: EntityList::new(), ret })
+    }
+
+    /// Add the next parameter to the function application.
+    pub fn apply_next_parameter(&mut self, appl: key::Application, ty: key::Var) {
+        let appl = &mut self.applications[appl];
+        appl.parameters.push(ty, &mut self.var_pool);
+    }
+
+    pub fn assign(&mut self, src: key::Var, target: key::Var) {
+        self.assignments
+            .push(inf::Assignment { lhs: target, rhs: src });
+    }
+
+    pub fn assign_return(&mut self, expr: key::Var, expected: key::Var) {
+        self.returns_.push(inf::Return { expr, expected });
+    }
+
+    // pub fn apply_or_yield(&self, appl: key::Application) -> Result<key::Var, key::Var> {
+    //     let appl_data = &self.applications[appl];
+
+    //     match self.get_return_type_of_var(appl_data.func) {
+    //         Some(ret) => ret,
+    //         None if appl_data.parameters.is_empty() => todo!(),
+    //         None => (),
+    //     }
+    // }
+
+    /// Get the return type of a function application.
+    pub fn get_return_type(&self, appl: key::Application) -> key::Var {
+        self.applications[appl].ret
+    }
+
+    pub fn get_return_type_of_var(&self, func: key::Var) -> Option<key::Var> {
+        match &self.variables[func].info {
+            VariableInfo::Function { ret, .. } => Some(*ret),
+            VariableInfo::InferTo(var) => self.get_return_type_of_var(*var),
+            VariableInfo::Applied { func, appl } => {
+                let appl = &self.applications[*appl];
+
+                match &self.variables[*func].info {
+                    VariableInfo::Function { ret, .. } => Some(*ret),
+                    _ if appl.parameters.is_empty() => Some(appl.func),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub fn for_vars_mut<F>(&mut self, list: EntityList<key::Var>, mut f: F)
+    where
+        F: FnMut(&mut Self, key::Var),
+    {
+        let len = list.len(&self.var_pool);
+        for i in 0..len {
+            let ty = list.get(i, &self.var_pool).unwrap();
+            f(self, ty);
+        }
+    }
+
+    pub fn set_closure_to_fnptr(&mut self, var: Var) {
+        match &mut self.variables[var].info {
+            VariableInfo::Function { kind: kind @ CallableKind::Closure, .. } => {
+                *kind = CallableKind::FnPointer
+            }
+            other => panic!("cannot flip function kind for non-closure: {other:?}"),
+        }
+    }
+
+    pub fn debug_print(&self) {
+        for (var, variable) in self.variables.iter() {
+            let name = &self.debug_strings[var];
+
+            println!(
+                "{var}{} -> {variable:#?}",
+                if name.is_empty() {
+                    "".into()
+                } else {
+                    format!(" {name}")
+                }
+            );
+        }
+
+        for (i, assignment) in self.assignments.iter().enumerate() {
+            println!("assignment{i} -> {} ∈ {}", assignment.lhs, assignment.rhs);
+        }
+
+        for (appl, application) in self.applications.iter() {
+            print!("{appl} -> {}", application.func);
+
+            for p in application.parameters.as_slice(&self.var_pool) {
+                print!(" {p}");
+            }
+
+            println!(" -> {}", application.ret);
+        }
+
+        for (s, sameas) in self.same_as_unifications.iter() {
+            print!("{s} -> {:?}", sameas.main,);
+
+            for m in sameas.members.as_slice(&self.var_pool) {
+                print!(" {m}");
+            }
+
+            println!();
         }
     }
 }

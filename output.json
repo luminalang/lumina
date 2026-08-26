@@ -1,0 +1,162 @@
+{
+  "projects": [
+    {
+      "name": "current",
+      "version": "1.0",
+      "authors": [],
+      "dependencies": [
+        {
+          "name": "std",
+          "version": ""
+        }
+      ],
+      "id": 0,
+      "items": {
+        "implementations": [],
+        "funcs": [
+          {
+            "name": "main",
+            "parameters": [],
+            "ret": {
+              "Unlinked": "a"
+            }
+          },
+          {
+            "name": "method",
+            "parameters": [
+              {
+                "Unlinked": "self"
+              },
+              {
+                "Unlinked": "a"
+              }
+            ],
+            "ret": {
+              "Unlinked": "self"
+            }
+          }
+        ],
+        "types": [
+          {
+            "name": "MyTrait",
+            "generics": [],
+            "def": {
+              "Trait": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "indirect": false
+    },
+    {
+      "name": "std",
+      "version": "1.0",
+      "authors": [],
+      "dependencies": [],
+      "id": 1,
+      "items": {
+        "implementations": [
+          {
+            "trait_": [
+              1,
+              1
+            ],
+            "trait_params": [],
+            "self_": {
+              "Linked": [
+                1,
+                2,
+                []
+              ]
+            },
+            "methods": []
+          }
+        ],
+        "funcs": [
+          {
+            "name": "overloaded",
+            "parameters": [
+              {
+                "Unlinked": "i64"
+              },
+              {
+                "Linked": [
+                  1,
+                  0,
+                  []
+                ]
+              }
+            ],
+            "ret": {
+              "Linked": [
+                1,
+                0,
+                []
+              ]
+            }
+          },
+          {
+            "name": "replication",
+            "parameters": [],
+            "ret": {
+              "Linked": [
+                1,
+                0,
+                []
+              ]
+            }
+          }
+        ],
+        "types": [
+          {
+            "name": "Test",
+            "generics": [],
+            "def": {
+              "Record": []
+            }
+          },
+          {
+            "name": "Listable",
+            "generics": [],
+            "def": {
+              "Trait": []
+            }
+          },
+          {
+            "name": "OneList",
+            "generics": [],
+            "def": {
+              "Record": []
+            }
+          },
+          {
+            "name": "string",
+            "generics": [],
+            "def": {
+              "Record": []
+            }
+          }
+        ]
+      },
+      "indirect": false
+    }
+  ],
+  "project_names": [
+    [
+      {
+        "name": "current",
+        "version": "1.0"
+      },
+      0
+    ],
+    [
+      {
+        "name": "std",
+        "version": "1.0"
+      },
+      1
+    ]
+  ]
+}

@@ -1,0 +1,27 @@
+================================================================================
+impl: methods and associations
+================================================================================
+
+impl A for A
+  type a = a
+
+  fn a a as self -> self = a
+
+  fn a = a
+
+  type a = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (impl_declaration
+    (type_identifier)
+    (type_identifier)
+    (type_declaration (type_identifier) (type (identifier)))
+    (function_declaration
+      (identifier)
+      (identifier)
+      (type_signature (type (identifier)) (type (identifier)))
+      (identifier))
+    (function_declaration (identifier) (identifier))
+    (type_declaration (type_identifier) (type (identifier)))))

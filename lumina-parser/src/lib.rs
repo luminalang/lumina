@@ -39,7 +39,7 @@ pub struct Parser<'a> {
 macro_rules! select {
     ($parser:expr, $exp:literal $(,$span:ident)? $($flagk:ident: $flagv:expr)*; $($token:pat $( if $guard:expr )? => $then:expr),+ $(,)?) => {
         {
-            let settings = crate::AnyOfSettings {
+            let settings = $crate::AnyOfSettings {
                 $($flagk: $flagv,)*
                 ..Default::default()
             };
@@ -138,6 +138,7 @@ impl<'a> Parser<'a> {
             Declaration::ModuleAttribute(_, attributes)
             | Declaration::Impl(r#impl::Declaration { attributes, .. })
             | Declaration::Type(ty::Declaration { attributes, .. })
+            | Declaration::Val(val::Declaration { attributes, .. })
             | Declaration::Alias(alias::Declaration { attributes, .. })
             | Declaration::Function(func::Declaration { attributes, .. }) => {
                 attributes.extend(attribute);
@@ -190,7 +191,7 @@ impl<'a> Parser<'a> {
             T::Use => wrap(Declaration::Use, self.r#use()),
             T::Default => self.handle_default(when::Constraints::empty()),
             T::Impl => wrap(Declaration::Impl, self.r#impl(span, false, when::Constraints::empty(), vec![])),
-            T::Val => wrap(Declaration::Val, self.val()),
+            T::Val => wrap(Declaration::Val, self.val(vec![])),
             T::When => {
                 let Some(when) = self.when() else {
                     self.recover_next_toplevel();
@@ -210,7 +211,15 @@ impl<'a> Parser<'a> {
                         self.err_expected_but_got(span, "function or implementation declaration", "another declaration");
                         None
                     },
-                    None => todo!(),
+                    None => {
+                        let (got, got_span) = self.lexer.peek();
+                        self.err_expected_but_got(
+                            got_span,
+                            "function or implementation declaration",
+                            got.describe(),
+                        );
+                        None
+                    },
                 }
             },
             T::EOF => None
@@ -319,6 +328,10 @@ impl<'a> Parser<'a> {
 
     pub fn into_errors(self) -> Vec<Error> {
         self.errors
+    }
+
+    pub fn take_errors(&mut self) -> Vec<Error> {
+        std::mem::take(&mut self.errors)
     }
 }
 

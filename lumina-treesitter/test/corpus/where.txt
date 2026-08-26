@@ -1,0 +1,76 @@
+================================================================================
+where: single
+================================================================================
+
+fn a = a
+ where
+  fn a = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (identifier)
+    (where_clause
+      (function_declaration (identifier) (identifier)))))
+
+================================================================================
+where: multi
+================================================================================
+
+fn a = a
+ where
+  fn a = a
+  fn a = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (identifier)
+    (where_clause
+      (function_declaration (identifier) (identifier))
+      (function_declaration (identifier) (identifier)))))
+
+================================================================================
+where: in trait method
+================================================================================
+
+trait A
+  fn a = a
+   where
+    fn a = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_declaration
+    (type_identifier)
+    (function_declaration
+      (identifier)
+      (identifier)
+      (where_clause
+        (function_declaration (identifier) (identifier))))))
+
+================================================================================
+where: in impl method
+================================================================================
+
+impl A for A
+  fn a = a
+   where
+    fn a = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (impl_declaration
+    (type_identifier)
+    (type_identifier)
+    (function_declaration
+      (identifier)
+      (identifier)
+      (where_clause
+        (function_declaration (identifier) (identifier))))))

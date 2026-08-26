@@ -1,0 +1,65 @@
+use std:libc
+use std:list [List [Slice]]
+use std:list:vec [Vec [ptr, len]]
+
+@[platform "linux"]
+pub fn stderr as i32 = 2
+
+@[platform "linux"]
+pub fn stdout as i32 = 1
+
+@[platform "linux"]
+pub fn stdin as i32 = 0
+
+@[platform "linux"]
+when s can ToString
+pub fn eprint str as s -> () =
+  print_into (show str) stderr
+
+@[platform "linux"]
+when s can ToString
+pub fn eprintln str as s -> () =
+  print_into (str <> "\n") stderr
+
+@[platform "linux"]
+when s can ToString
+pub fn print str as s -> () =
+  print_into (show str) stdout
+
+@[platform "linux"]
+when s can ToString
+pub fn println str as s -> () =
+  print_into (str <> "\n") stdout
+
+@[platform "linux"]
+fn print_into str fd as string i32 -> () = 
+  let { ptr, len } = show str . toByteVec in
+    do libc:write fd ptr (len as int)
+     then ()
+
+@[platform "linux"]
+pub fn interupt as () = libc:raise sigint
+
+fn sigint = 2
+
+pub fn raw_print str len as string uint -> () =
+  match str.inner
+  | Slice { vec:Slice u8 | ptr, len } ->
+    do libc:write stdout ptr (len as int)
+     then ()
+  
+  | _ -> ()
+
+when s can ToString
+pub fn trace s as s -> s =
+  do print "trace: " then
+  do print s then
+  do print "\n"
+   then s
+
+@[platform ["linux-gnu", "linux-musl"]]
+pub fn crash text as string -> a =
+  do println text then
+  do libc:exit 1
+   then builtin:unreachable(self as a)
+

@@ -1,0 +1,419 @@
+================================================================================
+examples: fizz buzz implementation
+================================================================================
+
+use std:io
+
+fn main =
+  [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  . map #fizz
+  . forEach #io:println
+
+fn fizz n as int -> string =
+  if n % 15 == 0 then
+    "FizzBuz"
+  else if n % 3 == 0 then
+    "Fizz"
+  else if n % 5 == 0 then
+    "Buzz"
+  else
+    show n
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration (path (identifier) (identifier)))
+  (function_declaration
+    (identifier)
+    (list_expression
+      (integer_literal) (integer_literal) (integer_literal) (integer_literal)
+      (integer_literal) (integer_literal) (integer_literal) (integer_literal)
+      (integer_literal))
+    (pipeline_expression
+      (map_expression (map_argument (identifier)))
+      (map_expression
+        (map_argument (path (identifier) (identifier))))))
+  (function_declaration
+    (identifier)
+    (identifier)
+    (type_signature (type (identifier)) (type (identifier)))
+    (if_expression
+      (binary_expression (identifier) (integer_literal))
+      (string_literal)
+      (if_expression
+        (binary_expression (identifier) (integer_literal))
+        (string_literal)
+        (if_expression
+          (binary_expression (identifier) (integer_literal))
+          (string_literal)
+          (call_expression (identifier) (identifier)))))))
+
+================================================================================
+examples: lists
+================================================================================
+
+use std:io
+use std:list
+
+fn main =
+  [1, 2, 3, 4, ..[5, 6, 7, 8, 9]] 
+  . map #(* 2)
+  . sum
+  . io:println
+
+fn digits as [int] = list:from_range (0, 10) #(\i -> i as int)
+
+fn my_map f list as (fn a -> b) [a] -> [b] =
+  match list
+  | [x, ..xs] -> [f x, ..my_map #f xs]
+  | [] -> []
+
+pub fn my_fold f acc list as (fn b a -> b) b [a] -> b =
+  match list
+  | [x, ..xs] -> my_fold #f (f acc x) xs
+  | [] -> acc
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration (path (identifier) (identifier)))
+  (use_declaration (path (identifier) (identifier)))
+  (function_declaration
+    (identifier)
+    (list_expression
+      (integer_literal) (integer_literal) (integer_literal) (integer_literal)
+      (spread_expression
+        (list_expression
+          (integer_literal) (integer_literal) (integer_literal) (integer_literal)
+          (integer_literal))))
+    (pipeline_expression
+      (map_expression (map_argument (operator_expression (operator) (integer_literal))))
+      (identifier)
+      (call_expression (path (identifier) (identifier)))))
+  (function_declaration
+    (identifier)
+    (type_signature
+      (list_type (type_identifier))
+      (type (identifier)))
+    (call_expression
+      (path (identifier) (identifier))
+      (tuple_expression (integer_literal) (integer_literal))
+      (map_argument
+        (lambda_expression
+          (identifier)
+          (type_signature (type (identifier)))
+          (identifier))))
+  (function_declaration
+    (identifier)
+    (identifier)
+    (identifier)
+    (type_signature
+      (function_type (type (identifier)) (type (identifier)) (type (identifier)))
+      (type (identifier))
+      (list_type (type (identifier)))
+      (list_type (type (identifier)))
+      (type (identifier)))
+    (match_expression
+      (identifier)
+      (match_arm
+        (list_pattern (identifier) (spread_pattern (identifier)))
+        (list_expression
+          (call_expression (identifier) (identifier))
+          (spread_expression (call_expression (identifier) (map_argument (identifier)) (identifier)))))
+      (match_arm (list_pattern) (list_expression))))
+  (function_declaration
+    (visibility)
+    (identifier)
+    (identifier)
+    (identifier)
+    (type_signature
+      (function_type (type (identifier)) (type (identifier)) (type (identifier)))
+      (type (identifier))
+      (list_type (type (identifier)))
+      (type (identifier)))
+    (match_expression
+      (identifier)
+      (match_arm
+        (list_pattern (identifier) (spread_pattern (identifier)))
+        (call_expression
+          (identifier)
+          (map_argument (identifier))
+          (call_expression (identifier) (identifier))
+          (identifier)))
+      (match_arm (list_pattern) (identifier)))))
+
+================================================================================
+examples: operators
+================================================================================
+
+use std:io
+
+fn main = io:println (10 - 1 * 2 / (4 + 1) - 2 +++ 5)
+
+fn +++ x y as int int -> int = x + y + y
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration (path (identifier) (identifier)))
+  (function_declaration
+    (identifier)
+    (call_expression
+      (path (identifier) (identifier))
+      (binary_expression
+        (binary_expression
+          (binary_expression
+            (binary_expression (integer_literal) (integer_literal))
+            (integer_literal))
+          (integer_literal))
+        (binary_expression
+          (binary_expression (integer_literal) (integer_literal))
+          (integer_literal))))
+  (function_declaration
+    (operator)
+    (identifier)
+    (identifier)
+    (type_signature (type (identifier)) (type (identifier)) (type (identifier)))
+    (binary_expression
+      (binary_expression (identifier) (identifier))
+      (identifier))))
+
+================================================================================
+examples: attributes with extern FFI imports
+================================================================================
+
+@[extern "exit", platform ["linux-gnu", "linux-musl"]]
+fn libc_exit as i32 -> ()
+
+fn main =
+  let outer = returns in
+  let n = takes outer in
+    if n == 100
+      then libc_exit 0
+      else libc_exit n
+
+@[repr "C"]
+type Inner {
+  a u32
+  b u8
+  c u64
+  d u16
+}
+
+@[repr "C"]
+type Outer {
+  a u16
+  b Inner
+  c u8
+}
+
+@[extern "takes"]
+fn takes as Outer -> i32
+
+@[extern "returns"]
+fn returns as Outer
+
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (attribute (identifier) (string_literal) (attribute_argument (identifier) (list_expression (string_literal) (string_literal))))
+  (function_declaration
+    (identifier)
+    (type_signature (type (identifier)) (unit_type)))
+  (function_declaration
+    (identifier)
+    (let_expression
+      (identifier)
+      (call_expression (identifier))
+      (let_expression
+        (identifier)
+        (call_expression (identifier) (identifier))
+        (if_expression
+          (binary_expression (identifier) (integer_literal))
+          (call_expression (identifier) (integer_literal))
+          (call_expression (identifier) (identifier))))))
+  (attribute (identifier) (string_literal))
+  (type_declaration
+    (type_identifier)
+    (record_type
+      (field_declaration (identifier) (type (identifier)))
+      (field_declaration (identifier) (type (identifier)))
+      (field_declaration (identifier) (type (identifier)))
+      (field_declaration (identifier) (type (identifier)))))
+  (attribute (identifier) (string_literal))
+  (type_declaration
+    (type_identifier)
+    (record_type
+      (field_declaration (identifier) (type (identifier)))
+      (field_declaration (identifier) (type_identifier))
+      (field_declaration (identifier) (type (identifier)))))
+  (attribute (identifier) (string_literal))
+  (function_declaration
+    (identifier)
+    (type_signature (type_identifier) (type (identifier))))
+  (attribute (identifier) (string_literal))
+  (function_declaration
+    (identifier)
+    (type_signature (type_identifier) (type (identifier)))))
+
+================================================================================
+examples: lots of records stuff
+================================================================================
+
+use std:io
+
+fn main = simple_example
+
+// Simple Example
+type User {
+  name string
+  age int
+}
+
+fn simple_example =
+  let jonas = { User | name = "Jonas", age = 15 } in
+  let older_jonas = { jonas ~ age@n = n + 10 }
+   in io:println (can_drive jonas, can_drive older_jonas)
+
+ where
+  fn can_drive { age } as User -> bool = age >= 18
+
+// Complex Example
+type Pair a {
+  x a
+  y a
+}
+
+fn modify_deeply_nested pair as Pair (Pair (Pair u8)) -> (Pair (Pair (Pair u8))) =
+  { pair ~ x.x.x@n = n + 1, y.x.x@n = n + 2 }
+
+fn complex_example =
+  let inner = { Pair u8 | x = 3, y = 4 } in
+  let middle = { Pair (Pair u8) | x = inner, y = inner } in
+  let outer = { Pair (Pair (Pair u8)) | x = middle, y = middle } in
+    (modify_deeply_nested outer).x.x.x
+    . io:println
+
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration (path (identifier) (identifier)))
+  (function_declaration (identifier) (identifier))
+  (type_declaration
+    (type_identifier)
+    (record_type
+      (field_declaration (identifier) (type (identifier)))
+      (field_declaration (identifier) (type (identifier)))))
+  (function_declaration
+    (identifier)
+    (let_expression
+      (identifier)
+      (record_expression
+        (type_identifier)
+        (record_field (identifier) (string_literal))
+        (record_field (identifier) (integer_literal)))
+      (let_expression
+        (identifier)
+        (record_update
+          (identifier)
+          (update_field
+            (identifier)
+            (identifier)
+            (binary_expression (identifier) (integer_literal))))
+        (call_expression
+          (path (identifier) (identifier))
+          (tuple_expression
+            (call_expression (identifier) (identifier))
+            (call_expression (identifier) (identifier)))))))
+  (where_clause
+    (function_declaration
+      (identifier)
+      (record_pattern (field_pattern (identifier)))
+      (type_signature (type_identifier) (type (identifier)))
+      (binary_expression (identifier) (integer_literal))))
+  (type_declaration
+    (type_identifier)
+    (type_parameter (identifier))
+    (record_type
+      (field_declaration (identifier) (type (identifier)))
+      (field_declaration (identifier) (type (identifier)))))
+  (function_declaration
+    (identifier)
+    (identifier)
+    (type_signature
+      (type_application (type_identifier) (type_application (type_identifier) (type_application (type_identifier) (type (identifier)))))
+      (type_application (type_identifier) (type_application (type_identifier) (type_application (type_identifier) (type (identifier))))))
+    (record_update
+      (identifier)
+      (update_field
+        (path (identifier) (identifier) (identifier))
+        (identifier)
+        (binary_expression (identifier) (integer_literal)))
+      (update_field
+        (path (identifier) (identifier) (identifier))
+        (identifier)
+        (binary_expression (identifier) (integer_literal)))))
+  (function_declaration
+    (identifier)
+    (let_expression
+      (identifier)
+      (record_expression
+        (type_application (type_identifier) (type (identifier)))
+        (record_field (identifier) (integer_literal))
+        (record_field (identifier) (integer_literal)))
+      (let_expression
+        (identifier)
+        (record_expression
+          (type_application (type_identifier) (type_application (type_identifier) (type (identifier))))
+          (record_field (identifier) (identifier))
+          (record_field (identifier) (identifier)))
+        (let_expression
+          (identifier)
+          (record_expression
+            (type_application (type_identifier) (type_application (type_identifier) (type_application (type_identifier) (type (identifier)))))
+            (record_field (identifier) (identifier))
+            (record_field (identifier) (identifier)))
+          (pipeline_expression
+            (field_expression
+              (field_expression
+                (field_expression (call_expression (identifier) (identifier)) (identifier))
+                (identifier))
+              (identifier))
+            (call_expression (path (identifier) (identifier))))))))
+
+================================================================================
+examples: tuples
+================================================================================
+
+use std:io
+
+fn main =
+  let user = ("Jonas", 25)
+   in print_user user
+
+fn print_user (name, age) as (string, int) -> () =
+  io:println (name <> " " <> show age)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (use_declaration (path (identifier) (identifier)))
+  (function_declaration
+    (identifier)
+    (let_expression
+      (identifier)
+      (tuple_expression (string_literal) (integer_literal))
+      (call_expression (identifier) (identifier))))
+  (function_declaration
+    (identifier)
+    (tuple_pattern (identifier) (identifier))
+    (type_signature
+      (tuple_type (type (identifier)) (type (identifier)))
+      (unit_type))
+    (call_expression
+      (path (identifier) (identifier))
+      (binary_expression
+        (binary_expression (identifier) (string_literal))
+        (call_expression (identifier) (identifier))))))

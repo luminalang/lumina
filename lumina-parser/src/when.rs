@@ -12,6 +12,10 @@ impl<'a> Constraints<'a> {
     pub fn empty() -> Self {
         Self { generics: vec![] }
     }
+
+    pub fn names(&self) -> impl Iterator<Item = &'a str> + '_ {
+        self.generics.iter().map(|(_, name, _)| *name)
+    }
 }
 
 impl<'a> Parser<'a> {

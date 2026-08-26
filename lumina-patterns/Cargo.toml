@@ -1,0 +1,15 @@
+[package]
+name = "lumina-patterns"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lumina-util = { path = "../lumina-util" }
+lumina-key = { path = "../lumina-key" }
+lumina-typesystem = { path = "../lumina-typesystem" }
+tracing = "0.1.41"
+derive-new = "0.7.0"
+
+[dev.dependencies]
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-tree = "0.4.0"

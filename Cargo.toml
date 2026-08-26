@@ -6,8 +6,11 @@ members = [
     "lumina-key",
     "lumina-compiler",
     "lumina-typesystem",
-    "lumina-collections", "lumina-tokentree"
-]
+    "lumina-treesitter",
+    # "lumina-typesystem-repl",
+    # "lumina-collections",
+    "lumina-tokentree"
+, "lumina-patterns"]
 exclude = [
   # Compiled separately with different flags as a staticlib
   "lumina-gc"

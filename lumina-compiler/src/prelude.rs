@@ -1,11 +1,11 @@
 #![allow(unused)]
 
-pub use cranelift::codegen::entity::{PrimaryMap, SecondaryMap};
 pub use derive_new::new;
 pub use itertools::Itertools;
+use lumina_key::{PrimaryMap, SecondaryMap};
 // pub use lumina_key as key;
 pub use super::key;
-pub use lumina_key::{MMap, Map, M};
+pub use lumina_key::Map;
 pub use lumina_util::{Span, Spanned, Tr};
 pub use std::collections::HashMap;
 pub use tracing::{error, info, trace, warn};

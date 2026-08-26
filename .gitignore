@@ -1,0 +1,6 @@
+target
+luminapath/ext/lumina-generator
+*-before-*
+*.before.*
+lumina-compiler-temp
+src.old

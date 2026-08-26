@@ -7,8 +7,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-owo-colors = { version = "4.0.*", features = ["supports-colors"] }
-itertools = "0.10.*" 
+owo-colors = { version = "4.2.3", features = ["supports-colors"] }
+itertools = "0.14.0" 
 tinyvec = { version = "1.8.0", features = ["alloc"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-tree = "0.4.0"

@@ -128,7 +128,7 @@ pub enum TokenKind {
     Skip,
 
     Error,
-    EOF,
+    Eof,
 }
 
 impl TokenKind {
@@ -174,7 +174,7 @@ impl TokenKind {
             T::Path => "identifier",
             T::Skip => "...",
             T::Error => "unknown token",
-            T::EOF => "end of file",
+            T::Eof => "end of file",
         }
     }
 }
@@ -251,7 +251,7 @@ impl<'src> Lexer<'src> {
     pub fn next(&mut self) -> Token {
         match self.peeked {
             None => self.generate(),
-            Some(_) => std::mem::replace(&mut self.peeked, None).unwrap(),
+            Some(_) => self.peeked.take().unwrap(),
         }
     }
 
@@ -268,8 +268,8 @@ impl<'src> Lexer<'src> {
 
     fn eof(&self) -> Token {
         Token::n(
-            TokenKind::EOF,
-            Span::new(self.source().len().checked_sub(1).unwrap_or(0) as u32, 1),
+            TokenKind::Eof,
+            Span::new(self.source().len().saturating_sub(1) as u32, 1),
         )
     }
 }
@@ -281,51 +281,51 @@ mod tests {
 
     macro_rules! cmp {
         ($src:literal => $exp:expr) => {
-            cmp! { $src => $exp, TokenKind::EOF };
+            cmp! { $src => $exp, TokenKind::Eof };
         };
         ($src:literal => $($exp:expr),+) => {
             let mut lexer = Lexer::new($src, false);
             let iter = std::iter::from_fn(|| {
                 let t = lexer.next();
-                if t.kind == TokenKind::EOF {
+                if t.kind == TokenKind::Eof {
                     None
                 } else {
                     Some(t.kind)
                 }
             });
             let mut tokens = iter.collect::<Vec<_>>();
-            tokens.push(T::EOF);
+            tokens.push(T::Eof);
             assert_eq!(tokens, [$($exp),+], "\n representation: {:?}", tokens);
         };
     }
 
     #[test]
     fn str_escapes() {
-        cmp! { r#""hello" a"# => T::StringLiteral, T::Path, T::EOF };
-        cmp! { r#""hello\\" a"# => T::StringLiteral, T::Path, T::EOF };
-        cmp! { r#""hello\\\"" a"# => T::StringLiteral, T::Path, T::EOF };
+        cmp! { r#""hello" a"# => T::StringLiteral, T::Path, T::Eof };
+        cmp! { r#""hello\\" a"# => T::StringLiteral, T::Path, T::Eof };
+        cmp! { r#""hello\\\"" a"# => T::StringLiteral, T::Path, T::Eof };
     }
 
     #[test]
     fn regexes() {
         cmp! { "username" => T::Path };
         cmp! { "std:io:puts" => T::Path };
-        cmp! { "user.position.point.x" => T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::EOF };
-        cmp! { "std:io:stdin.handle" => T::Path, T::Symbol, T::Path, T::EOF };
-        cmp! { "std:io:stdin.handle.socket" => T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::EOF };
+        cmp! { "user.position.point.x" => T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Eof };
+        cmp! { "std:io:stdin.handle" => T::Path, T::Symbol, T::Path, T::Eof };
+        cmp! { "std:io:stdin.handle.socket" => T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Eof };
         cmp! { "\"awefwafef ewa\n fewafewa\"" => T::StringLiteral };
         cmp! { "\\!+/*&%@$?^~<>=|-" => T::Symbol };
-        cmp! { "// test\n0" => T::Int, T::EOF };
-        cmp! { "/// test\n0" => T::Int, T::EOF };
-        cmp! { "0.0 12.34 10" => T::Float, T::Float, T::Int, T::EOF };
-        cmp! { "(fn fn" => T::OpenParen, T::Fn, T::Fn, T::EOF };
-        cmp! { "#0 #(f 1)" => T::Symbol, T::Int, T::Symbol, T::OpenParen, T::Path, T::Int, T::CloseParen, T::EOF };
+        cmp! { "// test\n0" => T::Int, T::Eof };
+        cmp! { "/// test\n0" => T::Int, T::Eof };
+        cmp! { "0.0 12.34 10" => T::Float, T::Float, T::Int, T::Eof };
+        cmp! { "(fn fn" => T::OpenParen, T::Fn, T::Fn, T::Eof };
+        cmp! { "#0 #(f 1)" => T::Symbol, T::Int, T::Symbol, T::OpenParen, T::Path, T::Int, T::CloseParen, T::Eof };
         cmp! { "_" => T::Path };
     }
 
     #[test]
     fn record() {
-        cmp! { "{ f 0 | a.b.c @ c = c, b = 0 }" => T::OpenCurly, T::Path, T::Int, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Equal, T::Path, T::Comma, T::Path, T::Equal, T::Int, T::CloseCurly, T::EOF };
-        cmp! { "{ Point int . x }" => T::OpenCurly, T::Path, T::Path, T::Symbol, T::Path ,T::CloseCurly, T::EOF };
+        cmp! { "{ f 0 | a.b.c @ c = c, b = 0 }" => T::OpenCurly, T::Path, T::Int, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Symbol, T::Path, T::Equal, T::Path, T::Comma, T::Path, T::Equal, T::Int, T::CloseCurly, T::Eof };
+        cmp! { "{ Point int . x }" => T::OpenCurly, T::Path, T::Path, T::Symbol, T::Path ,T::CloseCurly, T::Eof };
     }
 }

@@ -16,7 +16,7 @@ pub enum IdentifierError {
 }
 
 impl<'src> Identifier<'src> {
-    pub fn identifier(s: &'src str) -> Self {
+    pub fn new(s: &'src str) -> Self {
         let location = Identifier::parse(s).unwrap();
         assert_eq!(location.segments.len(), 1);
         location
@@ -44,7 +44,7 @@ impl<'src> Identifier<'src> {
 
         s.split(':')
             .map(|segment| {
-                if segment == "" {
+                if segment.is_empty() {
                     return Err(IdentifierError::DoubleColon { at: offset as u16 });
                 }
 
@@ -68,7 +68,7 @@ impl<'src> Identifier<'src> {
     /// Returns Some if path only contains a single segment
     pub fn as_name(&self) -> Option<&'src str> {
         if self.is_name() {
-            Some(&self.segments[0])
+            Some(self.segments[0])
         } else {
             None
         }
@@ -171,7 +171,7 @@ mod tests {
             Identifier { segments: tiny_vec!["project", "utilities", "span"] }
         );
 
-        identifier += &Identifier::identifier("spanned");
+        identifier += &Identifier::new("spanned");
 
         let path = identifier.to_filepath(|_| PathBuf::new(), "lm");
         assert_eq!(&path, FilePath::new("utilities/span/spanned.lm"));

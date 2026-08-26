@@ -1,84 +1,59 @@
-use lumina_collections::{kind_key, map_key_impl};
-pub use lumina_collections::{MMap, Map};
-pub use lumina_collections::{Module, M};
+//! Key types that are used by in multiple lumina crates
+//!
+//! Some helper methods for cranelift-entity
 
-kind_key! {
-    pub enum TypeKind {
-        Record(Record),
-        Sum(Sum),
-        Trait(Trait),
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Record(pub u32);
-map_key_impl!(Record(u32), "record");
+pub use cranelift_entity::PrimaryMap as Map;
+pub use cranelift_entity::{
+    entity_impl, packed_option::PackedOption, packed_option::ReservedValue, EntityList, EntityRef,
+    EntitySet, ListPool, PrimaryMap, SecondaryMap,
+};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Sum(pub u32);
-map_key_impl!(Sum(u32), "sum");
+pub struct Field(pub u32);
+entity_impl!(Field, "field");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Lambda(pub u32);
+entity_impl!(Lambda, "λ");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Generic(pub u32);
+entity_impl!(Generic, "·");
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Variant(pub u32);
+entity_impl!(Variant, "variant");
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AssociatedType(pub u32);
-map_key_impl!(AssociatedType(u32), "assoc");
+entity_impl!(AssociatedType, "assoc");
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Func(u32);
-map_key_impl!(Func(u32), "func");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Impl(u32);
-map_key_impl!(Impl(u32), "impl");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Param(pub u32);
-map_key_impl!(Param(u32), "param");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Val(u32);
-map_key_impl!(Val(u32), "val");
-
-/// A Sum variant
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Variant(pub u32);
-map_key_impl!(Variant(u32), "variant");
-
-/// A Record field
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Field(pub u32);
-map_key_impl!(Field(u32), "field");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ReadOnly(u32);
-map_key_impl!(ReadOnly(u32), "ro");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Bind(pub u32);
-map_key_impl!(Bind(u32), "b");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Capture(u32);
-map_key_impl!(Capture(u32), "c");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct DecisionTreeTail(pub u32);
-map_key_impl!(DecisionTreeTail(u32), "tail");
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct Method(pub u32);
-map_key_impl!(Method(u32), "method");
+entity_impl!(Method, "method");
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Trait(u32);
-map_key_impl!(Trait(u32), "trait");
+pub fn findv<K: EntityRef, V, F>(map: &PrimaryMap<K, V>, mut f: F) -> Option<(K, &V)>
+where
+    F: FnMut(&V) -> bool,
+{
+    map.iter().find_map(|(k, v)| f(v).then_some((k, v)))
+}
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Generic(pub u32);
-map_key_impl!(Generic(u32), |this, f| ((this.0 as u8 + b'a') as char)
-    .fmt(f));
+/// Iterate over an `EntityList` while re-borrowing the `ListPool` on `next`
+pub struct EntityIter<T: EntityRef + ReservedValue> {
+    i: usize,
+    entities: EntityList<T>,
+}
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Lambda(pub u32);
-map_key_impl!(Lambda(u32), |this, f| write!(f, "λ·{}", this.0));
+impl<T: EntityRef + ReservedValue> EntityIter<T> {
+    pub fn from(entities: EntityList<T>) -> Self {
+        Self { i: 0, entities }
+    }
 
-pub const PRELUDE: Module = Module(0);
+    pub fn next(&mut self, pool: &ListPool<T>) -> Option<T> {
+        let v = self.entities.get(self.i, pool);
+        self.i += 1;
+        v
+    }
+}

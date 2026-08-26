@@ -7,20 +7,21 @@ pub struct Declaration<'a> {
     pub span: Span,
     pub name: &'a str,
     pub type_: Option<Tr<Type<'a>>>,
+    pub attributes: Vec<Tr<Expr<'a>>>,
     pub value: Tr<Expr<'a>>,
     pub public: bool,
 }
 
 impl<'a> Parser<'a> {
-    pub fn val(&mut self) -> Option<Declaration<'a>> {
+    pub fn val(&mut self, attributes: Vec<Tr<Expr<'a>>>) -> Option<Declaration<'a>> {
         let name = self.expect_name("value declaration")?;
 
         select! { self, "a value or type annotation";
-            T::Equal => self.finalize_val(name, None),
+            T::Equal => self.finalize_val(name, None, attributes),
             T::As    => {
                 let type_ = self.type_with_params()?;
                 self.expect(T::Equal)
-                    .and_then(|_| self.finalize_val(name, Some(type_)))
+                    .and_then(|_| self.finalize_val(name, Some(type_), attributes))
             }
         }
     }
@@ -29,10 +30,12 @@ impl<'a> Parser<'a> {
         &mut self,
         name: Tr<&'a str>,
         type_: Option<Tr<Type<'a>>>,
+        attributes: Vec<Tr<Expr<'a>>>,
     ) -> Option<Declaration<'a>> {
         self.expr().map(|value| Declaration {
             name: *name,
             type_,
+            attributes,
             span: name.span.extend(value.span),
             value,
             public: false,

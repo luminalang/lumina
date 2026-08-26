@@ -1,0 +1,197 @@
+use super::{nodes, record, Bind, ENode, FuncNodeLower, Identifier, Lambda, PNode, Parameter, Tr};
+use crate::{symbols, InterResolved};
+use lumina_parser as parser;
+use lumina_typesystem::Var;
+use lumina_util::Spanned;
+use parser::Literal;
+
+// Various constructs are desugared into `match`.
+//
+// But for error messages it may be useful to know what created the `match`.
+#[derive(Debug, Clone)]
+pub enum MatchKind {
+    Parameter(Parameter),
+    User,
+    Let,
+    Do,
+    If,
+}
+
+#[derive(Debug, Clone)]
+pub enum Expr<'s> {
+    Literal(Literal<'s>),
+    Bind(Bind),
+    Parameter(Parameter),
+    Lambda(Lambda),
+    // External(External),
+    // Unresolved(parser::AnnotatedPath<'s>),
+    FieldName(ENode<'s>, Tr<&'s str>),
+    FieldIndice(ENode<'s>, usize),
+
+    // LocalItem(Bind, Vec<ENode<'s>>),
+    // TupleAccess(Box<ENode<'s>>, Tr<usize>),
+
+    // We can lift this
+    // Lambda(Vec<ENode<'s>>, Vec<ENode<'s>>, Box<ENode<'s>>),
+    Match(MatchKind, ENode<'s>, Vec<(PNode<'s>, ENode<'s>)>),
+    As(ENode<'s>, Var),
+    List(Vec<ENode<'s>>),
+    Tuple(Vec<ENode<'s>>),
+    Record {
+        init: Option<ENode<'s>>,
+        fields: Vec<(String, ENode<'s>)>,
+    },
+
+    Apply(ENode<'s>, Vec<ENode<'s>>),
+
+    // DotPipe([ENode<'s>; 2]),
+    Operators {
+        init: Box<ENode<'s>>,
+        ops: Vec<(Tr<&'s str>, ENode<'s>)>,
+    },
+    Poison,
+}
+
+impl<'a, 's> FuncNodeLower<'a, 's> {
+    pub fn expr(&mut self, expr: Tr<&parser::Expr<'s>>) -> ENode<'s> {
+        // TODO: and then we could also collect like a `id::AnyNode -> Type` mapping somewhere
+        // which is later used during type checking?
+
+        match expr.value {
+            parser::Expr::Lit(lit) => {
+                todo!();
+                // let lit = nodes::Literal::from(lit);
+
+                // let node = self.ctx.add_node(|_, _| (lit, []));
+                // self.ctx.add_output(node).downcast()
+            }
+            parser::Expr::Call(apath, params) => {
+                let path = apath.path.as_slice();
+
+                if let [name] = path {
+                    if let Some(called) = self.resolve_local(name) {
+                        let f = Expr::Bind(called);
+                        self.apply(f, params);
+                    }
+
+                    if let Some(called) = self.resolve_where_bind(name) {
+                        let f = Expr::Lambda(called);
+                        self.apply(f, params);
+                    }
+                }
+
+                match self.find(symbols::Namespace::Functions, path) {
+                    InterResolved::Item(symbols::WithOrigin {
+                        key: symbols::Item::Func(func),
+                        origin,
+                    }) => match origin {
+                        symbols::Origin::Intra { .. } => {
+                            todo!();
+                        }
+                        symbols::Origin::ReExport(external) => {
+                            todo!();
+                        }
+                    },
+                    InterResolved::Item(_) => panic!("ET:"),
+                    InterResolved::Module(module) => todo!(),
+                    InterResolved::Poison => self.poison_node(expr.span, Expr::Poison),
+                    InterResolved::NotFound { in_, at } => todo!(),
+                }
+                // ENode::new(apath.span, Expr::Unresolved((**apath).clone()))
+                // let arg = self.add_func_ext(apath.path.clone());
+                // self.apply(arg, params).downcast()
+            }
+            parser::Expr::Group(inner) => self.expr((&**inner).tr(expr.span)),
+            parser::Expr::DotPipe(_) => todo!(),
+            parser::Expr::FieldAccess(src, field_name) => {
+                let src = self.expr((**src).as_ref());
+                todo!();
+            }
+            parser::Expr::TupleAccess(src, i) => {
+                let src = self.expr((**src).as_ref());
+                todo!();
+            }
+            parser::Expr::Lambda(patterns, params, expr) => {
+                let lambda = self.lambda(patterns, (**expr).as_ref());
+                todo!("pretty sure we need to add the capture record to the params");
+                // self.apply(lambda, params).downcast()
+            }
+            parser::Expr::CallExpr(f, params) => {
+                let f = self.expr((**f).as_ref());
+                todo!();
+                // self.apply(f, params).downcast()
+            }
+            parser::Expr::Operators { init, ops } => todo!(),
+            parser::Expr::Match(tr, items) => {
+                todo!();
+            }
+            parser::Expr::CastAs(tr, tr1) => todo!(),
+            parser::Expr::List(trs, list_length) => todo!(),
+            parser::Expr::Tuple(trs) => todo!(),
+            parser::Expr::Record { init, fields } => self.record(init, fields),
+            parser::Expr::If(_) => todo!(),
+            parser::Expr::Do(_) => todo!(),
+            parser::Expr::Let(tr, _) => todo!(),
+            parser::Expr::Pass(tr) => todo!(),
+            parser::Expr::PassFptr(annotated_path) => todo!(),
+            parser::Expr::Poison => todo!(),
+        }
+    }
+
+    fn record(
+        &mut self,
+        init: &parser::CurlyInit<'s>,
+        fields: &[parser::Field<'s, parser::Expr<'s>>],
+    ) -> ENode<'s> {
+        // TODO: Do we lower types? Probably right.
+        //
+        // So; we should do that first so we know how it'll work.
+
+        // let fields = record::from_parsed(fields);
+
+        // let record = self.ctx.add_expr_record_node();
+
+        todo!("we can reuse the field expansion");
+        // match init {
+        //     parser::CurlyInit::Construct(type_) => {
+        //         self.type_ascriptions[record.node.id].push((**type_).clone());
+        //     }
+        //     parser::CurlyInit::Modify(tr) => todo!(),
+        //     parser::CurlyInit::None => {}
+        // }
+
+        // self.fields(record, fields);
+
+        // record.downcast()
+    }
+
+    fn fields<'e>(
+        &mut self,
+        of: ENode<'s>,
+        fields: Vec<record::Field<'s, Tr<&'e parser::Expr<'s>>>>,
+    ) {
+        for field in fields {
+            todo!();
+            // let input = self.ctx.add_expr_record_field(of.node, field.name);
+            // let output = self.field(field);
+            // self.ctx.connect(output, input)
+        }
+    }
+
+    fn field<'e>(&mut self, field: record::Field<'s, Tr<&'e parser::Expr<'s>>>) -> ENode<'s> {
+        match field.value {
+            record::FieldValue::Record(fields) => {
+                todo!();
+                // let record = self.ctx.add_expr_record_node();
+                // self.fields(record, fields);
+                // record.downcast().into()
+            }
+            record::FieldValue::Tail(expr) => self.expr(expr).into(),
+            record::FieldValue::Punned => todo!(),
+            // record::FieldValue::Punned => match self.resolve(*field.name) {
+            //     Some(origin) => todo!(),
+            //     None => panic!("ET: not found"),
+            // },
+        }
+    }
+}

@@ -18,7 +18,6 @@ pub enum Error {
     InvalidTraitMember(Span),
     InvalidNestedMatch { previous: Span, new: Span },
     ConflictingBars(IndentConflict),
-    MissingReturnType(Span),
     NestedWhere { previous: Span, kw: Span },
 }
 

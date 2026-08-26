@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use mmtk::vm::VMBinding;
-use mmtk::{Mutator, MMTK};
+use mmtk::MMTK;
 
 pub mod active_plan;
 pub mod api;

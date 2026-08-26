@@ -1,0 +1,991 @@
+use super::{Bind, TypeSig};
+use crate::{
+    ast, errors,
+    hir::LoweringFunc,
+    key,
+    project::{
+        symbols::{self, Namespace, WithOrigin},
+        FuncSig, TypeDef,
+    },
+    Context, InterResolved, TranslationUnit,
+};
+use itertools::Itertools;
+use lumina_parser::{self as parser};
+// use lumina_typesystem_new as ts;
+use lumina_key::{EntityList, Map, SecondaryMap};
+use lumina_typesystem::{
+    self as ts, Annotation, Application, ArrayLen, ForallEnv, GenericData, GenericTag, IntSize,
+    KnownType, KnownTypeFormatter, Prim, ResolverError, TaggedGeneric, Var,
+};
+use lumina_util::{Identifier, Span, Spanned, Tr};
+use owo_colors::OwoColorize;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
+use tracing::error;
+use tracing::trace;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TypeKey {
+    pub module: symbols::Module,
+    pub key: key::Type,
+}
+pub type Type = KnownType<TypeKey>;
+pub type Env = lumina_typesystem::Environment<TypeKey>;
+
+impl fmt::Display for TypeKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}·{}", self.module, self.key)
+    }
+}
+
+pub struct TypeContext<Env> {
+    pub fenv: ForallEnv<TypeKey>,
+    pub scope: GenericTag,
+    pub generic_names: HashMap<GenericTag, Map<key::Generic, String>>,
+    declare_generics: bool,
+    default_int_size: IntSize,
+    pub project: key::Project,
+    pub file: key::File,
+    pub env: Env,
+    pub ctx: Context<TranslationUnit>,
+}
+
+pub struct StaticEnv {
+    pub self_: Option<Type>,
+}
+
+pub struct InferenceEnv {
+    env: Env,
+    pub spans: SecondaryMap<Var, Span>,
+}
+
+impl InferenceEnv {
+    pub fn new() -> Self {
+        Self {
+            env: Env::new(),
+            spans: SecondaryMap::with_default(Span::null()),
+        }
+    }
+}
+
+impl<Env> TypeContext<Env> {
+    pub fn new(
+        ctx: Context<TranslationUnit>,
+        project: key::Project,
+        file: key::File,
+        env: Env,
+        tag: GenericTag,
+    ) -> Self {
+        Self {
+            project,
+            file,
+            ctx,
+            fenv: ForallEnv::new(),
+            scope: tag,
+            generic_names: HashMap::new(),
+            declare_generics: false,
+            default_int_size: IntSize::new(true, 64),
+            env,
+        }
+    }
+
+    pub fn cast<NEnv>(self, env: NEnv) -> (Env, TypeContext<NEnv>) {
+        (
+            self.env,
+            TypeContext {
+                ctx: self.ctx.clone(),
+                file: self.file,
+                project: self.project,
+                fenv: self.fenv,
+                scope: self.scope,
+                generic_names: self.generic_names,
+                declare_generics: self.declare_generics,
+                default_int_size: self.default_int_size,
+                env,
+            },
+        )
+    }
+
+    pub fn add_scope(&mut self, tag: GenericTag) {
+        self.generic_names.entry(tag).or_default();
+        self.fenv.entry(tag).or_default();
+    }
+
+    pub fn lambda(&self) -> Option<key::Lambda> {
+        match self.scope {
+            GenericTag::Lambda(lambda) => Some(lambda),
+            GenericTag::Trait | GenericTag::Impl | GenericTag::Type_ | GenericTag::Func => None,
+        }
+    }
+
+    pub fn declare_generic<'s>(&mut self, name: &str) -> TaggedGeneric {
+        let tag = ts::declare(&mut self.fenv, self.scope);
+        assert_eq!(
+            tag.key,
+            self.generic_names
+                .get_mut(&self.scope)
+                .unwrap()
+                .push(name.to_string())
+        );
+        tag
+    }
+
+    pub fn declare_forall_from_constraints<'s>(
+        &mut self,
+        tag: GenericTag,
+        cons: &parser::when::Constraints<'s>,
+    ) {
+        self.declare_forall(tag, cons.generics.iter().map(|(_, name, _)| *name))
+    }
+
+    pub fn declare_forall<'s, I>(&mut self, tag: GenericTag, cons: I)
+    where
+        I: Iterator<Item = &'s str>,
+    {
+        let previous = std::mem::replace(&mut self.scope, tag);
+        for name in cons {
+            self.declare_generic(name);
+        }
+        self.scope = previous;
+    }
+
+    fn try_generic<'s>(&mut self, name: &'s str) -> Option<TaggedGeneric> {
+        if let GenericTag::Lambda(lambda) = self.scope {
+            if let Some((key, _)) = self.generic_names[&self.scope]
+                .iter()
+                .find(|(_, n)| n.as_str() == *n)
+            {
+                return Some(TaggedGeneric::new(GenericTag::Lambda(lambda), key));
+            }
+        }
+
+        [GenericTag::Func, GenericTag::Type_, GenericTag::Impl]
+            .iter()
+            .find_map(|scope| {
+                self.generic_names.get(scope).and_then(|generics| {
+                    generics.iter().find_map(|(tag, n)| {
+                        (n.as_str() == name).then(|| TaggedGeneric::new(*scope, tag))
+                    })
+                })
+            })
+    }
+
+    fn try_prim(&mut self, name: &str) -> Option<Prim> {
+        match name {
+            "bool" => Some(Prim::Bool),
+            "int" => Some(Prim::Int(self.default_int_size)),
+            "uint" => Some(Prim::Int(self.default_int_size.unsigned())),
+            "float" => Some(Prim::Float),
+            name if name.starts_with('u') => name[1..]
+                .parse::<u8>()
+                .ok()
+                .map(|n| Prim::Int(IntSize::new(false, n))),
+            name if name.starts_with('i') => name[1..]
+                .parse::<u8>()
+                .ok()
+                .map(|n| Prim::Int(IntSize::new(true, n))),
+            _ => None,
+        }
+    }
+}
+
+impl<'s, Env> TypeContext<Env>
+where
+    Self: ResolvingTypeContext<'s>,
+{
+    fn defined(
+        &mut self,
+        span: Span,
+        ident: &Identifier<'s>,
+        params: <Self as TypeLower<'s>>::Tys,
+    ) -> Option<<Self as TypeLower<'s>>::Ty> {
+        let segments = ident.as_slice();
+
+        let ns = Namespace::Types;
+        match self
+            .ctx
+            .find(self.project, None, self.file, ns, segments, true)
+        {
+            InterResolved::Item(module, symbols::Item::Type(key)) => {
+                let item = TypeKey { key, module };
+                Some(self.type_from_key(span, item, params))
+            }
+
+            InterResolved::NotFound { .. } => {
+                if segments.len() == 1 && segments[0].len() == 1 {
+                    if let Some(ty) = self.implicitly_declare_generic(span) {
+                        return Some(ty);
+                    }
+                }
+
+                errors::err("invalid type")
+                    .line(span, format!("type `{ident}` not found"))
+                    .emit();
+
+                None
+            }
+            InterResolved::Poison => None,
+            _ => {
+                errors::err("invalid type")
+                    .line(span, format!("`type {ident}` not found"))
+                    .text("NOTE: There is another non-type item with that name")
+                    .emit();
+
+                None
+            }
+        }
+    }
+}
+
+pub trait ResolvingTypeContext<'s>: TypeLower<'s> {
+    fn type_from_key(&mut self, span: Span, key: TypeKey, params: Self::Tys) -> Self::Ty;
+    fn implicitly_declare_generic(&mut self, span: Span) -> Option<Self::Ty>;
+}
+
+impl<'s> ResolvingTypeContext<'s> for TypeContext<InferenceEnv> {
+    fn type_from_key(&mut self, span: Span, key: TypeKey, params: Self::Tys) -> Self::Ty {
+        self.define(span, |env| env.record(key, params))
+    }
+
+    fn implicitly_declare_generic(&mut self, span: Span) -> Option<Self::Ty> {
+        let generic =
+            implicitly_declare_generic(&mut self.generic_names, &mut self.fenv, self.scope);
+
+        let var = self.define(span, |env| env.generic(generic));
+
+        Some(var)
+    }
+}
+
+impl<'s> ResolvingTypeContext<'s> for TypeContext<StaticEnv> {
+    fn type_from_key(&mut self, _: Span, key: TypeKey, params: Vec<Self::Ty>) -> Self::Ty {
+        KnownType::Defined(key, params.into_iter().collect())
+    }
+
+    fn implicitly_declare_generic(&mut self, _: Span) -> Option<Self::Ty> {
+        if self.scope == GenericTag::Type_ {
+            return None;
+        }
+
+        let generic =
+            implicitly_declare_generic(&mut self.generic_names, &mut self.fenv, self.scope);
+
+        Some(KnownType::Generic(generic))
+    }
+}
+
+impl<'s, Env> TypeContext<Env>
+where
+    Self: TypeLower<'s>,
+{
+    fn listlike<T>(
+        &mut self,
+        span: Span,
+        inner: &[Tr<parser::Type<'s>>],
+        len: parser::ListLength,
+        array: impl FnOnce(&mut Self, ArrayLen, <Self as TypeLower<'s>>::Ty) -> T,
+        dynamic: impl FnOnce(&mut Self, <Self as TypeLower<'s>>::Ty) -> T,
+    ) -> Option<T> {
+        if inner.len() != 1 {
+            errors::err("invalid type").line(span, "").emit();
+            None
+        } else {
+            let inner = self.ty(inner[0].as_ref());
+
+            match len {
+                parser::ListLength::Name(name) => {
+                    let Some(generic) = self.try_generic(*name) else {
+                        errors::err("invalid type")
+                            .line(name.span, format!("no generic named `{name}`"))
+                            .emit();
+
+                        return None;
+                    };
+
+                    let ty = array(self, ArrayLen::Generic(generic), inner);
+                    Some(ty)
+                }
+                parser::ListLength::Exact(len) => {
+                    let ty = array(self, ArrayLen::Int(*len as i64), inner);
+                    Some(ty)
+                }
+                parser::ListLength::None => {
+                    let ty = dynamic(self, inner);
+                    Some(ty)
+                }
+            }
+        }
+    }
+}
+
+pub trait TypeLower<'s> {
+    type Ty;
+    type Tys;
+
+    fn ty(&mut self, ty: Tr<&parser::Type<'s>>) -> Self::Ty;
+    fn tys(&mut self, ty: &[Tr<parser::Type<'s>>]) -> (usize, Self::Tys);
+
+    fn typing<T>(
+        &mut self,
+        typing: &parser::func::Typing<'s>,
+        fin: impl Fn(Self::Ty, Span) -> T,
+    ) -> FuncSig<T> {
+        FuncSig::new(
+            typing
+                .ptypes
+                .iter()
+                .map(|t| fin(self.ty(t.as_ref()), t.span))
+                .collect::<Vec<_>>(),
+            fin(self.ty(typing.returns.as_ref()), typing.returns.span),
+        )
+    }
+}
+
+impl TypeContext<InferenceEnv> {
+    pub fn define(&mut self, span: Span, f: impl FnOnce(&mut Env) -> Var) -> Var {
+        let var = f(&mut self.env.env);
+        self.env.spans[var] = span;
+        var
+    }
+
+    pub fn inst_sig<'a, T: ts::InstableType<TypeKey>>(
+        &mut self,
+        anot: &ts::Annotation<Var>,
+        span: Span,
+        params: impl IntoIterator<Item = T>,
+        ret: T,
+    ) -> (EntityList<Var>, Var) {
+        let params = self.env.env.instantiate_types(anot, params);
+        let ret = self.define(span, |env| env.instantiate(anot, ret));
+        (params, ret)
+    }
+
+    pub fn var_pool_mut(&mut self) -> &mut key::ListPool<Var> {
+        &mut self.env.env.var_poo
+    }
+
+    pub fn var_pool(&mut self) -> &mut key::ListPool<Var> {
+        &mut self.env.env.var_poo
+    }
+
+    pub fn types_from_iter<I, T>(
+        &mut self,
+        iter: I,
+        mut f: impl FnMut(&mut Self, T) -> Var,
+    ) -> EntityList<Var>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let mut list = EntityList::new();
+        for value in iter.into_iter() {
+            let var = f(self, value);
+            list.push(var, &mut self.env.env.var_poo);
+        }
+        list
+    }
+
+    // We do not want to risk the user accidentally defining type variables without going through
+    // `define`.
+    pub fn raw_env<T>(&mut self, f: impl FnOnce(&mut Env) -> T) -> T {
+        f(&mut self.env.env)
+    }
+
+    pub fn apply(&mut self, span: Span, var: Var) -> Application {
+        let cappl = self.env.env.apply(var);
+        let ret = self.env.env.get_return_type(cappl);
+        self.env.spans[ret] = span;
+        cappl
+    }
+
+    pub fn apply_params(&mut self, span: Span, f: Var, given: EntityList<Var>) -> Var {
+        let appl = self.apply(span, f);
+
+        self.env.env.for_vars_mut(given, |env, ty| {
+            env.apply_next_parameter(appl, ty);
+        });
+
+        self.env.env.get_return_type(appl)
+    }
+
+    pub fn fail_unexpected_annotations<'s>(
+        &mut self,
+        valid: &[usize],
+        anot: &[(usize, parser::ty::ForallAnnotation<'s>)],
+    ) {
+        for (i, anot) in anot {
+            if !valid.contains(i) && !anot.assignments.is_empty() {
+                let span = Span::from_elems(&anot.assignments, |(name, _)| name.span);
+
+                errors::err("invalid type annotation")
+                    .line(span, "cannot type annotate a module")
+                    .emit();
+            }
+        }
+    }
+
+    pub fn annotation<'s>(
+        &mut self,
+        names: &Map<key::Generic, String>,
+        annotation: &mut ts::Annotation<Var>,
+        for_: usize,
+        kind: &str,
+        tag: GenericTag,
+        anot: &[(usize, parser::ty::ForallAnnotation<'s>)],
+    ) {
+        if let Some((_, anot)) = anot.iter().find(|(at, _)| *at == for_) {
+            let mut used = 0;
+
+            'expected_generics: for name in names.values() {
+                for i in 0..anot.assignments.len() {
+                    let (annotated_name, annotated_type) = &anot.assignments[i];
+
+                    if **annotated_name == name {
+                        if let Some((second, _)) = anot
+                            .assignments
+                            .get(i + 1..)
+                            .and_then(|previous| previous.iter().find(|(p, _)| p == annotated_name))
+                        {
+                            self.err_generic_already_annotated([*annotated_name, *second]);
+                        }
+
+                        used |= 1 << i;
+
+                        let ty = self.ty(annotated_type.as_ref());
+                        annotation.push_with_env(tag, ty, &mut self.env.env);
+                        continue 'expected_generics;
+                    }
+                }
+
+                annotation.push_unknown(tag, &mut self.env.env);
+            }
+
+            let unknown = anot
+                .assignments
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (name, _))| ((used & (1 << i)) == 0).then_some(*name))
+                .collect::<Vec<_>>();
+
+            if !unknown.is_empty() {
+                self.err_unknown_generic_annot(kind, unknown);
+            }
+        } else {
+            for _ in names.keys() {
+                annotation.push_unknown(tag, &mut self.env.env);
+            }
+        }
+    }
+
+    fn err_unknown_generic_annot(&mut self, kind: &str, names: Vec<Tr<&str>>) {
+        let err = errors::err("invalid type annotation");
+        match names.as_slice() {
+            [name] => err.line(
+                name.span,
+                format!("`{name}` is not a generic for this {kind}"),
+            ),
+            names => err.line(
+                Span::from_elems(names, |n| n.span),
+                format!(
+                    "{} are not generics for this {kind}",
+                    lumina_util::list_names_gramatically_correct(names.iter())
+                ),
+            ),
+        }
+        .text(format!(
+            "available generics are: {}",
+            lumina_util::list_names_gramatically_correct(names.iter())
+        ))
+        .emit();
+    }
+
+    fn err_generic_already_annotated(&mut self, [first, second]: [Tr<&str>; 2]) {
+        errors::err("invalid type annotation")
+            .line(
+                second.span,
+                format!("generic `{first}` is already set in this annotation"),
+            )
+            .emit();
+    }
+
+    pub fn optional_typing<'s>(&mut self, header: &parser::func::Header<'s>) -> FuncSig<Tr<Var>> {
+        match header.typing.as_ref() {
+            Some(typing) => self.typing(typing, |ty, span| ty.tr(span)),
+            None => {
+                let mut var = |span| {
+                    let v = self.define(span, |env| env.unknown());
+                    v.tr(span)
+                };
+                FuncSig::new(
+                    header
+                        .params
+                        .iter()
+                        .map(|pat| var(pat.span))
+                        .collect::<Vec<_>>(),
+                    var(header.name.span),
+                )
+            }
+        }
+    }
+
+    pub fn as_static<F, T>(&mut self, f: F) -> T
+    where
+        F: FnOnce(&mut TypeContext<StaticEnv>) -> T,
+    {
+        let mut v = None;
+        take_mut::take(self, |this| {
+            let old = this.env;
+            let mut new = TypeContext {
+                project: this.project,
+                file: this.file,
+                ctx: this.ctx.clone(),
+                fenv: this.fenv,
+                scope: this.scope,
+                generic_names: this.generic_names,
+                declare_generics: this.declare_generics,
+                default_int_size: this.default_int_size,
+                env: StaticEnv { self_: None },
+            };
+
+            v = Some(f(&mut new));
+
+            new.cast(old).1
+        });
+
+        v.unwrap()
+    }
+
+    pub fn type_check_and_finalize(
+        &mut self,
+        impl_check: Option<Application>,
+    ) -> (
+        Map<Var, Type>,
+        Vec<(
+            ts::Error<TypeKey>,
+            HashMap<GenericTag, Map<key::Generic, String>>,
+        )>,
+    ) {
+        let resolver = TypeCheckPassHandler {
+            ctx: self.ctx.clone(),
+            fenv: &mut self.fenv,
+            generic_names: &mut self.generic_names,
+            project: self.project,
+            file: self.file,
+        };
+
+        let mut inference =
+            ts::InferenceUnifier::new(&mut self.env.env, resolver, self.default_int_size);
+        inference.infer();
+
+        let vars = ts::Finalizer::new(&mut self.env.env).finalize_all();
+        let errors = ts::Checker::new(&vars, &self.env.env).type_check();
+
+        println!(
+            "Finalized Static Types\n  {}",
+            vars.iter()
+                .map(|(var, type_)| format!("{var} => {type_}"))
+                .format("\n  ")
+        );
+
+        // For implementations, we want to collect type errors against the expected trait method
+        // signature. That way we can better present the errors as a single "bad implementation" error.
+        let mut impl_method_error_buffer = vec![];
+
+        for err in errors {
+            let ident_formatter = |ident: &TypeKey| {
+                let (unstable_key, _) = self.ctx.resolve_module(self.project, ident.module);
+                self.ctx.in_project(unstable_key, |unit| {
+                    unit.header.type_signatures[ident.key].name.to_string()
+                })
+            };
+            let generic_formatter =
+                |generic: TaggedGeneric| self.generic_names[&generic.tag][generic.key].clone();
+            let fmt = KnownTypeFormatter::new(&ident_formatter, &generic_formatter, &());
+
+            match err {
+                ts::Error::NonFunctionApplication(cappl, _) if impl_check == Some(cappl) => {
+                    impl_method_error_buffer.push((err, self.generic_names.clone()))
+                }
+
+                ts::Error::NonFunctionApplication(appl, type_) => {
+                    let ret = self.env.env.get_return_type(appl);
+
+                    errors::err("type mismatch")
+                        .line(
+                            self.env.spans[ret],
+                            format!(
+                                "cannot give parameters to non-function `{}`",
+                                fmt.fork(&type_)
+                            ),
+                        )
+                        .emit();
+                }
+                ts::Error::Mismatch { expected, given, message, var } => {
+                    errors::err("type mismatch")
+                        .line(self.env.spans[var], message)
+                        .text(format!("{}      {}", "got".purple(), fmt.fork(&given)))
+                        .text(format!("{} {}", "expected".purple(), fmt.fork(&expected)))
+                        .emit();
+                }
+                ts::Error::FunctionWrongParameterCount { expected, given, appl } => {
+                    let ret = self.env.env.get_return_type(appl);
+
+                    errors::err("type mismatch")
+                        .line(self.env.spans[ret], "wrong number of parameters")
+                        .text(format!("{}      {}", "got".purple(), given))
+                        .text(format!("{} {}", "expected".purple(), expected))
+                        .emit();
+                }
+                ts::Error::DoesNotHaveFields(var, record, fields) => {
+                    errors::err("type mismatch")
+                        .line(
+                            self.env.spans[var],
+                            format!(
+                                "`{}` does not have fields {}",
+                                fmt.fork(&record),
+                                fields.iter().format(", ")
+                            ),
+                        )
+                        .emit();
+                }
+            }
+        }
+
+        (vars, impl_method_error_buffer)
+    }
+}
+
+struct TypeCheckPassHandler<'a> {
+    ctx: Context<TranslationUnit>,
+    fenv: &'a mut ts::ForallEnv<TypeKey>,
+    generic_names: &'a mut HashMap<GenericTag, Map<key::Generic, String>>,
+    project: key::Project,
+    file: key::File,
+}
+
+fn implicitly_declare_generic(
+    names: &mut HashMap<GenericTag, Map<key::Generic, String>>,
+    fenv: &mut ForallEnv<TypeKey>,
+    tag: GenericTag,
+) -> TaggedGeneric {
+    let names = &mut names
+        .get_mut(&tag)
+        .expect("can not declare generic in a scope that does not exist");
+
+    const IMPLICIT_GENERIC_NAMES: &str =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXZαβγδεζηθικλμνξοπρστυφχψω0123456789";
+
+    let mut iter = IMPLICIT_GENERIC_NAMES.char_indices();
+
+    loop {
+        let Some((i, c)) = iter.next() else {
+            panic!(
+                "ran out of available implicit generic names.
+                 are you sure that whatever you're trying to do is worth it?"
+            );
+        };
+
+        let name = &IMPLICIT_GENERIC_NAMES[i..i + c.len_utf8()];
+        if names.values().any(|n| n.as_str() == name) {
+            continue;
+        }
+
+        let generic = ts::declare(fenv, tag);
+        assert_eq!(generic.key, names.push(name.to_string()));
+
+        return generic;
+    }
+}
+
+// pub fn extend_annotation(
+//     env: &mut Env,
+//     annotation: &mut Annotation<Var>,
+//     tag: GenericTag,
+//     generics: impl IntoIterator<Item = key::Generic>,
+//     assignments: &[(key::Generic, Var)],
+// ) {
+//     for generic in generics {
+//         let var = assignments
+//             .iter()
+//             .find_map(|(assigned, var)| (*assigned == generic).then_some(*var))
+//             .unwrap_or_else(|| env.unknown());
+//         annotation.push_with_env(tag, var, env);
+//     }
+// }
+
+impl<'a> ts::Resolver<TypeKey> for TypeCheckPassHandler<'a> {
+    fn implicitly_declare_generic(&mut self, tag: GenericTag) -> TaggedGeneric {
+        implicitly_declare_generic(self.generic_names, self.fenv, tag)
+    }
+
+    fn type_of_field(
+        &self,
+        ident: &TypeKey,
+        field: key::Field,
+    ) -> Result<KnownType<TypeKey>, ResolverError<TypeKey>> {
+        let (project, _) = self.ctx.resolve_module(self.project, ident.module);
+        self.ctx
+            .in_project(project, |unit| match &unit.header.typedefs[ident.key] {
+                TypeDef::Struct { ftypes, .. } => Ok(ftypes[field].clone()),
+                _ => Err(ResolverError::FieldNotFound(*ident, field)),
+            })
+    }
+
+    fn guess_by_fields<'b, I>(&self, _fields: I) -> Option<TypeKey>
+    where
+        I: Iterator<Item = &'b str> + Clone,
+    {
+        None
+    }
+
+    fn get_field(&self, ident: &TypeKey, name: &str) -> Option<key::Field> {
+        let (project, _) = self.ctx.resolve_module(self.project, ident.module);
+        self.ctx
+            .in_project(project, |unit| match &unit.header.typedefs[ident.key] {
+                TypeDef::Struct { fnames, .. } => fnames
+                    .iter()
+                    .find_map(|(field, n)| (n == name).then_some(field)),
+                _ => None,
+            })
+    }
+
+    fn for_each_type_parameter<F>(&self, mut f: F)
+    where
+        F: FnMut(key::Generic),
+    {
+        for forall in self.fenv.values() {
+            for generic in forall.generics.keys() {
+                f(generic);
+            }
+        }
+    }
+}
+
+impl<'s> TypeLower<'s> for TypeContext<InferenceEnv> {
+    type Ty = Var;
+    type Tys = EntityList<Var>;
+
+    fn ty(&mut self, ty: Tr<&parser::Type<'s>>) -> Self::Ty {
+        trace!("lowering type {ty}");
+
+        let var = match *ty {
+            parser::Type::Defined(ident, params) => {
+                let path = ident.path.as_slice();
+                let (plen, params) = self.tys(params);
+
+                if let [name] = path {
+                    if let Some(prim) = self.try_prim(name) {
+                        check_param_count(*ty, plen.tr(ty.span), 0);
+                        trace!("defining prim");
+                        return self.define(ty.span, |env| env.prim(prim));
+                    }
+
+                    if let Some(generic) = self.try_generic(name) {
+                        check_param_count(*ty, plen.tr(ty.span), 0); // TODO: higher-kinded types
+                        return self.define(ty.span, |env| env.generic(generic));
+                    }
+
+                    if *name == "self" {
+                        check_param_count(*ty, plen.tr(ty.span), 0); // TODO: higher-kinded types
+                        return self.define(ty.span, |env| env.prim(Prim::Self_));
+                    }
+                }
+
+                match self.defined(ty.span, &ident.path, params) {
+                    Some(ty) => ty,
+                    None => self.define(ty.span, |env| env.error()),
+                }
+            }
+            parser::Type::Pointer(to) => {
+                let to = self.ty((**to).as_ref());
+                self.define(ty.span, |env| env.pointer(to))
+            }
+            parser::Type::FnPointer(ptypes, returns) => {
+                let (_, params) = self.tys(ptypes);
+                let ret = self.ty((**returns).as_ref());
+                self.define(ty.span, |env| {
+                    env.function(ts::CallableKind::FnPointer, params, ret)
+                })
+            }
+            parser::Type::Closure(ptypes, returns) => {
+                let (_, params) = self.tys(ptypes);
+                let ret = self.ty((**returns).as_ref());
+                self.define(ty.span, |env| {
+                    env.function(ts::CallableKind::Closure, params, ret)
+                })
+            }
+            parser::Type::Tuple(elems) => {
+                let (_, elems) = self.tys(elems);
+                self.define(ty.span, |env| env.tuple(elems))
+            }
+            parser::Type::Poison => self.define(ty.span, |env| env.error()),
+            parser::Type::List(elems, len) => self
+                .listlike(
+                    ty.span,
+                    elems,
+                    len.clone(),
+                    |this, len, of| this.define(ty.span, |env| env.array(len, of)),
+                    |this, of| this.define(ty.span, |env| env.list(of)),
+                )
+                .unwrap_or_else(|| self.define(ty.span, |env| env.error())),
+        };
+
+        var
+    }
+
+    fn tys(&mut self, tys: &[Tr<parser::Type<'s>>]) -> (usize, EntityList<Var>) {
+        let len = tys.len();
+        let list = self.types_from_iter(tys, |this, ty| this.ty(ty.as_ref()));
+        (len, list)
+    }
+}
+
+impl<'s> TypeLower<'s> for TypeContext<StaticEnv> {
+    type Ty = Type;
+    type Tys = Vec<Type>;
+
+    fn ty(&mut self, ty: Tr<&parser::Type<'s>>) -> Self::Ty {
+        trace!("lowering type {ty}");
+
+        match *ty {
+            parser::Type::Defined(ident, params) => {
+                let path = ident.path.as_slice();
+                let (plen, params) = self.tys(params);
+
+                if let [name] = path {
+                    if let Some(prim) = self.try_prim(name) {
+                        check_param_count(*ty, plen.tr(ty.span), 0);
+                        return KnownType::Prim(prim);
+                    }
+
+                    if let Some(generic) = self.try_generic(name) {
+                        check_param_count(*ty, plen.tr(ty.span), 0); // TODO: higher-kinded types
+                        return KnownType::Generic(generic);
+                    }
+
+                    if *name == "self" {
+                        check_param_count(*ty, plen.tr(ty.span), 0); // TODO: higher-kinded types
+                        return self.env.self_.clone().expect("ET: No `self` in item");
+                    }
+                }
+
+                match self.defined(ty.span, &ident.path, params) {
+                    Some(ty) => ty,
+                    None => KnownType::default_unit_type(),
+                }
+            }
+            parser::Type::Pointer(to) => {
+                let to = self.ty((**to).as_ref());
+                KnownType::Pointer(Box::new(to))
+            }
+            parser::Type::FnPointer(ptypes, returns) => {
+                let (_, params) = self.tys(ptypes);
+                let ret = self.ty((**returns).as_ref());
+                KnownType::Function {
+                    kind: ts::CallableKind::FnPointer,
+                    params,
+                    ret: Box::new(ret),
+                }
+            }
+            parser::Type::Closure(ptypes, returns) => {
+                let (_, params) = self.tys(ptypes);
+                let ret = self.ty((**returns).as_ref());
+                KnownType::Function { kind: ts::CallableKind::Closure, params, ret: Box::new(ret) }
+            }
+            parser::Type::Tuple(elems) => {
+                let (_, elems) = self.tys(elems);
+                KnownType::Tuple(elems)
+            }
+            parser::Type::Poison => KnownType::default_unit_type(),
+            parser::Type::List(elems, len) => self
+                .listlike(
+                    ty.span,
+                    elems,
+                    len.clone(),
+                    |_, len, of| KnownType::Array { const_: len, of: Box::new(of) },
+                    |_, of| KnownType::List(Box::new(of)),
+                )
+                .unwrap_or_else(|| KnownType::default_unit_type()),
+        }
+    }
+
+    fn tys(&mut self, ty: &[Tr<parser::Type<'s>>]) -> (usize, Self::Tys) {
+        let tys: Self::Tys = ty.iter().map(|ty| self.ty(ty.as_ref())).collect();
+        (tys.len(), tys)
+    }
+}
+
+impl TypeContext<StaticEnv> {
+    pub fn member_of_trait<'s>(
+        ctx: Context<TranslationUnit>,
+        project: key::Project,
+        file: key::File,
+        trait_sig: &TypeSig,
+    ) -> TypeContext<StaticEnv> {
+        let tag = GenericTag::Type_;
+        let self_ = Some(KnownType::Prim(Prim::Self_));
+        let mut this = TypeContext::new(ctx.clone(), project, file, StaticEnv { self_ }, tag);
+
+        this.add_scope(GenericTag::Trait);
+
+        // Clone the generics declared from the trait type parameters.
+        this.declare_forall(
+            GenericTag::Trait,
+            trait_sig.generics.values().map(|name| name.as_str()),
+        );
+
+        this.add_scope(GenericTag::Func);
+        this.scope = GenericTag::Func;
+
+        this
+    }
+
+    pub fn add_constraints<'s>(&mut self, tag: GenericTag, con: &parser::when::Constraints<'s>) {
+        let previous = std::mem::replace(&mut self.scope, tag);
+        for (_, name, cons) in &con.generics {
+            for con in cons {
+                let ty = self.ty(con.as_ref());
+                self.declare_constraint(*name, ty);
+            }
+        }
+        self.scope = previous;
+    }
+
+    pub fn declare_constraint<'s>(&mut self, gname: &str, con: Type) {
+        let generic = self.try_generic(gname).unwrap();
+        let gdata = self
+            .fenv
+            .get_mut(&generic.tag)
+            .unwrap()
+            .generics
+            .get_mut(generic.key)
+            .unwrap();
+
+        match con {
+            KnownType::Defined(ident, params) => {
+                // TODO: Ensure it's a trait here instead of later
+                gdata.add_constraint(ident, params.values().cloned().collect());
+            }
+            _ => panic!("ET: not a trait"),
+        }
+    }
+}
+
+fn check_param_count(header: impl fmt::Display, got: Tr<usize>, exp: usize) -> bool {
+    let err = |span, msg| {
+        errors::err("invalid type").line(span, msg).emit();
+        false
+    };
+
+    if *got < exp {
+        err(
+            got.span,
+            format!("missing {} type parameters for `{header}`", exp - *got),
+        )
+    } else if *got > *got {
+        err(got.span, format!("excess parameter for `{header}`"))
+    } else {
+        true
+    }
+}

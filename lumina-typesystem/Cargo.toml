@@ -1,16 +1,16 @@
 [package]
 name = "lumina-typesystem"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+version = "0.2.0"
+edition = "2024"
+author = "simvux"
 
 [dependencies]
-itertools = "*"
-lumina-util = { path = "../lumina-util" }
+derive-new = "0.7.0"
+itertools = "0.14.0"
 lumina-key = { path = "../lumina-key" }
-lumina-collections = { path = "../lumina-collections" }
-derive_more = { version = "1.0.*", features = ["from", "display", "index", "index_mut", "deref", "deref_mut"] }
-derive-new = "0.7"
-tracing = "0.1.41"
-smallvec = "*"
+serde = { version = "1.0.228", features = ["serde_derive"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-tree = "0.4.0"

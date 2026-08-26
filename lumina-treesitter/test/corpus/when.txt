@@ -1,0 +1,40 @@
+================================================================================
+when: fn constraints
+================================================================================
+
+when a can Compare
+fn f a as a -> a = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (when_clause
+    (type (identifier))
+    (constraint (type_identifier)))
+  (function_declaration
+    (identifier)
+    (identifier)
+    (type_signature (type (identifier)) (type (identifier)))
+    (identifier)))
+
+================================================================================
+when: fn constraints, trait type parameters
+================================================================================
+
+when a can Converter i o
+fn f a as a -> a = a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (when_clause
+    (type (identifier))
+    (constraint
+      (type_identifier)
+      (type (identifier))
+      (type (identifier))))
+  (function_declaration
+    (identifier)
+    (identifier)
+    (type_signature (type (identifier)) (type (identifier)))
+    (identifier)))

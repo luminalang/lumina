@@ -101,7 +101,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn type_declaration_parameters(&mut self) -> Map<key::Generic, &'a str> {
+    pub(crate) fn type_declaration_parameters(&mut self) -> Map<key::Generic, &'a str> {
         let mut params = Map::new();
 
         loop {
@@ -273,7 +273,7 @@ impl<'a> Parser<'a> {
     fn ty_list(&mut self, start: Span) -> Option<Tr<Type<'a>>> {
         self.shared_list(
             start,
-            |parser| parser.type_with_params().map(|a| a),
+            |parser| parser.type_with_params(),
             Some(Type::Poison.tr(start)),
         )
         .map(|(elems, ender, end)| Type::List(elems, ender).tr(start.extend(end)))
@@ -315,9 +315,9 @@ impl<'a> Parser<'a> {
                 T::Arrow => {
                   self.progress();
                   break self.r#type(true, false)
-                      .and_then(|ret| {
+                      .map(|ret| {
                           let span = span.extend(ret.span);
-                          Some(constr(ptypes, Box::new(ret)).tr(span))
+                          constr(ptypes, Box::new(ret)).tr(span)
                       });
                 },
                 T::CloseParen if ptypes.len() == 1 => {
@@ -411,7 +411,7 @@ impl<'a> Parser<'a> {
                     let t = self.lexer.peek();
                     match t.0 {
                         T::Comma | T::CloseParen => {
-                            assignments.push((ty.span, "self", ty.value));
+                            assignments.push(("self".tr(ty.span), ty));
                         }
                         T::As => {
                             self.progress();
@@ -420,8 +420,9 @@ impl<'a> Parser<'a> {
                                     if params.is_empty() && path.path.is_name() =>
                                 {
                                     let generic = path.path.as_name().unwrap();
+                                    let span = ty.span;
                                     if let Some(ty) = self.r#type(true, false) {
-                                        assignments.push((ty.span, generic, ty.value));
+                                        assignments.push((generic.tr(span), ty));
                                     } else {
                                         self.recover_for([T::Comma, T::CloseParen], false);
                                     }
@@ -456,7 +457,7 @@ impl<'a> Parser<'a> {
 
 #[derive(Clone, Debug)]
 pub struct ForallAnnotation<'a> {
-    pub assignments: Vec<(Span, &'a str, Type<'a>)>,
+    pub assignments: Vec<(Tr<&'a str>, Tr<Type<'a>>)>,
 }
 
 impl<'a> ForallAnnotation<'a> {
@@ -553,7 +554,7 @@ impl<'a> fmt::Display for ForallAnnotation<'a> {
             "{op}{}{cp}",
             self.assignments
                 .iter()
-                .format_with(", ", |(_, name, type_), f| f(&format_args!(
+                .format_with(", ", |(name, type_), f| f(&format_args!(
                     "{name} {as_} {}",
                     type_.type_()
                 )))

@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use lexer::{Lexer, Token, TokenKind};
-use lumina_util::{Highlighting, Identifier, Indentation, Span, Spanned, Tr};
+use lumina_util::{Identifier, Indentation, Span, Spanned, Tr};
 use std::collections::HashMap;
 use std::{cmp::Ordering, fmt};
 use tracing::trace;
@@ -139,7 +139,7 @@ impl<'s> Parser<'s> {
                 self.next_then(|this| this.quote(t.span, Entity::SingleQuote))
             }
             TokenKind::Int => self.next_then(|this| this.int(t.span)),
-            TokenKind::EOF => self.next_then(|_| Entity::EOF),
+            TokenKind::Eof => self.next_then(|_| Entity::EOF),
             TokenKind::Use | TokenKind::Equal => self.next_then(|this| this.header(t.span)),
             TokenKind::Match => self.next_then(|this| this.r#match(t.span)),
             TokenKind::OpenParen => {
@@ -371,24 +371,21 @@ impl<'s> Parser<'s> {
         let mut param = token.map(|_| param);
 
         let after = self.lexer.peek();
-        match after.kind {
-            TokenKind::Symbol => {
-                let name = Meta::new(self.take(after.span), after.span, after.comment);
-                if operator::PARAM_BINDED.contains(&name)
-                    && self.take(after.span.extend_length(1)) != "@["
-                    && self.take(after.span.extend_length(2)) != "@!["
-                {
-                    self.lexer.next();
-                    param = self.handle_parameter_operator(param, name);
-                }
+        if after.kind == TokenKind::Symbol {
+            let name = Meta::new(self.take(after.span), after.span, after.comment);
+            if operator::PARAM_BINDED.contains(&name)
+                && self.take(after.span.extend_length(1)) != "@["
+                && self.take(after.span.extend_length(2)) != "@!["
+            {
+                self.lexer.next();
+                param = self.handle_parameter_operator(param, name);
             }
-            _ => {}
         }
 
         Some(param)
     }
 
-    fn outdated_closure_type(&mut self, name: &'s str, kwspan: Span) -> Entity<'s> {
+    fn outdated_closure_type(&mut self, name: &'s str, _kwspan: Span) -> Entity<'s> {
         self.lexer.next(); // Skip `fn` or `fnptr`
 
         let token = self.lexer.next();
@@ -548,7 +545,7 @@ impl<'s> Parser<'s> {
 
         let finalize = |headers: Vec<(Tr<&'s str>, Meta<Entity<'s>>)>| {
             trace!("finalizing header chain for {kw}");
-            return Entity::Headers(headers);
+            Entity::Headers(headers)
         };
 
         for expected in more {
@@ -661,10 +658,8 @@ fn get_indent_level(src: &str, span: Span, ban_other_characters: bool) -> Option
 fn is_unary_operator(src: &str, span: Span) -> bool {
     let valid_space = || span.following(1).get_str(src) != " ";
 
-    match span.get_str(src) {
-        name if name.chars().all(|c| "#*!-".contains(c)) && valid_space() => true,
-        _ => false,
-    }
+    let name = span.get_str(src);
+    name.chars().all(|c| "#*!-".contains(c)) && valid_space()
 }
 
 fn is_field_access(src: &str, span: Span) -> bool {
@@ -726,7 +721,7 @@ impl<'s> fmt::Display for Entity<'s> {
             }
             Entity::Identifier(ident, anot) if anot.is_empty() => write!(f, "{ident}"),
             Entity::Identifier(ident, anot) => {
-                let mut segments = ident.as_slice().into_iter().enumerate();
+                let mut segments = ident.as_slice().iter().enumerate();
                 let (i, x) = segments.next().unwrap();
 
                 x.fmt(f)?;

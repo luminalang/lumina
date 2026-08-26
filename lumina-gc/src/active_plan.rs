@@ -8,7 +8,7 @@ pub struct VMActivePlan {}
 // Documentation: https://docs.mmtk.io/api/mmtk/vm/active_plan/trait.ActivePlan.html
 impl ActivePlan<DummyVM> for VMActivePlan {
     fn number_of_mutators() -> usize {
-        1
+        unimplemented!()
     }
 
     fn is_mutator(_tls: VMThread) -> bool {

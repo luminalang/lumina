@@ -1,0 +1,9 @@
+// type Something {
+//   field float
+// }
+
+
+
+// pub fn to_inner { field } as Something -> float =
+//   field
+// 

@@ -1,5 +1,5 @@
 ---
 source: lumina-parser/src/tests.rs
-expression: "{ \"\\\"hello\\\" #(f 0)@a #(f 1) #f@b x xs\"; format! (\"\\n{}\", ast) }"
+expression: "{ \"\\\"hello\\\" #(f 0)@a #(f 1) #f@b .x xs\"; format! (\"\\n{}\", ast) }"
 ---
-"hello" #(f 0)@a #(f 1) #f@b x xs
+"hello" #(f 0)@a #(f 1) #f@b .x xs

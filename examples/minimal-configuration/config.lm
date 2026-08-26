@@ -1,0 +1,7 @@
+val name = "minimal-configuration"
+val version = "1.0"
+val authors = []
+
+val dependencies = [
+  { name = "std", path = "/home/simon/code/rust/lumina/examples/minimal-configuration/std" }
+]

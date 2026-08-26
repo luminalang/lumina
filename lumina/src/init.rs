@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 pub fn create_new_lumina_project(settings: cli::InitFlags) -> ExitCode {
     fn err_and_failure(and: impl FnOnce(lumina_util::Error) -> lumina_util::Error) -> ExitCode {
-        let err = lumina_util::Error::error("lumina project error");
+        let err = lumina_util::Error::err("lumina project error");
         eprintln!("{}", and(err));
         ExitCode::FAILURE
     }
@@ -46,17 +46,14 @@ pub fn create_new_lumina_project(settings: cli::InitFlags) -> ExitCode {
                 } else {
                     return err_and_failure(err_already_exists);
                 }
-            } else {
             }
         } else {
             return err_and_failure(|e| {
                 e.with_text("`src` is not a directory. Refusing to overwrite")
             });
         }
-    } else {
-        if let Err(err) = fs::create_dir(src_path) {
-            return err_and_failure(|e| e.with_text(err.to_string()));
-        }
+    } else if let Err(err) = fs::create_dir(src_path) {
+        return err_and_failure(|e| e.with_text(err.to_string()));
     };
 
     let mut config_file = match fs::File::create(&config_path) {
@@ -69,7 +66,7 @@ pub fn create_new_lumina_project(settings: cli::InitFlags) -> ExitCode {
         Err(err) => return err_and_failure(|e| e.with_text(err.to_string())),
     };
 
-    if let Err(err) = main_file.write(&DEFAULT_MAIN_SRC) {
+    if let Err(err) = main_file.write(DEFAULT_MAIN_SRC) {
         return err_and_failure(|e| e.with_text(err.to_string()));
     }
 

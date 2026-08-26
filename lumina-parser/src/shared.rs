@@ -315,7 +315,7 @@ impl<'a> Parser<'a> {
                     match self.recover_for(recovery, false) {
                         Token::Comma | Token::SemiColon | Token::CloseList => {}
                         _ => {
-                            self.err_unmatched(start, "the list");
+                            self.err_unmatched(start, "list");
                             return None;
                         }
                     }
@@ -428,7 +428,7 @@ impl<'a, T: fmt::Display> fmt::Display for Field<'a, T> {
             if let Some(name) = self.bind {
                 format!(" {} {}", "@".symbol(), name)
             } else {
-                format!("")
+                String::new()
             },
         )?;
 

@@ -2,11 +2,11 @@ use clap::Parser;
 use std::process::ExitCode;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, registry::Registry, EnvFilter};
-use tracing_tree;
 
 mod build;
 use build::{build_project, run_built_binary};
 mod cli;
+mod docs;
 mod formatter;
 mod init;
 
@@ -48,5 +48,6 @@ fn main() -> ExitCode {
             }
         }
         cli::Commands::Fmt(settings) => formatter::run(env, settings),
+        cli::Commands::Docs(settings) => docs::run(env, settings),
     }
 }

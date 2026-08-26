@@ -1,0 +1,15 @@
+@![langItem(Listable as OneList ())]
+
+trait Listable
+
+type OneList a = Singleton a | Nil
+
+pub fn pass list as OneList a -> OneList a = list
+
+// type SecondList
+
+type string
+
+impl Listable for OneList a
+
+// impl Listable for SecondList

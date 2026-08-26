@@ -104,11 +104,10 @@ impl<'a, 'p, F: Fn(Token) -> bool> Recover<'a, 'p, F> {
                 _ => {}
             }
 
-            if self.curlies.len() + self.parenthesis.len() + self.squares.len() == 0 {
-                if (self.target)(t) {
+            if self.curlies.len() + self.parenthesis.len() + self.squares.len() == 0
+                && (self.target)(t) {
                     break t;
                 }
-            }
 
             self.parser.lexer.next();
         }

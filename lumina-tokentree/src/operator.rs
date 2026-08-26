@@ -153,7 +153,7 @@ impl<'s> Parser<'s> {
                                 trace!("indentation check: {icheck:?}");
                                 match icheck {
                                     IndentCheck::NotAtStartOfLine => todo!(),
-                                    IndentCheck::Ambigious(ambigious_indentation) => {
+                                    IndentCheck::Ambigious(_ambigious_indentation) => {
                                         todo!();
                                     }
                                     IndentCheck::DoEat => {

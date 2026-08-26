@@ -1,0 +1,128 @@
+================================================================================
+expr: list literals
+================================================================================
+
+fn a = [1, 2, ..xs]
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (list_expression
+      (integer_literal)
+      (integer_literal)
+      (spread_expression (identifier)))))
+
+================================================================================
+expr: function application
+================================================================================
+
+fn a = f 1 a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (call_expression
+      (identifier)
+      (integer_literal)
+      (identifier))))
+
+================================================================================
+expr: map application
+================================================================================
+
+fn a = map #f []
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (map_expression
+      (identifier)
+      (map_argument (identifier))
+      (list_expression))))
+
+================================================================================
+expr: partial application
+================================================================================
+
+fn a = #(f 1 [])
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (partial_application
+      (call_expression
+        (identifier)
+        (integer_literal)
+        (list_expression)))))
+
+================================================================================
+expr: record constructor
+================================================================================
+
+fn a = { Point int | x = 1, y = 2 }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (record_expression
+      (type_identifier)
+      (type_identifier)
+      (record_field (identifier) (integer_literal))
+      (record_field (identifier) (integer_literal)))))
+
+================================================================================
+expr: punned record constructor
+================================================================================
+
+fn a = { Point int | x, y }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (record_expression
+      (type_identifier)
+      (type_identifier)
+      (record_field (identifier))
+      (record_field (identifier)))))
+
+================================================================================
+expr: inferred record constructor
+================================================================================
+
+fn a = { x, y }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration
+    (identifier)
+    (record_expression
+      (record_field (identifier))
+      (record_field (identifier)))))
+
+================================================================================
+expr: literal
+================================================================================
+
+fn a = 3
+fn a = "a"
+fn a = 3.0
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_declaration (identifier) (integer_literal))
+  (function_declaration (identifier) (string_literal))
+  (function_declaration (identifier) (float_literal)))

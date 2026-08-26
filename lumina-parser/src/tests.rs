@@ -59,6 +59,28 @@ macro_rules! test {
     };
 }
 
+#[test]
+fn bench_fib() {
+    let src = "
+fn fib n = 
+  match n
+  | 0 -> 0
+  | 1 -> 1
+  | n -> fib (n - 1) + fib (n - 2)
+";
+
+    let time = std::time::Instant::now();
+
+    for _ in 0..10_000 {
+        let mut parser = Parser::new(src);
+        let item = parser.item();
+        std::hint::black_box(item);
+    }
+
+    let took = time.elapsed();
+    println!("{took:?}");
+}
+
 macro_rules! pattern {
     ($name:ident, $src:literal) => {
         test!($name, $src, Parser::let_pattern);
@@ -98,11 +120,14 @@ pattern!(pat_simple_annotated_record, "{ point int | x = 1, y = 2 }");
 pattern!(pat_simple_infered_record, "{ x = 1, y = 2 }");
 pattern!(pat_nested_tuple, "(((x, y), (x, y), ()))");
 pattern!(pat_string_literal, "\"hello\\\" world\"");
-pattern!(pat_string_extractors, "\"hello\" #(f 0)@a #(f 1) #f@b x xs");
+pattern!(
+    pat_string_extractors,
+    "\"hello\" #(f 0)@a #(f 1) #f@b .x xs"
+);
 pattern!(pat_string_start_with_extractor, "#(f 0)@a \"a\"");
 pattern!(pat_simple_constr, "(Just 20)");
 pattern!(pat_nested_constr, "(Just (Just (Pair 10 20)))");
-pattern!(pat_int_ranges, "(0..10, 0..20, ..30, 30..)");
+pattern!(pat_int_ranges, "(0.:.10, 0.:.20, .:.30, 30.:.)");
 
 r#type!(type_ints, "Con int uint i8 i64 u8 u64");
 r#type!(type_floats, "Con f32 f64");
@@ -228,8 +253,8 @@ declaration!(
     "
 fn map f list as (fn a -> b) [a] -> [b] = 
   match list
-  | x : xs -> f x : map #f xs
-  | []     -> []
+  | [x, ..xs] -> [f x, ..map #f xs]
+  | []        -> []
 "
 );
 declaration!(

@@ -15,7 +15,7 @@ lto = true
 lto = true
 
 [dependencies]
-mmtk = "0.30.0"
+mmtk = "0.32.0"
 log = "*"
 libc = "*"
 

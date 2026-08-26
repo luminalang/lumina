@@ -1,0 +1,153 @@
+================================================================================
+type: record without any fields
+================================================================================
+
+type A a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_declaration
+    (type_identifier)
+    (type_parameter (identifier))))
+
+================================================================================
+type: record without any fields, explicit empty clause
+================================================================================
+
+type A {}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_declaration (type_identifier) (record_type)))
+
+================================================================================
+type: record without any fields, explicit empty clause, optional equal sign
+================================================================================
+
+type A = {}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_declaration (type_identifier) (record_type)))
+
+================================================================================
+type: basic variant type
+================================================================================
+
+type Maybe a = Just a | Nothing
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_declaration
+    (type_identifier)
+    (type_parameter (identifier))
+    (variant_type
+      (variant (type_identifier) (type (identifier)))
+      (variant (type_identifier)))))
+
+================================================================================
+type: basic record type
+================================================================================
+
+type Point a {
+  x a
+  y a
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_declaration
+    (type_identifier)
+    (type_parameter (identifier))
+    (record_type
+      (field_declaration (identifier) (type (identifier)))
+      (field_declaration (identifier) (type (identifier))))))
+
+================================================================================
+type: line-separated record type fields
+================================================================================
+
+type Complex a {
+  x
+    Point x
+
+  y
+    Point y
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_declaration
+    (type_identifier)
+    (type_parameter (identifier))
+    (record_type
+      (field_declaration
+        (identifier)
+        (type_application (type_identifier) (type (identifier))))
+      (field_declaration
+        (identifier)
+        (type_application (type_identifier) (type (identifier)))))))
+
+================================================================================
+trait: method with context
+================================================================================
+
+trait A a
+  fn a as self -> self
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_declaration
+    (type_identifier)
+    (type_parameter (identifier))
+    (function_declaration
+      (identifier)
+      (type_signature
+        (type (identifier))
+        (type (identifier))))))
+
+================================================================================
+trait: multi param
+================================================================================
+
+trait A a b c
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_declaration
+    (type_identifier)
+    (type_parameter (identifier))
+    (type_parameter (identifier))
+    (type_parameter (identifier))))
+
+================================================================================
+trait: multiple items
+================================================================================
+
+trait A a
+  type a
+  type a
+  type a = a
+
+  fn a as a
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_declaration
+    (type_identifier)
+    (type_parameter (identifier))
+    (type_declaration (type_identifier))
+    (type_declaration (type_identifier))
+    (type_declaration (type_identifier) (type (identifier)))
+    (function_declaration
+      (identifier)
+      (type_signature (type (identifier))))))

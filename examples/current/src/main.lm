@@ -1,8 +1,145 @@
-use std:io
+use std:langitem [OneList [..]]
 
-fn main =
-  1 + myFunc
-        2
-        3
+fn example =
+  do Nil . pass then 0
 
-fn myFunc a b = "hello"
+  // match true
+  // | true ->
+  //   let (a, b) = (Nil, Nil) in
+  //     if true then a else b 
+
+// EXPECTATION:
+//
+// ReturnUnification
+//   `let` same-as for `(a, b)`
+//       `if` same-as
+//          `a` & `b`
+// This would be if it's downwards. But it isn't.
+//
+// Instead; `let` points to the parent `match`. But; if the parent `match` gets it's inference that way
+// then that should traverse downwards in its unify?
+//
+// No because the traverse downwards will stop once it encounters complete types, which may miss those types below it that
+// do point upwards but are not yet inferred? 
+//
+// And if we fix that by adding a dependence_graph pointer then that will create an infinite loop...
+//
+// Whenever we traverse an `InferTo` we could buffer the checks? That's slow though.
+//
+// We could do it on the callback if we return `bool`.
+//
+// Although; when `InferTo` is created then copying all the LCheck's would result in the same behaviour though?
+//
+// We could do that but avoid circular explicitly?
+
+
+// DISCOVERY: The one that contains `()` is the return type of an
+// call-or-yield.
+// actually no there's more of them
+
+// Now we only have string and list issues left.
+// What's the common feature? patterns?
+
+// string/lib.lm:72
+// Direct fnptr passing
+// List sugared destructing
+// lambda
+// dotpipes
+//
+// string/lib.lm:81
+// lambda
+// fields
+//
+// list/lib.lm:33
+// tagged union destruct
+// lambda
+// dotpipe
+//
+// list/lib.lm:170
+// lambda
+//
+// list/lib.lm:216
+// lambda
+// pattern destructing
+//
+// list/lib.lm:242
+// list expr sugar
+// dotpipe
+// tagged union destructing
+
+// Maybe list `elem` doesn't link to parent `list`
+// or perhaps assignment of one branch doesn't trigger an re-assignment of the rest?
+//
+// Hm. Fixing same_as relations fixed one of the error but not the other from the same function
+
+// Commenting out the other branches that aren't erroring
+// causes the error to dissapear
+
+// Hm... I have an idea.
+//
+// Some of the other lists that are being returned are really deeply nested
+// Perhaps; the issue is that types being inferred at the surface doesn't
+// propegate *downwards* correctly?
+
+          // , if right . is_empty
+          //   then Nil
+          //   else Slice right
+// This is the part that's causing it to fail in the other branch
+
+// There'a rec call in that branch, but, as it happens regardless I don't think it's related
+// It happens recardless of the rec split_at call or not
+//
+// Oh that's very weird. It *also* needs the parent if expression at the root of the function
+ 
+
+// SPAN ISSUE:
+//
+// It happens because `apply` sets the return type span to the application site.
+//
+// That's now fixed. But; that does raise the point on whether this issue has something to do with the `Apply`
+// and it's edge-case.
+ 
+// TODO: KnownTypeRoot becomes List on Listables
+
+// TODO: What happens when a list literal is used against an array type?
+
+// TODO: The return type mismatch error message is misleading as we're using `assign`
+// we can fix this without API changes by editinng MismatchKind in checker.rs
+
+// TODO: On inferred type annotations, we don't want to generate it. We want to set it to be the types of the patterns.
+
+// We were also considering ways to improve performance in ts. 
+//
+// one idea is to have temporary type variables as their own thing which is when they only exist in one place, of where they are allowed to be overwritten directly
+// (or promoted to a real var)
+//
+// we also need to poison on type_sensitive.is_none()
+
+// TODO: When taking an existing typing for a func that was public, do we also get the forall and put it in tctx?
+
+// TODO: we need to verify multi-rank generics for lambdas works
+
+// TODO: type aliases
+
+// TODO: I suspect lower directly to KnownType with StaticEnv will yield KnownType::List which isn't
+// what we want. 
+
+// TODO: 
+// If we are gonna switch to using list prefixes then *now* would be the time to do that
+//
+// Hm. In theory inference should be *better* now?
+// So I think we can just rely on inference instead?
+//
+// I think we'll pass a `listables: Vec<TypeKey>` into `ts`. 
+// Because the inference for it should be builtin, unlike traits which we never infer by. 
+//
+// For each unit:
+//   collect all implementations of Listable
+//   pass those to `ts`
+//
+// we would need to do this in child units as well. 
+//
+// But; this depends on the trait system. So; I should *first* try to sort out traits. 
+//  ^ it doesn't. Only headerfile. Since we're not performing a Query
+
+// TODO: sugar for range literals

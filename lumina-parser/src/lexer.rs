@@ -65,6 +65,8 @@ pub enum Token {
     For,
     #[token("..")]
     DotDot,
+    #[token(".:.")]
+    DotColonDot,
     #[token("@")]
     At,
     #[token("then")]
@@ -188,6 +190,7 @@ impl Token {
             T::Match => "start of match expression",
             T::For => "`for` keyword",
             T::DotDot => "`..`",
+            T::DotColonDot => "`.:.`",
             T::Dot => "dot pipe",
             T::At => "`@`",
             T::Then => "`then` keyword",
@@ -368,7 +371,7 @@ impl<'src> Lexer<'src> {
     fn eof(&self) -> (Token, Span) {
         (
             Token::EOF,
-            Span::new(self.source().len().checked_sub(1).unwrap_or(0) as u32, 1),
+            Span::new(self.source().len().saturating_sub(1) as u32, 1),
         )
     }
 }

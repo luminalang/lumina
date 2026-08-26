@@ -142,9 +142,11 @@ impl Span {
         }
     }
 
-    pub fn from_elems<'a, T>(elems: impl IntoIterator<Item = T>, get: impl Fn(T) -> Span) -> Self {
+    pub fn from_elems<T>(elems: impl IntoIterator<Item = T>, get: impl Fn(T) -> Span) -> Self {
         let mut params = elems.into_iter();
-        let x = params.next().unwrap();
+        let Some(x) = params.next() else {
+            return Span::null();
+        };
         match params.last() {
             Some(last) => get(x).extend(get(last)),
             None => get(x),
@@ -164,8 +166,8 @@ impl Span {
             self.indice += by as u32;
             self.length -= by as u16;
         } else {
-            self.indice -= by.abs() as u32;
-            self.length += by.abs() as u16;
+            self.indice -= by.unsigned_abs();
+            self.length += by.unsigned_abs() as u16;
         }
         self
     }
@@ -187,7 +189,7 @@ impl Span {
         if by.is_positive() {
             self.length += by as u16;
         } else {
-            self.length -= by.abs() as u16;
+            self.length -= by.unsigned_abs();
         }
         self
     }
@@ -218,11 +220,13 @@ impl Span {
         let start_of_line = seek_newline(source, self.indice as usize, false);
         let end_of_line = seek_newline(source, self.indice as usize, true);
 
-        let offset_from_start = self.indice - start_of_line as u32;
-        let offset_from_end = end_of_line as u32 - self.indice;
+        let offset_from_start = self.indice.checked_sub(start_of_line as u32).unwrap_or(0);
+        let offset_from_end = (end_of_line as u32).checked_sub(self.indice).unwrap_or(1);
 
         (
-            &source[start_of_line..end_of_line],
+            &source
+                .get(start_of_line..end_of_line)
+                .unwrap_or_else(|| "<invalid span: {start_of_line}..{end_of_line}>"),
             offset_from_start,
             offset_from_end,
         )

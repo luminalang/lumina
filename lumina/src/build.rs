@@ -1,13 +1,5 @@
 use super::cli;
-use itertools::Itertools;
-use lumina_compiler as compiler;
-// use lumina_compiler::ast;
-// use lumina_compiler::ast::{CollectError, ConfigError};
-use lumina_compiler::backend::link_native_binary;
-use lumina_compiler::{env, Target};
-use lumina_key as key;
-use lumina_key::M;
-use lumina_util::Span;
+use lumina_compiler::{env, ProjectPath, Target};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf as FilePathBuf;
@@ -16,7 +8,7 @@ use std::process::ExitCode;
 
 pub fn build_project(
     env: env::Environment,
-    run: bool,
+    _run: bool,
     settings: cli::BuildFlags,
 ) -> Result<FilePathBuf, ExitCode> {
     let mut project_path = env.current_directory.clone();
@@ -34,7 +26,7 @@ pub fn build_project(
         .map(|name| Target::try_from(name.as_str()).unwrap())
         .unwrap_or_else(Target::native);
 
-    lumina_compiler::testing(target, project_path, env);
+    lumina_compiler::compile(settings.epanic, target, ProjectPath(project_path), env);
 
     Ok(FilePathBuf::from("/bin/echo"))
     // todo!();

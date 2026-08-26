@@ -1,0 +1,41 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "lumina",
+      "camelcase": "Lumina",
+      "title": "Lumina",
+      "scope": "source.lumina",
+      "file-types": [
+        "lm"
+      ],
+      "injection-regex": "^lumina$",
+      "class-name": "TreeSitterLumina"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MPL-2",
+    "description": "Lumina grammar for tree-sitter",
+    "authors": [
+      {
+        "name": "simvux",
+        "url": ""
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/tree-sitter/tree-sitter-lumina",
+      "funding": ""
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": false,
+    "java": false,
+    "node": false,
+    "python": false,
+    "rust": true,
+    "swift": false,
+    "zig": false
+  }
+}

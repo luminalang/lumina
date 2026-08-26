@@ -1,0 +1,147 @@
+use std:ptr
+use std:io
+use std:list [List]
+use std:list:slice [Slice]
+use std:list:vec [Vec]
+
+@![langItem(String as string)]
+
+// NOTE: DO NOT SWITCH PLACES OF METHODS.
+//
+// THEIR INDICES ARE CONSTANTS IN COMPILER. 
+pub trait Stringable
+  fn split_at_or_empty as self uint -> (self, self)
+  fn split_while as self (fn u8 -> bool) -> (self, self)
+  fn split_first_or_null as self -> (u8, self)
+  fn equals as self self -> bool
+  fn from_raw_parts as *u8 uint -> self
+
+// TODO: all these arguments should be flipped 
+// so that they work with dot-pipe. 
+impl Stringable for string
+  fn split_at_or_empty str i as string uint -> (string, string) =
+    let (x, y) = str.inner . split_at i
+     in ({ inner = x }, { inner = y })
+
+  fn split_while str f as string (fn u8 -> bool) -> (string, string) =
+    let (x, y) = str.inner . break #(\byte -> not (f byte))
+     in ({ inner = x }, { inner = y })
+
+  fn split_first_or_null str as string -> (u8, string) =
+    match str.inner . split
+    | Nothing -> (0, str)
+    | Just (x, xs) -> (x, { inner = xs })
+
+
+
+  fn equals lhs rhs as string string -> bool =
+    lhs == rhs
+
+  fn from_raw_parts ptr len as *u8 uint -> string =
+    if len == 0 then
+      { string | inner = List:Nil }
+    else
+      { string | inner = List:Slice { Slice u8 | ptr, len, source = ptr } }
+
+pub fn break f str as (fn u8 -> bool) string -> (string, string) =
+  Stringable:split_while str #f
+
+pub fn skip n { inner } as uint string -> string =
+  inner . list:skip n . fromBytes
+
+pub fn fromByteVec vec as Vec u8 -> string =
+  { string | inner = vec . to_slice . to_list }
+
+pub fn fromByteSlice slice as Slice u8 -> string =
+  { string | inner = List:Slice slice }
+
+pub fn fromBytes inner as List u8 -> string =
+  { string | inner }
+
+pub type string { inner List u8 }
+
+pub fn len { inner } as string -> uint = inner . len
+
+pub fn take n str as uint string -> string =
+  { string | inner = std:list:take n str.inner }
+
+pub fn joinWith sep strings as string [string] -> string =
+  match strings
+  . map #show
+  | [] -> ""
+  | [x, ..xs] -> xs . fold #(\s elem -> s <> sep <> elem) x
+
+// NOTE: returned pointer is weak
+pub fn toByteVec str as string -> Vec u8 =
+  str.inner . toVec
+
+pub fn to_c_str str as string -> *u8 =
+  let vec = vec:capacity (1 + len str) in
+    do str.inner
+    . fold
+      #(
+        \i v ->
+          do vec:unsafe_set i v vec
+           then i + 1
+      )
+      0 then
+    // TODO: just use a `list_to_vec` method
+    do vec:unsafe_set vec.len 0 vec
+     then vec.ptr
+
+pub trait ToString
+  fn show as self -> string
+
+when
+  a can ToString
+  b can ToString
+pub fn <> left right as a b -> string =
+  show left <++> show right
+
+pub fn <:> left right as u8 string -> string =
+  { string | inner = left : right.inner }
+
+pub fn <++> left right as string string -> string =
+  { string | inner = left.inner ++ right.inner }
+
+pub fn <+> left right as string u8 -> string =
+  { string | inner = left.inner ++ [right] }
+
+pub fn contains_char c str as u8 string -> bool =
+  str.inner . any #(\b -> b == c)
+
+impl ToString for string
+  fn show str = str
+
+pub fn split_first str as string -> Maybe (u8, string) =
+  str.inner
+  . split
+  . map #(\(c, xs) -> (c, { string | inner = xs }))
+
+// TODO: Considder splitting equality out from Compare
+// (Eq + Ordering)
+//
+// Since adding it for string is kinda stupid
+//
+// Trait aliases could be nice here
+impl Compare for string
+  fn compare lhs rhs as string string -> Ordering = compare lhs.inner rhs.inner
+  fn == lhs rhs as self self -> bool =
+    lhs.inner == rhs.inner
+
+  fn < lhs rhs as self self -> bool =
+    lhs.inner < rhs.inner
+
+  fn > lhs rhs as self self -> bool =
+    lhs.inner > rhs.inner
+
+// TODO: figure out where we want this. Perhaps we want `std:u8:fromString?` or perhaps a Parse trait like Rust?
+// TODO: if we add a `fromInt` to either `Num` or as a seperate trait; we can generalise this. 
+pub fn parse_int str as string -> int =
+  str.inner . fold #(\acc n -> acc * 10 + ((n - '0') as int)) 0
+
+// pub fn lines str as string -> [string] =
+//   split_on "\n" str
+// 
+// pub fn split_on c str as string, string -> [string] = 
+//   str.inner . split_on c.inner

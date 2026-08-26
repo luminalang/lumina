@@ -6,5 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-lumina-collections = { path = "../lumina-collections" }
+cranelift-entity = { version = "0.125.3", features = ["enable-serde"] }
+# lumina-collections = { path = "../lumina-collections" }
+# cranelift = "*"
 itertools = "*"
+serde = { version = "1.0.228", features = ["serde_derive"] }

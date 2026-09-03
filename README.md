@@ -1,6 +1,6 @@
 ## STATUS
 
-The master branch contains the last publically usable version of the compiler. However; all development is currently occuring on a not-yet-pushed `v1.0` branch. The new version features various syntax and project configuration improvements, full incremental compilation, new type checker based on my [Micropass Inference Algorithm](https://articles.luminalang.com/a/micropass-inference/), and a RVSDG IR.
+The master branch contains the last publically usable version of the compiler. However; all development is currently occuring on the `custom-rewrite` branch. The new version features various syntax and project configuration improvements, incremental compilation, new type checker based on my [Micropass Inference Algorithm](https://articles.luminalang.com/a/micropass-inference/), and a RVSDG IR.
 
 ![Example of the Lumina programming language and compiler.](misc/lumina-example.png)
 

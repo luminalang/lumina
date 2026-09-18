@@ -1,0 +1,91 @@
+---
+source: lumina-patterns/src/tests.rs
+expression: str
+---
+Tuple(nelems=3)
+  ..1(nparams=0):
+    ..49(nparams=0):
+      UNREACHED
+    50..200(nparams=0):
+      ..128(nparams=0):
+        branch-expr0
+      129..(nparams=0):
+        branch-expr1
+      
+    201..(nparams=0):
+      ..128(nparams=0):
+        branch-expr0
+      129..(nparams=0):
+        UNREACHED
+      
+    
+  2..3(nparams=0):
+    ..49(nparams=0):
+      UNREACHED
+    50..200(nparams=0):
+      ..128(nparams=0):
+        branch-expr0
+      129..(nparams=0):
+        branch-expr1
+      
+    201..210(nparams=0):
+      ..128(nparams=0):
+        branch-expr0
+      129..(nparams=0):
+        branch-expr3
+      
+    211..(nparams=0):
+      ..128(nparams=0):
+        branch-expr0
+      129..(nparams=0):
+        UNREACHED
+      
+    
+  4..6(nparams=0):
+    ..49(nparams=0):
+      UNREACHED
+    50..200(nparams=0):
+      ..128(nparams=0):
+        branch-expr0
+      129..(nparams=0):
+        branch-expr1
+      
+    201..(nparams=0):
+      ..128(nparams=0):
+        branch-expr0
+      129..(nparams=0):
+        UNREACHED
+      
+    
+  7..(nparams=0):
+    UNREACHED
+  
+
+inverted missing tree:
+Tuple(nelems=3)
+  ..1(nparams=0):
+    ..49(nparams=0):
+      UNREACHED
+    201..(nparams=0):
+      129..(nparams=0):
+        UNREACHED
+      
+    
+  2..3(nparams=0):
+    ..49(nparams=0):
+      UNREACHED
+    211..(nparams=0):
+      129..(nparams=0):
+        UNREACHED
+      
+    
+  4..6(nparams=0):
+    ..49(nparams=0):
+      UNREACHED
+    201..(nparams=0):
+      129..(nparams=0):
+        UNREACHED
+      
+    
+  7..(nparams=0):
+    UNREACHED

@@ -1,6 +1,7 @@
+use super::{Branching, DecTree, IsReachable};
 use derive_new::new;
 use lumina_typesystem::IntSize;
-use std::fmt;
+use std::{cmp::Ordering, fmt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, new)]
 pub struct Range {
@@ -10,6 +11,13 @@ pub struct Range {
 }
 
 impl Range {
+    pub fn maximum_of_size(size: IntSize) -> Range {
+        let start = size.min_value() as i128;
+        let end = size.max_value() as i128;
+
+        Range { con: Constraints { min: start, max: end }, start, end }
+    }
+
     pub fn full(&self) -> Self {
         Range { con: self.con, start: self.con.max, end: self.con.max }
     }
@@ -35,6 +43,81 @@ impl From<IntSize> for Constraints {
     fn from(intsize: IntSize) -> Self {
         let (min, max) = (intsize.min_value() as i128, intsize.max_value() as i128);
         Constraints { min, max }
+    }
+}
+
+impl Branching<Range> {
+    pub fn merge(&mut self, new: Self) -> IsReachable {
+        let mut is_reachable = false;
+
+        for (new_range, params, new_next) in new.branches.into_iter() {
+            assert_eq!(params, 0);
+            is_reachable |= self.merge_int_at(0, new_range.start, new_range.end, new_next);
+        }
+
+        is_reachable
+    }
+
+    pub(crate) fn merge_int_at(
+        &mut self,
+        mut i: usize,
+        start: i128,
+        end: i128,
+        next: DecTree,
+    ) -> IsReachable {
+        let (range, params, tree) = self
+            .branches
+            .get_mut(i)
+            .expect("complete int not generated from type");
+        assert_eq!(*params, 0);
+
+        assert!(start <= end);
+
+        let excluded = end < range.start || start > range.end;
+        if excluded {
+            return self.merge_int_at(i + 1, start, end, next);
+        }
+
+        let mut reachable = false;
+
+        match start.cmp(&range.start) {
+            Ordering::Less => unreachable!("would've already been merged by now?"),
+            Ordering::Equal => {}
+            Ordering::Greater => {
+                // we want to keep the branches sorted. So; if there's anything on the left-side
+                // that we shouldn't merge with then we split that out first and continue with the rest.
+                let untouched_left = Range::new(range.con, range.start, start - 1);
+                let untouched_next = tree.clone();
+                self.branches.insert(i, (untouched_left, 0, untouched_next));
+
+                i += 1;
+                self.branches[i].0.start = start;
+            }
+        }
+
+        let (range, params, tree) = &mut self.branches[i];
+        assert_eq!(*params, 0);
+
+        match end.cmp(&range.end) {
+            Ordering::Less => {
+                // ditto but for the right side
+                let untouched_right = Range::new(range.con, end + 1, range.end);
+                let untouched_next = tree.clone();
+                self.branches
+                    .insert(i + 1, (untouched_right, 0, untouched_next));
+
+                self.branches[i].0.end = end;
+            }
+            Ordering::Equal => {}
+            Ordering::Greater => {
+                let start = range.end + 1;
+                reachable |= self.merge_int_at(i + 1, start, end, next.clone());
+            }
+        }
+
+        let (_, params, i_next) = &mut self.branches[i];
+        assert_eq!(*params, 0);
+        reachable | i_next.merge(next)
     }
 }
 

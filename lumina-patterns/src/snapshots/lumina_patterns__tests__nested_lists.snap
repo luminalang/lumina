@@ -1,0 +1,17 @@
+---
+source: lumina-patterns/src/tests.rs
+expression: str
+---
+variant0(nparams=0):
+  branch-expr2
+variant1(nparams=2):
+  variant0(nparams=0):
+    _:
+      branch-expr0
+  variant1(nparams=2):
+    Tuple(nelems=0)
+      branch-expr0
+  
+
+
+inverted missing tree:

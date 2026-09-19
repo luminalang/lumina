@@ -174,21 +174,21 @@ pub trait BranchingKey {
     fn into_dectree(self) -> DecTree;
 }
 
-impl Into<DecTree> for Branching<bool> {
-    fn into(self) -> DecTree {
-        DecTree::Bools { branching: self }
+impl From<Branching<bool>> for DecTree {
+    fn from(val: Branching<bool>) -> Self {
+        DecTree::Bools { branching: val }
     }
 }
 
-impl Into<DecTree> for Branching<key::Variant> {
-    fn into(self) -> DecTree {
-        DecTree::Variants { branching: self }
+impl From<Branching<key::Variant>> for DecTree {
+    fn from(val: Branching<key::Variant>) -> Self {
+        DecTree::Variants { branching: val }
     }
 }
 
-impl Into<DecTree> for Branching<DeduplicatedStringCheck> {
-    fn into(self) -> DecTree {
-        DecTree::Strings { branching: self, wildcard_next: None }
+impl From<Branching<DeduplicatedStringCheck>> for DecTree {
+    fn from(val: Branching<DeduplicatedStringCheck>) -> Self {
+        DecTree::Strings { branching: val, wildcard_next: None }
     }
 }
 

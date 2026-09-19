@@ -1,5 +1,5 @@
 use super::{
-    Bind, ExprId, FuncLower, Identifier, Literal, LoweringFunc, Pattern, PatternId, Tr, Typed,
+    Bind, ExprId, FuncLower, Identifier, Literal, Pattern, PatternId, Tr, Typed,
     func::FieldAssignment, func::MergedFields, operator,
 };
 use crate::hir::TypeKey;

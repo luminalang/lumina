@@ -93,7 +93,7 @@ pub fn lower_project_to_hir<'s>(
     //
     // This is done before lowering any function bodies as it makes dotpipe name resolution easier.
     // All public functions need to be statically type annotated so it's fine to do this.
-    for (func, funcdef) in ast.functions.iter() {
+    for funcdef in ast.functions.values() {
         let item = &ast.items[funcdef.item];
 
         files.switch_errors_file(item.file);

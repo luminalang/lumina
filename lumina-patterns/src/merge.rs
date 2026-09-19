@@ -9,7 +9,7 @@ pub mod reachable {
 }
 
 impl DecTree {
-    pub(crate) fn merge(&mut self, mut new: DecTree) -> Reachable {
+    pub(crate) fn merge(&mut self, new: DecTree) -> Reachable {
         trace!("merging\n{new}\n -- into --\n{self}");
 
         match new {
@@ -120,7 +120,7 @@ impl DecTree {
                 });
                 DecTree::Array { elems: *elems, next }
             }
-            DecTree::IfGuarded { false_next, .. } => Self::expanded_wildcard(&false_next, next),
+            DecTree::IfGuarded { false_next, .. } => Self::expanded_wildcard(false_next, next),
             DecTree::Variants { branching } => DecTree::Variants {
                 branching: Branching {
                     full_size: branching.full_size,

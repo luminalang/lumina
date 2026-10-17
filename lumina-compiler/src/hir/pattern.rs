@@ -1,10 +1,14 @@
-use super::{Bind, ExprId, FuncLower, PatternId, TypeKey, Typed, symbols};
+use std::collections::VecDeque;
+
+use super::{Bind, ExprId, FuncLower, LoweringArena, PatternId, Type, TypeKey, Typed, symbols};
 use crate::hir::func::{FieldAssignment, MergedFields};
 use crate::hir::ty::{LoweringKind as _, TypeLower};
-use crate::{InterResolved, emit_err_item_not_found, errors, key};
+use crate::key::Map;
+use crate::{Context, InterResolved, TranslationUnit, emit_err_item_not_found, errors, key};
 use key::EntityList;
 use lumina_parser as par;
-use lumina_typesystem as ts;
+use lumina_patterns::{Branching, DecTree, LIST_CONS};
+use lumina_typesystem::{self as ts, KnownType};
 use lumina_typesystem::{ArrayLen, IntSize, Prim, TaggedGeneric, Var};
 use lumina_util::{Span, Spanned, Tr};
 use rvsdg::EntityIter;
@@ -79,7 +83,6 @@ impl<'v, 's> FuncLower<'v, 's> {
                                 .lowering_instantiation()
                                 .variant(ty, var, apath.as_ref());
 
-                        // let (f, return_type) = self.tctx.inst_variant(pat.span, ty, var, 1, &[]);
                         let appl = self.tctx.env.apply(pat.span, fvar);
                         for pat in params.as_slice(self.uarena.pat_pool(self.id)) {
                             let ty = self.uarena.pats[*pat].ty;
@@ -156,8 +159,8 @@ impl<'v, 's> FuncLower<'v, 's> {
             par::Pattern::List(elems, list_length) => {
                 self.list_pattern(pat.span, elems, list_length)
             }
-            par::Pattern::ListDotDot(elem) => {
-                todo!();
+            par::Pattern::ListDotDot(_) => {
+                unreachable!("ET: ListDotDot outside of list");
             }
             par::Pattern::Tuple(elems) => {
                 let (elems, elems_types) = self.pats_and_typeof(elems);
@@ -364,9 +367,13 @@ impl<'v, 's> FuncLower<'v, 's> {
         match list_length {
             par::ListLength::None => {
                 let ty = self.tctx.define(span, |env| env.list(elem_ty));
-                self.add_typed_pat(Pattern::List(elems, None), ty, span)
+                self.add_typed_pat(Pattern::List(elems, xs), ty, span)
             }
             par::ListLength::Exact(len) => {
+                if xs.is_some() {
+                    panic!("TODO/ET: `..` in array");
+                }
+
                 let len = self
                     .tctx
                     .define(span, |env| env.const_int(len.value as i128));
@@ -374,6 +381,10 @@ impl<'v, 's> FuncLower<'v, 's> {
                 self.add_typed_pat(Pattern::Array(elems), ty, span)
             }
             par::ListLength::Name(name) if **name == "_" => {
+                if xs.is_some() {
+                    panic!("TODO/ET: `..` in array");
+                }
+
                 let len = self
                     .tctx
                     .define(span, |env| env.const_int(given_len as i128));
@@ -381,6 +392,10 @@ impl<'v, 's> FuncLower<'v, 's> {
                 self.add_typed_pat(Pattern::Array(elems), ty, span)
             }
             par::ListLength::Name(name) => {
+                if xs.is_some() {
+                    panic!("TODO/ET: `..` in array");
+                }
+
                 if let Some(generic) = ts::find_generic(&self.tctx.fenv, self.tctx.scope, **name) {
                     let len = self.tctx.define(span, |env| env.generic(generic));
                     let ty = self.tctx.define(span, |env| env.array(elem_ty, len));
@@ -503,5 +518,297 @@ impl<'v, 's> FuncLower<'v, 's> {
         dbg!(&init, &ops);
         todo!("do we also want `@`? Or is that *just* for string patterns");
         // No we need `@` for `a @ <pat>` and we also are desugaring `a` to that
+    }
+}
+
+pub struct DecTreeLower<'a, 's> {
+    types: &'a Map<Var, Type>,
+    uarena: &'a LoweringArena<'s>,
+    ctx: Context<TranslationUnit>,
+    project: key::Project,
+    func: key::Func,
+    tail: lumina_patterns::TailExpr,
+
+    strings: Map<lumina_patterns::DeduplicatedStringCheck, Vec<StringPattern<'s>>>,
+
+    pending: Vec<Pending>,
+}
+
+#[derive(Debug)]
+enum Pending {
+    Explicit(PatternId),
+    ListCons,
+    ImplicitWildcard,
+    ListNil,
+}
+
+impl<'a, 's> DecTreeLower<'a, 's> {
+    pub fn new(
+        uarena: &'a LoweringArena<'s>,
+        ctx: Context<TranslationUnit>,
+        types: &'a Map<Var, Type>,
+        project: key::Project,
+        func: key::Func,
+        tail: lumina_patterns::TailExpr,
+    ) -> Self {
+        Self {
+            uarena,
+            strings: Map::new(),
+            ctx,
+            project,
+            tail,
+            types,
+            func,
+            pending: Vec::new(),
+        }
+    }
+
+    fn next(&mut self) -> DecTree {
+        self.pending
+            .pop()
+            .map(|pending| match pending {
+                Pending::ListNil => {
+                    let next = self.next();
+                    Branching::list()
+                        .variant(lumina_patterns::LIST_NIL, next)
+                        .into_list_dectree()
+                }
+                Pending::ListCons => {
+                    let next = self.next();
+                    Branching::list()
+                        .variant(lumina_patterns::LIST_CONS, next)
+                        .into_list_dectree()
+                }
+                Pending::Explicit(pat) => self.to_tree(pat),
+                Pending::ImplicitWildcard => {
+                    let next = self.next();
+                    DecTree::Wildcard { next: Box::new(next) }
+                }
+            })
+            .unwrap_or_else(|| lumina_patterns::DecTree::Tail(self.tail))
+    }
+
+    fn buffer(&mut self, patterns: EntityList<PatternId>) {
+        for pat in patterns
+            .as_slice(self.uarena.pat_pool(self.func))
+            .iter()
+            .rev()
+        {
+            self.pending.push(Pending::Explicit(*pat));
+        }
+    }
+
+    pub fn to_tree(&mut self, pat: PatternId) -> DecTree {
+        tracing::trace!(
+            "Converting into tree:\n{:#?}",
+            &self.uarena.pats[pat].entity
+        );
+
+        match &self.uarena.pats[pat].entity {
+            Pattern::Any => {
+                let next = self.next();
+                DecTree::Wildcard { next: Box::new(next) }
+            }
+            Pattern::Int(bounds, ty) => {
+                let Type::Prim(ts::Prim::Int(size)) = &self.types[*ty] else {
+                    return DecTree::Error;
+                };
+                self.int_bounds(*bounds, *size)
+            }
+            Pattern::Char(_) => todo!(),
+            Pattern::Variant(type_key, variant, params) => {
+                self.var(*type_key, *variant, params.clone())
+            }
+            Pattern::Record(fields) => {
+                let ty = &self.uarena.pats[pat].ty;
+                let Type::Defined(type_key, _) = &self.types[*ty] else {
+                    return DecTree::Error;
+                };
+
+                self.unresolved_fields(*type_key, fields)
+            }
+            Pattern::Tuple(elems) => {
+                self.elems_then(elems.clone(), |elems, next| DecTree::Tuple { elems, next })
+            }
+            Pattern::List(entity_list, pattern_id) => self.list(entity_list.clone(), *pattern_id),
+            Pattern::Array(elems) => {
+                self.elems_then(elems.clone(), |elems, next| DecTree::Array { elems, next })
+            }
+            Pattern::GenericArray(entity_list, tr) => todo!(),
+            Pattern::Bool(b) => {
+                let next = self.next();
+                Branching::bools().bool(*b, next).into()
+            }
+            Pattern::Float(_) => todo!(),
+            Pattern::Poison => DecTree::Error,
+            Pattern::BindTo(_, pattern_id) => self.to_tree(*pattern_id),
+            Pattern::String(string_patterns) => self.string(string_patterns),
+        }
+    }
+
+    fn var(&mut self, tkey: TypeKey, var: key::Variant, params: EntityList<PatternId>) -> DecTree {
+        let branching = self.ctx.in_origin(self.project, tkey.origin, |unit| {
+            let all = unit
+                .header
+                .variants(tkey.key)
+                .expect("variant is of non-sum type")
+                .0
+                .iter()
+                .map(|(variant, params)| (variant, params.len()));
+
+            Branching::variants(all)
+        });
+
+        self.buffer(params.clone());
+        let next = self.next();
+
+        branching.variant(var, next).into()
+    }
+
+    fn list(&mut self, elems: EntityList<PatternId>, xs: Option<PatternId>) -> DecTree {
+        // self.buffer(elems);
+        // let next = self.next();
+
+        // We want the `xs` (or end) to occur *after* the current elements but *before* anything else buffered.
+        // Doing it this way works but only with the assumption that `elems` are not buffered but edge-cased in the fold below.
+        match xs {
+            Some(pat) => {
+                dbg!(&self.uarena.pats[pat].entity);
+                self.pending.push(Pending::Explicit(pat))
+            }
+            None => self.pending.push(Pending::ListNil),
+        }
+
+        // let next = self.next();
+
+        // todo!("this won't work if each `elem` ahs its own params i think?");
+        // or would it???
+        //
+        // it might tbh...
+        //
+        // the `next` buffer has already been consumed.
+        //
+        // let's just try it at a small scale and see what happens
+
+        // perhaps we should just push them in the right order and then figure
+        // something out after
+        //
+        // We could wrap them with something... hm now that's an idea
+        let mut iter = elems.as_slice(self.uarena.pat_pool(self.func)).iter().rev();
+
+        // [1, 2 : xs]
+        //
+        // Cons 1 (Cons 2 xs)
+
+        // [3, 4]
+        //
+        // Cons 3 (Cons 4 Nil)
+
+        // hm... but it's branching no?
+        //
+        // we lower to branching but the code isn't. However I'm not sure if this will work.
+        //
+        // hm... it's actually the `nil` that should have the `next` no? where does the Unreached go?
+
+        while let Some(pat) = iter.next() {
+            self.pending.push(Pending::Explicit(*pat));
+            self.pending.push(Pending::ListCons);
+        }
+
+        // [3, 4]
+        // { ListNil, Explicit(4), ListCons, Explicit(3), ListCons }
+
+        // match iter.next() {
+        //     Some(_) => todo!(),
+        //     None => {}
+        // }
+
+        dbg!(self.next())
+
+        // for pat in  {
+        //     self.pending.push(Pending::ListCons);
+        //     self.pending.push(Pending::Explicit(*pat));
+        // }
+
+        // self.next()
+
+        // elems
+        //     .as_slice(self.uarena.pat_pool(self.func))
+        //     .iter()
+        //     .rev()
+        //     .fold(next, |next, elem| {
+        //         todo!("but we also need to use the `elem`...");
+        //         Branching::list()
+        //             .variant(lumina_patterns::LIST_CONS, next)
+        //             .into_list_dectree()
+        //     })
+    }
+
+    fn string(&mut self, extractors: &[StringPattern<'s>]) -> DecTree {
+        let next = self.next();
+        let string_pat_id = self.strings.push(extractors.to_vec());
+        Branching::strings().string(string_pat_id, next).into()
+    }
+
+    fn unresolved_fields(&mut self, tkey: TypeKey, fields: &[(Tr<&'s str>, PatternId)]) -> DecTree {
+        self.ctx
+            .clone()
+            .in_origin(self.project, tkey.origin, |unit| {
+                let field_iter = unit.header.fields(tkey.key).unwrap();
+                let mut field_count = 0;
+
+                'fields: for field in field_iter.rev() {
+                    field_count += 1;
+                    let (_, name) = unit.header.field(tkey.key, field);
+
+                    for (fname, fpat) in fields {
+                        // The field is explicitly set, so use that pattern
+                        if **fname == name {
+                            self.pending.push(Pending::Explicit(*fpat));
+                            continue 'fields;
+                        }
+                    }
+
+                    // The field is not set, so put an implicit wildcard
+                    self.pending.push(Pending::ImplicitWildcard);
+                }
+
+                let next = self.next();
+
+                DecTree::Record { fields: field_count, next: Box::new(next) }
+            })
+    }
+
+    fn elems_then<F>(&mut self, elems: EntityList<PatternId>, constr: F) -> DecTree
+    where
+        F: FnOnce(usize, Box<DecTree>) -> DecTree,
+    {
+        self.buffer(elems.clone());
+        let next = self.next();
+        let len = elems.len(self.uarena.pat_pool(self.func));
+        constr(len, Box::new(next))
+    }
+
+    fn int_bounds(&mut self, bounds: [par::pat::Bound; 2], size: IntSize) -> DecTree {
+        let min = size.min_value() as i128;
+        let max = size.max_value() as i128;
+
+        let start = match bounds[0] {
+            par::pat::Bound::Excess => min,
+            par::pat::Bound::Neg(n) => -(n as i128),
+            par::pat::Bound::Pos(n) => n as i128,
+        };
+
+        let end = match bounds[1] {
+            par::pat::Bound::Excess => max,
+            par::pat::Bound::Neg(n) => -(n as i128),
+            par::pat::Bound::Pos(n) => n as i128,
+        };
+
+        let next = self.next();
+
+        Branching::ints(min, max)
+            .range(start..end, next)
+            .into_ints_dectree(size)
     }
 }

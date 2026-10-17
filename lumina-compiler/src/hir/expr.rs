@@ -1,5 +1,5 @@
 use super::{
-    Bind, ExprId, FuncLower, Identifier, Literal, Pattern, PatternId, Tr, Typed,
+    Bind, ExprId, FuncLower, Identifier, Literal, MatchKind, Pattern, PatternId, Tr, Typed,
     func::FieldAssignment, func::MergedFields, operator,
 };
 use crate::hir::TypeKey;
@@ -13,20 +13,6 @@ use lumina_typesystem as ts;
 use lumina_typesystem::Var;
 use lumina_util::{Span, Spanned};
 use tracing::info;
-
-// Various constructs are desugared into `match`.
-//
-// But for error messages it may be useful to know what created the `match`.
-#[derive(Debug, Clone)]
-pub enum MatchKind {
-    Parameter(usize),
-    FieldBind,
-    PartialApplCapturing,
-    User,
-    Let,
-    Do,
-    If,
-}
 
 #[derive(Debug, Clone)]
 pub enum Expr<'s> {
@@ -56,12 +42,7 @@ pub enum Expr<'s> {
     // Given parameters are partially applied, and will be captured.
     PartialApplication(key::Lambda, key::EntityList<ExprId>),
 
-    Match(
-        MatchKind,
-        ExprId,
-        key::EntityList<PatternId>,
-        key::EntityList<ExprId>,
-    ),
+    Match(key::Match),
     As(ExprId, Tr<par::Type<'s>>),
     Array(key::EntityList<ExprId>),
     List(key::EntityList<ExprId>),
@@ -563,7 +544,11 @@ impl<'a, 's> FuncLower<'a, 's> {
             expr_master
         };
 
-        let match_expr = Expr::Match(MatchKind::User, matched_expr, plist, elist);
+        let match_key =
+            self.uarena
+                .add_match_table(self.id, MatchKind::User, matched_expr, plist, elist);
+
+        let match_expr = Expr::Match(match_key);
         self.add_typed_expr(match_expr, expr_master, span)
     }
 
@@ -576,13 +561,25 @@ impl<'a, 's> FuncLower<'a, 's> {
         self.tctx.env.add_sameas_member(same_as, truthy_ty);
         self.tctx.env.add_sameas_member(same_as, falsely_ty);
 
-        let ptrue = self.pat(par::Pattern::String("true", vec![]).tr(spans[1]).as_ref());
-        let pfalse = self.pat(par::Pattern::String("false", vec![]).tr(spans[1]).as_ref());
+        let ptrue = self.pat(
+            par::Pattern::Name(Identifier::from_raw("true"), vec![])
+                .tr(spans[1])
+                .as_ref(),
+        );
+        let pfalse = self.pat(
+            par::Pattern::Name(Identifier::from_raw("false"), vec![])
+                .tr(spans[1])
+                .as_ref(),
+        );
 
         let plist = EntityList::from_slice(&[ptrue, pfalse], self.uarena.pat_pool_mut(self.id));
         let elist = EntityList::from_slice(&[truthy, falsely], self.uarena.expr_pool_mut(self.id));
 
-        let match_expr = Expr::Match(MatchKind::If, cond, plist, elist);
+        let match_key = self
+            .uarena
+            .add_match_table(self.id, MatchKind::If, cond, plist, elist);
+
+        let match_expr = Expr::Match(match_key);
 
         self.add_typed_expr(match_expr, if_expr_type, span)
     }
@@ -613,7 +610,11 @@ impl<'a, 's> FuncLower<'a, 's> {
         let plist = EntityList::from_slice(&[let_pat], self.uarena.pat_pool_mut(self.id));
         let elist = EntityList::from_slice(&[let_and_then], self.uarena.expr_pool_mut(self.id));
 
-        let match_expr = Expr::Match(MatchKind::Let, matched_expr, plist, elist);
+        let match_key =
+            self.uarena
+                .add_match_table(self.id, MatchKind::Let, matched_expr, plist, elist);
+
+        let match_expr = Expr::Match(match_key);
         self.add_typed_expr(match_expr, and_then_type, span)
     }
 
@@ -652,7 +653,12 @@ impl<'a, 's> FuncLower<'a, 's> {
         let plist = EntityList::from_slice(&[let_pat], self.uarena.pat_pool_mut(self.id));
         let elist = EntityList::from_slice(&[let_expr], self.uarena.expr_pool_mut(self.id));
 
-        let match_expr = Expr::Match(MatchKind::PartialApplCapturing, matched_expr, plist, elist);
+        let kind = MatchKind::PartialApplCapturing;
+        let match_key = self
+            .uarena
+            .add_match_table(self.id, kind, matched_expr, plist, elist);
+
+        let match_expr = Expr::Match(match_key);
         self.add_typed_expr(match_expr, let_expr_type, Span::null())
     }
 
@@ -681,7 +687,12 @@ impl<'a, 's> FuncLower<'a, 's> {
         let and_then = and_then(self, bind);
         let elist = EntityList::from_slice(&[and_then], self.uarena.expr_pool_mut(self.id));
 
-        let match_expr = Expr::Match(MatchKind::FieldBind, field_accessor, plist, elist);
+        let kind = MatchKind::FieldBind;
+        let match_key = self
+            .uarena
+            .add_match_table(self.id, kind, field_accessor, plist, elist);
+
+        let match_expr = Expr::Match(match_key);
         let and_then_type = self.uarena.exprs[and_then].ty;
         self.add_typed_expr(match_expr, and_then_type, field_name.span)
     }

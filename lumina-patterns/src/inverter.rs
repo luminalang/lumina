@@ -30,9 +30,9 @@ impl Inverter {
             DecTree::List { branching } => {
                 self.branches_then(branching, |_, branching| DecTree::List { branching })
             }
-            DecTree::Ints { size, next } => {
-                self.branches_then(next, |_, next| DecTree::Ints { size: *size, next })
-            }
+            DecTree::Ints { size, branching: next } => self.branches_then(next, |_, next| {
+                DecTree::Ints { size: *size, branching: next }
+            }),
             DecTree::Bools { branching } => {
                 self.branches_then(branching, |_, branching| DecTree::Bools { branching })
             }

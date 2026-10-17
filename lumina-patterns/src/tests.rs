@@ -84,6 +84,36 @@ fn bool_into_wildcard() {
 }
 
 #[test]
+fn simple_ints() {
+    logger();
+
+    let u8 = IntSize::new(false, 8);
+
+    dbg!(&u8.max_value());
+
+    let mut num = DecTree::Ints {
+        size: u8,
+        branching: Branching::ints(u8.min_value() as i128, u8.max_value() as i128)
+            .range(0..0, tail(0)),
+    };
+
+    let one = DecTree::Ints {
+        size: u8,
+        branching: Branching::ints(u8.min_value() as i128, u8.max_value() as i128)
+            .range(1..1, tail(1)),
+    };
+
+    let wc = DecTree::wildcard(tail(2));
+
+    assert_eq!(num.merge(one), reachable::YES);
+    assert_eq!(num.merge(wc), reachable::YES);
+
+    let missing = num.invert_to_missing();
+
+    snapshot_tree!(num, missing);
+}
+
+#[test]
 fn int_matrix() {
     logger();
 
@@ -296,11 +326,9 @@ fn ints<const N: usize>(
 ) -> DecTree {
     let (min, max) = (size.min_value() as i128, size.max_value() as i128);
 
-    chain
-        .into_iter()
-        .rev()
-        .fold(next, |next, range| DecTree::Ints {
-            size,
-            next: Branching::ints(min, max).range(range, next),
-        })
+    chain.into_iter().rev().fold(next, |next, range| {
+        Branching::ints(min, max)
+            .range(range, next)
+            .into_ints_dectree(size)
+    })
 }

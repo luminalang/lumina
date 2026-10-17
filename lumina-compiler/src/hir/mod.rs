@@ -344,6 +344,24 @@ impl<'s> LoweringArena<'s> {
         }
     }
 
+    pub fn add_match_table(
+        &mut self,
+        f: key::Func,
+        kind: MatchKind,
+        destructed: ExprId,
+        patterns: EntityList<PatternId>,
+        exprs: EntityList<ExprId>,
+    ) -> key::Match {
+        as_lowering!(&mut self.funcs[f],
+            "add_match_table",
+            { matches, .. } => matches.push(LoweringMatchTable { destructed, kind, patterns, exprs })
+        )
+    }
+
+    pub fn take_match_table(&mut self, f: key::Func) -> Map<key::Match, LoweringMatchTable> {
+        as_lowering!(&mut self.funcs[f], "take_match_table", { matches, .. } => std::mem::replace(matches, Map::new()))
+    }
+
     pub fn semi_init_func(&mut self, f: key::Func) {
         assert!(matches!(self.funcs[f], LoweringFunc::Pending));
         self.funcs[f] = LoweringFunc::SemiLowering { pat_pool: key::ListPool::new() };
@@ -359,6 +377,7 @@ impl<'s> LoweringArena<'s> {
         self.funcs[f] = LoweringFunc::Lowering {
             preprocessed: pre,
             lambdas: Map::new(),
+            matches: Map::new(),
             params,
             ret,
             expr_pool: key::ListPool::new(),
@@ -370,6 +389,7 @@ impl<'s> LoweringArena<'s> {
         &mut self,
         f: key::Func,
         static_types: Map<Var, Type>,
+        matches: Map<key::Match, lumina_patterns::Match<ExprId>>,
         entrypoint: Option<ExprId>,
     ) {
         as_lowering!(&mut self.funcs[f], "finish_func", { expr_pool, pat_pool, lambdas, .. } => {
@@ -377,7 +397,7 @@ impl<'s> LoweringArena<'s> {
             let pat_pool = std::mem::take(pat_pool);
 
             self.funcs[f] =
-                LoweringFunc::Lowered { expr_pool, pat_pool, entrypoint, static_types };
+                LoweringFunc::Lowered { expr_pool, pat_pool, entrypoint, static_types, matches };
         })
     }
 
@@ -409,6 +429,8 @@ pub enum LoweringFunc<'s> {
         params: EntityList<Var>,
         ret: Var,
 
+        matches: Map<key::Match, LoweringMatchTable>,
+
         expr_pool: key::ListPool<ExprId>,
         pat_pool: key::ListPool<PatternId>,
     },
@@ -425,8 +447,31 @@ pub enum LoweringFunc<'s> {
 
         // Trait methods may have `None`
         entrypoint: Option<ExprId>,
+        matches: Map<key::Match, lumina_patterns::Match<ExprId>>,
     },
     Method,
+}
+
+#[derive(Debug)]
+struct LoweringMatchTable {
+    destructed: ExprId,
+    kind: MatchKind,
+    patterns: EntityList<PatternId>,
+    exprs: key::EntityList<ExprId>,
+}
+
+// Various constructs are desugared into `match`.
+//
+// But for error messages it may be useful to know what created the `match`.
+#[derive(Debug, Clone)]
+pub enum MatchKind {
+    Parameter(usize),
+    FieldBind,
+    PartialApplCapturing,
+    User,
+    Let,
+    Do,
+    If,
 }
 
 #[derive(new, Debug)]

@@ -3,7 +3,6 @@ use std::cmp::Ordering;
 pub use super::*;
 use crate::key;
 use crate::{InterResolved, project::FuncDef};
-use expr::MatchKind;
 // use lumina_key as key;
 use derive_new::new;
 use lumina_key::EntityList;
@@ -438,12 +437,14 @@ impl<'a, 's> FuncLower<'a, 's> {
             );
         }
 
+        let matches = self.lower_matches_into_decision_trees(&static_types);
+
         // Update the function type signature with the now known static types
         self.finalize_func_in_headerfile(&static_types, false);
 
         // Set the lowering state to Lowered
         self.uarena
-            .finish_func(self.id, static_types, Some(entrypoint));
+            .finish_func(self.id, static_types, matches, Some(entrypoint));
 
         if let Some(file) = previous_file {
             self.files.switch_errors_file(file);
@@ -569,6 +570,55 @@ impl<'a, 's> FuncLower<'a, 's> {
         }
     }
 
+    pub fn lower_matches_into_decision_trees(
+        &mut self,
+        types: &Map<Var, Type>,
+    ) -> Map<key::Match, lumina_patterns::Match<ExprId>> {
+        let matches = self.uarena.take_match_table(self.id);
+
+        matches
+            .values()
+            .map(|table| {
+                let mut mlower = lumina_patterns::Match::new();
+
+                let mut expr_iter = key::EntityIter::from(table.exprs);
+                let mut iter = key::EntityIter::from(table.patterns);
+                while let Some(pat_id) = iter.next(self.uarena.pat_pool(self.id)) {
+                    let expr_id = expr_iter.next(self.uarena.expr_pool(self.id)).unwrap();
+
+                    let tail = mlower.add_tail(expr_id);
+
+                    let tree = pattern::DecTreeLower::new(
+                        self.uarena,
+                        self.ctx(),
+                        types,
+                        self.project(),
+                        self.id,
+                        tail,
+                    )
+                    .to_tree(pat_id);
+
+                    // TODO: we are accidentally throwing away temporary `StringPattern` here
+
+                    let reachable = mlower.add_branch(tree);
+
+                    if !reachable {
+                        let span = self.uarena.pats[pat_id].span;
+                        errors::warn("unreachable pattern").line(span, "").emit();
+                    }
+                }
+
+                if let Some(missing) = mlower.root.invert_to_missing() {
+                    println!("{}", &mlower.root);
+                    println!("MISSING:\n{missing}");
+                    panic!("print and present missing patterns");
+                }
+
+                mlower
+            })
+            .collect()
+    }
+
     pub fn inst_self_recursion(&mut self, apath: Tr<&parser::AnnotatedPath<'s>>) -> Var {
         let mut inst = self.tctx.lowering_instantiation();
         let anot = inst.self_recursion(apath).finish();
@@ -648,13 +698,18 @@ impl<'a, 's> FuncLower<'a, 's> {
                 let expected = expected_types.get(i, self.tctx.var_pool()).unwrap();
                 let destructed = self.add_typed_expr(Expr::Parameter(i), expected, pspan);
 
-                let mut expr_list = key::EntityList::new();
-                let mut pat_list = key::EntityList::new();
+                let mut elist = key::EntityList::new();
+                let mut plist = key::EntityList::new();
 
-                pat_list.push(*pat, self.uarena.pat_pool_mut(self.id));
-                expr_list.push(tail, self.uarena.expr_pool_mut(self.id));
+                plist.push(*pat, self.uarena.pat_pool_mut(self.id));
+                elist.push(tail, self.uarena.expr_pool_mut(self.id));
 
-                let match_ = Expr::Match(MatchKind::Parameter(i), destructed, pat_list, expr_list);
+                let kind = MatchKind::Parameter(i);
+                let match_key = self
+                    .uarena
+                    .add_match_table(self.id, kind, destructed, plist, elist);
+
+                let match_ = Expr::Match(match_key);
 
                 let tail_ty = self.uarena.exprs[tail].ty;
                 self.add_typed_expr(match_, tail_ty, pspan)

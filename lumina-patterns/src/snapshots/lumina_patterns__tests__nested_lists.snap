@@ -10,7 +10,20 @@ variant1(nparams=2):
       branch-expr0
   variant1(nparams=2):
     Tuple(nelems=0)
-      branch-expr0
+      variant0(nparams=0):
+        variant0(nparams=0):
+          branch-expr0
+        variant1(nparams=2):
+          _:
+            _:
+              branch-expr0
+        
+      variant1(nparams=2):
+        _:
+          _:
+            _:
+              branch-expr0
+      
   
 
 

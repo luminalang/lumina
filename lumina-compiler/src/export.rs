@@ -191,7 +191,7 @@ impl TypeDef {
         Self {
             name: sig.name.clone(),
             generics: sig.generics.values().cloned().collect(),
-            def: match def {
+            kind: match def {
                 project::TypeDef::Sum { vtypes, vnames } => TypeKind::Variant(
                     vnames
                         .iter()
@@ -310,7 +310,7 @@ struct Implementation {
 struct TypeDef {
     name: String,
     generics: Vec<String>,
-    def: TypeKind,
+    kind: TypeKind,
 }
 
 #[derive(Serialize)]

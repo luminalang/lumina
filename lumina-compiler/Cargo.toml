@@ -10,6 +10,7 @@ edition = "2024"
 lumina-util = { path = "../lumina-util" }
 lumina-parser = { path = "../lumina-parser" }
 lumina-typesystem = { path = "../lumina-typesystem" }
+lumina-patterns = { path = "../lumina-patterns" }
 rvsdg = { path = "../../rvsdg" }
 target-lexicon = "0.13.3"
 lumina-key = { path = "../lumina-key" }

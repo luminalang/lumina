@@ -46,6 +46,10 @@ entity_impl!(Alias, "alias");
 pub struct External(pub u32);
 entity_impl!(External, "ext");
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub struct Match(pub u32);
+entity_impl!(Match, "match");
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, new)]
 pub struct InProject<T> {
     pub project: Project,

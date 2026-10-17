@@ -56,8 +56,8 @@ impl DecTree {
                 DecTree::List { branching: new_branching } => branching.merge_cmp(new_branching),
                 _ => panic!("cannot merge decision trees of different types"),
             },
-            DecTree::Ints { size, next } => match new {
-                DecTree::Ints { size: new_size, next: new_next } => {
+            DecTree::Ints { size, branching: next } => match new {
+                DecTree::Ints { size: new_size, branching: new_next } => {
                     assert_eq!(*size, new_size);
                     next.merge(new_next)
                 }
@@ -131,29 +131,38 @@ impl DecTree {
                             let next = (0..*params).fold(next.clone(), |next, _| {
                                 DecTree::Wildcard { next: Box::new(next) }
                             });
+                            dbg!(&next, &params);
                             (*var, *params, next)
                         })
                         .collect(),
                 },
             },
             DecTree::List { .. } => Branching::list()
-                .variant(LIST_CONS, next.clone())
+                .variant(
+                    LIST_CONS,
+                    DecTree::Wildcard {
+                        //   ^^^^^^^^ `x`
+                        next: Box::new(DecTree::Wildcard { next: Box::new(next.clone()) }),
+                        //                      ^^^^^^^^ `xs`             ^^^^ after this list, if we're in a tuple for example
+                    },
+                )
                 .variant(LIST_NIL, next)
                 .into_list_dectree(),
             DecTree::Ints { size, .. } => {
-                let (min, max) = (size.max_value() as i128, size.max_value() as i128);
-                DecTree::Ints { next: Branching::ints_with_next(min, max, next), size: *size }
+                let (min, max) = (size.min_value() as i128, size.max_value() as i128);
+                DecTree::Ints {
+                    branching: Branching::ints_with_next(min, max, next),
+                    size: *size,
+                }
             }
             DecTree::Bools { .. } => Branching::bools()
                 .bool(true, next.clone())
                 .bool(false, next.clone())
                 .into(),
             DecTree::Strings { .. } => todo!("we can't return an empty here..."),
-            // DecTree::Unreached(_) => panic!("cannot expand Unreached"),
             DecTree::Unreached => DecTree::Wildcard { next: Box::new(next) },
             DecTree::Tail(_) => panic!("cannot expand tail"),
             DecTree::Wildcard { .. } => panic!("cannot expand wildcard"),
-            // DecTree::Wildcard { .. } => DecTree::Wildcard { next: Box::new(next) },
             DecTree::Error => DecTree::Error,
         }
     }
@@ -166,116 +175,19 @@ impl DecTree {
             return reachable::YES;
         } else if let DecTree::Wildcard { next } = self {
             return next.merge(wc_next);
+        } else if let DecTree::Strings { wildcard_next, .. } = self {
+            match wildcard_next {
+                Some(previous_wc_next) => return previous_wc_next.merge(wc_next),
+                None => {
+                    *wildcard_next = Some(Box::new(wc_next));
+                    return reachable::YES;
+                }
+            }
         }
 
         let this = Self::expanded_wildcard(self, wc_next);
         self.merge(this)
-
-        // match self {
-        //     DecTree::Record { fields: elems, next }
-        //     | DecTree::Tuple { elems, next }
-        //     | DecTree::Array { elems, next } => {
-        //         // Add additional wildcards for each element
-        //         let elems_next = (0..*elems).fold(wc_next.clone(), |next, _| DecTree::Wildcard {
-        //             next: Box::new(next),
-        //         });
-        //         next.merge_wildcard_into_self(elems_next)
-        //     }
-        //     DecTree::IfGuarded { false_next, .. } => {
-        //         todo!("don't we want to *move* this if-guard to the end or something?");
-        //         // Can't we represent ifguards statically?
-        //         //
-        //         // We put them alongside the DecTree instead of wrapping like this?
-        //         //
-        //         // No. Because; the `DecTree` shouldn't be affected by merges the same way?
-        //         //
-        //         // match a
-        //         // | true if true -> ...
-        //         // | _ -> ... // only wants to specialse into `false`?
-        //         // but; I think we would still want to merge it into `{true, false}`
-        //         //
-        //         // So; I think a complete merge still makes sense...
-        //         //
-        //         // It's valid *because* the if guard *must* be the last one. But; if it must be the last one then that should
-        //         // be able to be done statically?
-        //         //
-        //         // Perhaps we should modify `Tail` to having an optional if guard instead?
-
-        //         // false_next.merge_wildcard_into_self(and_then)
-        //     }
-
-        //     DecTree::Variants { branching } => {
-        //         Self::merge_wildcard_into_branches(branching, wc_next)
-        //     }
-        //     DecTree::List { branching } => Self::merge_wildcard_into_branches(branching, wc_next),
-        //     DecTree::Bools { branching } => Self::merge_wildcard_into_branches(branching, wc_next),
-
-        //     DecTree::Ints { size, .. } => {
-        //         let int_branching = Branching::ints_with_next(
-        //             size.min_value() as i128,
-        //             size.max_value() as i128,
-        //             wc_next,
-        //         );
-
-        //         let created = DecTree::Ints { size: *size, next: int_branching };
-
-        //         self.merge(created)
-        //     }
-        //     DecTree::Wildcard { next } => next.merge(wc_next),
-        //     DecTree::Unreached(_) => {
-        //         *self = DecTree::Wildcard { next: Box::new(wc_next) };
-        //         reachable::YES
-        //     }
-        //     DecTree::Tail(_) => reachable::NO,
-        //     DecTree::Error => reachable::YES,
-        // }
     }
-
-    // NOTE: Assumes all branches exists, which is meant to hold true from construction.
-    fn merge_wildcard_into_branches<K>(branching: &mut Branching<K>, wc_next: DecTree) -> bool {
-        branching
-            .branches
-            .iter_mut()
-            .fold(false, |reachable, (_, params, var_next)| {
-                // Add additional wildcards for each parameter
-                let variant_next = (0..*params).fold(wc_next.clone(), |next, _| {
-                    DecTree::Wildcard { next: Box::new(next) }
-                });
-                reachable | var_next.merge_wildcard_into_self(variant_next)
-            })
-    }
-
-    // fn expand_from_type(ty: &KnownType<TypeKey>, next: DecTree<TypeKey>) -> Self {
-    //     match ty {
-    //         KnownType::Defined(_, primary_map) => todo!(),
-    //         KnownType::List(known_type) => todo!(),
-    //         KnownType::Array { .. } => todo!(),
-    //         KnownType::Const(const_type) => match const_type {
-    //             ts::ConstType::Int(_) => DecTree::Ints {
-    //                 size: todo!("`ConstType` must specify intsize?"),
-    //                 next: Branching::new(None),
-    //             },
-    //         },
-    //         KnownType::Tuple(elems) => DecTree::Tuple { elems: elems.len(), next: Box::new(next) },
-    //         KnownType::Prim(prim) => match *prim {
-    //             ts::Prim::Int(size) => DecTree::Ints { size, next: Branching::new(None) },
-    //             ts::Prim::Bool => DecTree::Bools { branching: Branching::new(Some(2)) },
-    //             ts::Prim::Float => todo!(),
-    //             ts::Prim::Self_ => panic!("unresolved `Self_` primitive in pattern lowering"),
-    //         },
-    //         // We assume an error has already been created when the user creates the merging pattern
-    //         //
-    //         // PROBLEM:
-    //         //
-    //         // This won't work as if the RHS is a wildcard then the merge is still valid.
-    //         //
-    //         // I think we should just destruct RHS instead
-    //         KnownType::Error
-    //         | KnownType::Generic(_)
-    //         | KnownType::Function { .. }
-    //         | KnownType::Pointer(_) => DecTree::Error,
-    //     }
-    // }
 }
 
 impl<K: PartialEq> Branching<K> {
@@ -286,7 +198,7 @@ impl<K: PartialEq> Branching<K> {
                 for (existing_k, existing_params, existing_next) in self.branches.iter_mut() {
                     if k == *existing_k {
                         assert_eq!(params, *existing_params);
-                        return reachable || existing_next.merge(next);
+                        return reachable | existing_next.merge(next);
                     }
                 }
 

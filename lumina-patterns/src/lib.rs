@@ -1,43 +1,3 @@
-// We're gonna try making a proper decision tree with reachability and exahustability checking
-// again.
-//
-// Here's the plan:
-//
-// We create a tree and we merge stuff into it.
-//
-// Do we want to initialise it from a type?
-//
-// I believe with our new system the type will be statically known by the point of where we do this.
-//
-// So; that should be possible.
-//
-// One of the things that was annoying before were the tails. I think we want more control of the
-// tails here. We want some kind of table.
-//
-// We also want `if` to be a thing this time
-//
-// Hm... in old implementations, we for some reason realised that expanding completely is
-// impossible.
-//
-// Although; I'm unsure why that was the case. However; we were forced to make it expand lazily.
-//
-// Does the type not contain enough information or something?
-//
-//  NO: The problem was that trees can be infinitely large. That's why we needed it to be lazy.
-//
-// FOR RANGES: Perhaps we don't merge ranges?
-//
-// hm, no we do want to merge ranges for the sake of performance regardless.
-
-// OK SO: We're gonna initialise from type. Therefore; we only need to be able to merge.
-//
-// Hm... perhaps we should let the user write the merge code? As that will be from a custom Pattern type.
-//
-// Oh we do have `KnownType` from here. So; we can use that.
-//
-// OR: We let the user handle conversion of `hir::Pattern -> DecTree` and from there we do `DecTree <> DecTree`?
-// Ye, because I think we'll need that anyways?
-
 use std::fmt;
 
 #[cfg(test)]
@@ -57,7 +17,7 @@ mod merge;
 use merge::reachable;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct DeduplicatedStringCheck(u32);
+pub struct DeduplicatedStringCheck(u32);
 key::entity_impl!(DeduplicatedStringCheck, "strcheck");
 
 pub type IsReachable = bool;
@@ -66,25 +26,24 @@ pub const LIST_NIL: key::Variant = key::Variant(0);
 pub const LIST_CONS: key::Variant = key::Variant(1);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct TailExpr(u32);
+pub struct TailExpr(u32);
 entity_impl!(TailExpr, "branch-expr");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct IfGuard(u32);
+pub struct IfGuard(u32);
 entity_impl!(IfGuard, "if-guard");
 
-struct Match<Expr, TypeKey> {
-    root: DecTree,
-    tails: Map<TailExpr, Expr>,
-    guards: Map<IfGuard, Expr>,
-    pat_type: KnownType<TypeKey>,
+#[derive(Debug)]
+pub struct Match<Expr> {
+    pub root: DecTree,
+    pub tails: Map<TailExpr, Expr>,
+    pub guards: Map<IfGuard, Expr>,
 }
 
-impl<Expr, TypeKey: Clone + fmt::Display> Match<Expr, TypeKey> {
-    pub fn new(pat_type: KnownType<TypeKey>) -> Match<Expr, TypeKey> {
+impl<Expr> Match<Expr> {
+    pub fn new() -> Match<Expr> {
         Match {
             root: DecTree::Unreached,
-            pat_type,
             tails: Map::new(),
             guards: Map::new(),
         }
@@ -105,8 +64,8 @@ impl<Expr, TypeKey: Clone + fmt::Display> Match<Expr, TypeKey> {
 
 /// A decision tree where the depth of the data structure also represents each point of the pattern
 /// that can be bound to a value.
-#[derive(Clone)]
-enum DecTree {
+#[derive(Clone, Debug)]
+pub enum DecTree {
     // Non-branching chains
     Record {
         fields: usize,
@@ -135,7 +94,7 @@ enum DecTree {
     },
     Ints {
         size: IntSize,
-        next: Branching<Range>,
+        branching: Branching<Range>,
     },
     Bools {
         branching: Branching<bool>,
@@ -192,8 +151,8 @@ impl From<Branching<DeduplicatedStringCheck>> for DecTree {
     }
 }
 
-#[derive(Clone)]
-struct Branching<K> {
+#[derive(Clone, Debug)]
+pub struct Branching<K> {
     branches: Vec<(K, Params, DecTree)>,
     full_size: Option<usize>,
 }
@@ -212,7 +171,7 @@ impl<K: PartialEq> Branching<K> {
 }
 
 impl Branching<bool> {
-    fn bools() -> Self {
+    pub fn bools() -> Self {
         let branches = [true, false]
             .into_iter()
             .map(|bool| (bool, 0, DecTree::Unreached))
@@ -220,17 +179,17 @@ impl Branching<bool> {
         Self { branches, full_size: Some(2) }
     }
 
-    fn bool(self, key: bool, next: DecTree) -> Self {
+    pub fn bool(self, key: bool, next: DecTree) -> Self {
         self.with(key, next)
     }
 }
 
 impl Branching<DeduplicatedStringCheck> {
-    fn strings() -> Self {
+    pub fn strings() -> Self {
         Self { branches: vec![], full_size: None }
     }
 
-    fn string(mut self, key: DeduplicatedStringCheck, next: DecTree) -> Self {
+    pub fn string(mut self, key: DeduplicatedStringCheck, next: DecTree) -> Self {
         for (bkey, _bparams, bnext) in self.branches.iter_mut() {
             if *bkey == key {
                 bnext.merge(next);
@@ -244,7 +203,7 @@ impl Branching<DeduplicatedStringCheck> {
 }
 
 impl Branching<key::Variant> {
-    fn variants(variants: impl IntoIterator<Item = (key::Variant, usize)>) -> Self {
+    pub fn variants(variants: impl IntoIterator<Item = (key::Variant, usize)>) -> Self {
         let branches: Vec<_> = variants
             .into_iter()
             .map(|(variant, params)| (variant, params, DecTree::Unreached))
@@ -253,11 +212,11 @@ impl Branching<key::Variant> {
         Self { full_size: Some(branches.len()), branches }
     }
 
-    fn list() -> Self {
+    pub fn list() -> Self {
         Self::variants([(LIST_NIL, 0), (LIST_CONS, 2)])
     }
 
-    fn variant(self, key: key::Variant, next: DecTree) -> Self {
+    pub fn variant(self, key: key::Variant, next: DecTree) -> Self {
         self.with(key, next)
     }
 
@@ -272,7 +231,7 @@ impl Branching<Range> {
         Self { branches: vec![(full, 0, next)], full_size: None }
     }
 
-    fn ints(min: i128, max: i128) -> Self {
+    pub fn ints(min: i128, max: i128) -> Self {
         let full = Range::new(range::Constraints { min, max }, min, max);
 
         Self {
@@ -281,9 +240,13 @@ impl Branching<Range> {
         }
     }
 
-    fn range(mut self, r: std::ops::Range<i128>, next: DecTree) -> Self {
+    pub fn range(mut self, r: std::ops::Range<i128>, next: DecTree) -> Self {
         self.merge_int_at(0, r.start, r.end, next);
         self
+    }
+
+    pub fn into_ints_dectree(self, size: IntSize) -> DecTree {
+        DecTree::Ints { branching: self, size }
     }
 }
 
@@ -323,8 +286,8 @@ impl PartialEq for DecTree {
                 l_branching == r_branching
             }
             (
-                Self::Ints { size: l_size, next: l_next },
-                Self::Ints { size: r_size, next: r_next },
+                Self::Ints { size: l_size, branching: l_next },
+                Self::Ints { size: r_size, branching: r_next },
             ) => l_size == r_size && l_next == r_next,
             (Self::Bools { branching: l_branching }, Self::Bools { branching: r_branching }) => {
                 l_branching == r_branching
@@ -370,7 +333,7 @@ impl fmt::Display for DecTree {
             }
             DecTree::Variants { branching } => branching.fmt(f),
             DecTree::List { branching } => branching.fmt(f),
-            DecTree::Ints { next, .. } => next.fmt(f),
+            DecTree::Ints { branching: next, .. } => next.fmt(f),
             DecTree::Bools { branching } => branching.fmt(f),
             DecTree::Strings { branching, wildcard_next } => match wildcard_next {
                 Some(wc_next) => {

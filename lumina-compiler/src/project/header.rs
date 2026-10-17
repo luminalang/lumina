@@ -119,9 +119,10 @@ impl HeaderFile {
         has_body: bool,
     ) {
         let slot = &mut self.function_signatures[key];
-        assert!(slot
-            .replace(FuncDef { name, sig, method_of, file, precedence, has_body })
-            .is_none());
+        assert!(
+            slot.replace(FuncDef { name, sig, method_of, file, precedence, has_body })
+                .is_none()
+        );
     }
 
     pub fn take_func(&mut self, func: key::Func) -> Option<FuncDef> {
@@ -144,6 +145,27 @@ impl HeaderFile {
     pub fn as_trait(&self, ty: key::Type) -> Option<&Map<key::Method, key::Func>> {
         match &self.typedefs[ty] {
             TypeDef::Trait { functions } => Some(functions),
+            _ => None,
+        }
+    }
+
+    pub fn variants(
+        &self,
+        ty: key::Type,
+    ) -> Option<(&Map<key::Variant, Vec<Type>>, &Map<key::Variant, String>)> {
+        match &self.typedefs[ty] {
+            TypeDef::Sum { vtypes, vnames } => Some((vtypes, vnames)),
+            _ => None,
+        }
+    }
+
+    pub fn fields(
+        &self,
+        ty: key::Type,
+    ) -> Option<impl Iterator<Item = key::Field> + ExactSizeIterator + DoubleEndedIterator + 'static>
+    {
+        match &self.typedefs[ty] {
+            TypeDef::Struct { ftypes, .. } => Some(ftypes.keys()),
             _ => None,
         }
     }

@@ -1,6 +1,7 @@
 use std:libc
 use std:list [List [Slice]]
 use std:list:vec [Vec [ptr, len]]
+use std:list:slice [Slice [..]]
 
 @[platform "linux"]
 pub fn stderr as i32 = 2
@@ -44,7 +45,7 @@ fn sigint = 2
 
 pub fn raw_print str len as string uint -> () =
   match str.inner
-  | Slice { vec:Slice u8 | ptr, len } ->
+  | Slice { Slice u8 | ptr, len } ->
     do libc:write stdout ptr (len as int)
      then ()
   

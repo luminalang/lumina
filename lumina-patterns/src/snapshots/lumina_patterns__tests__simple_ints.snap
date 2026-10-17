@@ -1,0 +1,13 @@
+---
+source: lumina-patterns/src/tests.rs
+expression: str
+---
+0(nparams=0):
+  branch-expr0
+1(nparams=0):
+  branch-expr1
+2..(nparams=0):
+  branch-expr2
+
+
+inverted missing tree:

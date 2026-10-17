@@ -925,6 +925,7 @@ dependencies = [
  "itertools 0.14.0",
  "lumina-key",
  "lumina-parser",
+ "lumina-patterns",
  "lumina-typesystem",
  "lumina-util",
  "num_cpus",
